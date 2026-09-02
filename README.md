@@ -229,6 +229,9 @@ Licensed under the [Apache License 2.0](LICENSE), except the robot model
 `docs-site/public/models/palmimo.glb`, which is a display-only asset under
 [its own notice](docs-site/public/models/LICENSE).
 
+Hardware design files are not included at this time; any future hardware
+release will carry its own license.
+
 ## 📚 Citation
 
 If you use Palmimo DevKit in academic work, please cite this repository — see
