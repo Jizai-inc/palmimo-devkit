@@ -1,0 +1,105 @@
+# Keeps the pinned versions in this tree current. The uv and npm ecosystems
+# below have a lockfile CI already verifies, so an update arrives as an
+# ordinary pull request and the usual checks decide it. github-actions is the
+# exception: there is no lockfile, nothing in CI verifies the SHA pins, and
+# the pull request itself is the only record a human has to read.
+#
+# Each pull request is labelled `dependencies`, which .github/release.yml
+# excludes from the generated release notes: a version bump is not a release
+# note. Minor and patch updates are grouped into one pull request per
+# ecosystem to keep the queue readable; a major bump comes on its own, because
+# it is the one that needs reading. github-actions is the exception again --
+# see the comment on its group.
+version: 2
+updates:
+  # The actions .github/workflows/ pins by commit SHA.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      # No update-types filter here, unlike the other groups: every action is
+      # pinned by commit SHA with the tag in a trailing comment, so a bump at
+      # any level arrives as a new SHA and there is no lockfile or CI check
+      # that would catch a stale pin. One grouped pull request a week is the
+      # only record a human gets, so none of the levels is filtered out.
+      actions:
+        patterns:
+          - "*"
+
+  # The root uv workspace -- packages/*, examples/*, examples/agents/* all
+  # resolve into the root uv.lock.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      python:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Pinned deliberately in examples/agents/companion/pyproject.toml --
+      # newer releases changed the Tasks API that example depends on.
+      - dependency-name: "mediapipe"
+
+  # integrations/lerobot is a uv workspace of its own, deliberately outside the
+  # root one (see the root pyproject.toml), so its lockfile updates
+  # separately. This covers registry requirements in that lockfile only --
+  # lerobot itself is a [tool.uv.sources] git dependency pinned by tag
+  # (tag = "v0.5.1"), which the uv updater does not touch, so that pin stays
+  # manual.
+  - package-ecosystem: "uv"
+    directory: "/integrations/lerobot"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      python:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # The documentation site.
+  - package-ecosystem: "npm"
+    directory: "/docs-site"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      docs-site:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

@@ -1,0 +1,46 @@
+name: Bug report
+description: Something does not behave as documented
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead — and how to reproduce it.
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: palmimo_sdk version or commit
+      description: The installed version (`uv pip show palmimo-sdk`), or the branch and commit you were running.
+      placeholder: "main @ abc1234"
+  - type: input
+    id: pi-model-os
+    attributes:
+      label: Raspberry Pi model and OS image
+      description: The Pi model and the OS image on it — as shipped, or the one you flashed following doc/guides/raspberry-pi-setup.md.
+      placeholder: "Raspberry Pi 5 (16 GB), Raspberry Pi OS Lite (64-bit) as shipped"
+  - type: input
+    id: power-supply
+    attributes:
+      label: Power supply
+      description: What powered the robot when the bug happened — the adapter that came with the kit, a bench supply, a battery.
+      placeholder: "The adapter that came with the kit"
+  - type: dropdown
+    id: interface-board
+    attributes:
+      label: Servo interface board
+      description: Whether the servo interface board is the one the DevKit shipped with or one you re-flashed.
+      options:
+        - As shipped
+        - Re-flashed
+        - Not sure
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant output, tracebacks, or `scripts/` diagnostics. Trim to the interesting part.
+      render: shell

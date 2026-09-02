@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="800px" height="300px" viewBox="0 0 800 300">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#333333"/></marker>
+<marker id="arrowGrey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#999999"/></marker>
+</defs>
+<rect x="0" y="0" width="800" height="300" fill="#ffffff"/>
+<text x="400" y="24" font-family="Helvetica, Arial, sans-serif" font-size="14" font-weight="bold" fill="#222222" text-anchor="middle">Palmimo — overall system architecture</text>
+
+<rect x="20" y="80" width="140" height="60" rx="3" fill="#f5f5f5" stroke="#999999" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="90" y="101" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#666666" text-anchor="middle">Development PC</text>
+<text x="90" y="117" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#888888" text-anchor="middle">SSH · dev only</text>
+<text x="90" y="130" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#888888" text-anchor="middle">not in the control loop</text>
+
+<rect x="210" y="58" width="210" height="104" rx="3" fill="#DAE8FC" stroke="#6C8EBF" stroke-width="1.5"/>
+<text x="315" y="80" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#1f3a5f" text-anchor="middle">Raspberry Pi</text>
+<text x="315" y="97" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f3a5f" text-anchor="middle">Execution host (default)</text>
+<text x="315" y="115" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#222222" text-anchor="middle">runs palmimo_sdk</text>
+<text x="315" y="129" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#222222" text-anchor="middle">Palmimo + MotionEngine + ServoDriver</text>
+<text x="315" y="145" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#222222" text-anchor="middle">+ user code · control loop 60 Hz</text>
+
+<rect x="470" y="80" width="150" height="60" rx="3" fill="#FFF2CC" stroke="#D6B656" stroke-width="1"/>
+<text x="545" y="105" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#7a6a00" text-anchor="middle">USB–DYNAMIXEL bridge</text>
+<text x="545" y="122" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#222222" text-anchor="middle">USB-connected to the Pi</text>
+
+<rect x="650" y="50" width="140" height="150" rx="4" fill="none" stroke="#333333" stroke-width="1" stroke-dasharray="5 3"/>
+<text x="720" y="45" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#333333" text-anchor="middle">Robot body — 21× bus servos</text>
+<rect x="662" y="78" width="116" height="52" rx="3" fill="#D5E8D4" stroke="#82B366" stroke-width="1"/>
+<text x="720" y="99" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2d5a2d" text-anchor="middle">Legs</text>
+<text x="720" y="115" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#222222" text-anchor="middle">6 × 3 = 18 servos</text>
+<rect x="662" y="142" width="116" height="52" rx="3" fill="#D5E8D4" stroke="#82B366" stroke-width="1"/>
+<text x="720" y="163" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2d5a2d" text-anchor="middle">Neck</text>
+<text x="720" y="179" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#222222" text-anchor="middle">3 servos</text>
+
+<rect x="470" y="214" width="150" height="52" rx="3" fill="#FFE6CC" stroke="#D79B00" stroke-width="1"/>
+<text x="545" y="236" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#7a4a00" text-anchor="middle">AC adapter (5 V)</text>
+<text x="545" y="252" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#7a4a00" text-anchor="middle">external power</text>
+
+<path d="M 160 110 L 206 110" fill="none" stroke="#999999" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrowGrey)"/>
+<text x="183" y="104" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#888888" text-anchor="middle">SSH</text>
+
+<path d="M 420 110 L 466 110" fill="none" stroke="#333333" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="443" y="104" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#333333" text-anchor="middle">USB</text>
+
+<path d="M 620 110 L 640 110" fill="none" stroke="#333333" stroke-width="1.5"/>
+<path d="M 640 104 L 640 168" fill="none" stroke="#333333" stroke-width="1.5"/>
+<path d="M 640 104 L 658 104" fill="none" stroke="#333333" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M 640 168 L 658 168" fill="none" stroke="#333333" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="636" y="98" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#333333" text-anchor="end">TTL bus</text>
+
+<path d="M 545 214 L 545 142" fill="none" stroke="#D79B00" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="552" y="182" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#a06a00" text-anchor="start">5 V power</text>
+
+<text x="400" y="290" font-family="Helvetica, Arial, sans-serif" font-size="9" font-style="italic" fill="#555555" text-anchor="middle">Compute and power are off-board — the execution host (Raspberry Pi) and AC adapter sit outside the robot. A PC connects over SSH during development but is not in the control loop.</text>
+</svg>

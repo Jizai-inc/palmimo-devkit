@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="520px" height="420px" viewBox="-0.5 -0.5 520 420" content="&lt;mxfile host=&quot;app.diagrams.net&quot;&gt;&lt;diagram name=&quot;Motor Layout&quot;&gt;&lt;mxGraphModel dx=&quot;800&quot; dy=&quot;600&quot; grid=&quot;1&quot; gridSize=&quot;10&quot; guides=&quot;1&quot; tooltips=&quot;1&quot; connect=&quot;1&quot; arrows=&quot;1&quot; fold=&quot;1&quot; page=&quot;1&quot; pageScale=&quot;1&quot; pageWidth=&quot;520&quot; pageHeight=&quot;420&quot;&gt;&lt;root&gt;&lt;mxCell id=&quot;0&quot;/&gt;&lt;mxCell id=&quot;1&quot; parent=&quot;0&quot;/&gt;&lt;/root&gt;&lt;/mxGraphModel&gt;&lt;/diagram&gt;&lt;/mxfile&gt;">
+  <defs/>
+  <g>
+    <!-- Title -->
+    <text x="260" y="25" text-anchor="middle" font-family="Arial" font-size="16" font-weight="bold">Palmimo Motor Layout (Top View)</text>
+
+    <!-- Direction indicator -->
+    <text x="260" y="55" text-anchor="middle" font-family="Arial" font-size="14" fill="#666">Front (Neck Direction)</text>
+    <polygon points="260,60 250,75 270,75" fill="#666"/>
+
+    <!-- Body (hexagonal shape) -->
+    <polygon points="260,150 340,190 340,270 260,310 180,270 180,190" fill="#e0e0e0" stroke="#333" stroke-width="2"/>
+    <text x="260" y="235" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold">Body</text>
+
+    <!-- Neck (Front) -->
+    <rect x="230" y="90" width="60" height="50" rx="5" fill="#ffcc80" stroke="#e65100" stroke-width="2"/>
+    <text x="260" y="108" text-anchor="middle" font-family="Arial" font-size="10" font-weight="bold">Neck</text>
+    <text x="260" y="122" text-anchor="middle" font-family="Arial" font-size="9">pitch1: 19</text>
+    <text x="260" y="133" text-anchor="middle" font-family="Arial" font-size="9">pitch2: 20, yaw: 21</text>
+
+    <!-- Leg 3 (Front Left) -->
+    <rect x="80" y="110" width="80" height="60" rx="5" fill="#a5d6a7" stroke="#2e7d32" stroke-width="2"/>
+    <text x="120" y="130" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold">Leg 3 (FL)</text>
+    <text x="120" y="145" text-anchor="middle" font-family="Arial" font-size="9">yaw: 7</text>
+    <text x="120" y="158" text-anchor="middle" font-family="Arial" font-size="9">pitch1: 8, pitch2: 9</text>
+
+    <!-- Leg 6 (Front Right) -->
+    <rect x="360" y="110" width="80" height="60" rx="5" fill="#a5d6a7" stroke="#2e7d32" stroke-width="2"/>
+    <text x="400" y="130" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold">Leg 6 (FR)</text>
+    <text x="400" y="145" text-anchor="middle" font-family="Arial" font-size="9">yaw: 16</text>
+    <text x="400" y="158" text-anchor="middle" font-family="Arial" font-size="9">pitch1: 17, pitch2: 18</text>
+
+    <!-- Leg 2 (Middle Left) -->
+    <rect x="40" y="200" width="80" height="60" rx="5" fill="#90caf9" stroke="#1565c0" stroke-width="2"/>
+    <text x="80" y="220" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold">Leg 2 (ML)</text>
+    <text x="80" y="235" text-anchor="middle" font-family="Arial" font-size="9">yaw: 4</text>
+    <text x="80" y="248" text-anchor="middle" font-family="Arial" font-size="9">pitch1: 5, pitch2: 6</text>
+
+    <!-- Leg 5 (Middle Right) -->
+    <rect x="400" y="200" width="80" height="60" rx="5" fill="#90caf9" stroke="#1565c0" stroke-width="2"/>
+    <text x="440" y="220" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold">Leg 5 (MR)</text>
+    <text x="440" y="235" text-anchor="middle" font-family="Arial" font-size="9">yaw: 13</text>
+    <text x="440" y="248" text-anchor="middle" font-family="Arial" font-size="9">pitch1: 14, pitch2: 15</text>
+
+    <!-- Leg 1 (Rear Left) -->
+    <rect x="80" y="290" width="80" height="60" rx="5" fill="#ef9a9a" stroke="#c62828" stroke-width="2"/>
+    <text x="120" y="310" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold">Leg 1 (RL)</text>
+    <text x="120" y="325" text-anchor="middle" font-family="Arial" font-size="9">yaw: 1</text>
+    <text x="120" y="338" text-anchor="middle" font-family="Arial" font-size="9">pitch1: 2, pitch2: 3</text>
+
+    <!-- Leg 4 (Rear Right) -->
+    <rect x="360" y="290" width="80" height="60" rx="5" fill="#ef9a9a" stroke="#c62828" stroke-width="2"/>
+    <text x="400" y="310" text-anchor="middle" font-family="Arial" font-size="11" font-weight="bold">Leg 4 (RR)</text>
+    <text x="400" y="325" text-anchor="middle" font-family="Arial" font-size="9">yaw: 10</text>
+    <text x="400" y="338" text-anchor="middle" font-family="Arial" font-size="9">pitch1: 11, pitch2: 12</text>
+
+    <!-- Connection lines from body to legs -->
+    <line x1="180" y1="190" x2="140" y2="170" stroke="#333" stroke-width="1.5"/>
+    <line x1="340" y1="190" x2="380" y2="170" stroke="#333" stroke-width="1.5"/>
+    <line x1="180" y1="230" x2="120" y2="230" stroke="#333" stroke-width="1.5"/>
+    <line x1="340" y1="230" x2="400" y2="230" stroke="#333" stroke-width="1.5"/>
+    <line x1="180" y1="270" x2="140" y2="290" stroke="#333" stroke-width="1.5"/>
+    <line x1="340" y1="270" x2="380" y2="290" stroke="#333" stroke-width="1.5"/>
+    <line x1="260" y1="150" x2="260" y2="140" stroke="#333" stroke-width="1.5"/>
+
+    <!-- Legend -->
+    <rect x="10" y="370" width="15" height="15" fill="#a5d6a7" stroke="#2e7d32" stroke-width="1"/>
+    <text x="30" y="382" font-family="Arial" font-size="10">Front (W)</text>
+
+    <rect x="100" y="370" width="15" height="15" fill="#90caf9" stroke="#1565c0" stroke-width="1"/>
+    <text x="120" y="382" font-family="Arial" font-size="10">Middle (A/D)</text>
+
+    <rect x="210" y="370" width="15" height="15" fill="#ef9a9a" stroke="#c62828" stroke-width="1"/>
+    <text x="230" y="382" font-family="Arial" font-size="10">Rear (S)</text>
+
+    <rect x="310" y="370" width="15" height="15" fill="#ffcc80" stroke="#e65100" stroke-width="1"/>
+    <text x="330" y="382" font-family="Arial" font-size="10">Neck</text>
+
+    <!-- Position labels -->
+    <text x="30" y="400" font-family="Arial" font-size="9" fill="#666">FL=Front Left, FR=Front Right, ML=Middle Left, MR=Middle Right, RL=Rear Left, RR=Rear Right</text>
+  </g>
+</svg>

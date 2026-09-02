@@ -1,0 +1,36 @@
+[project]
+name = "lerobot_robot_palmimo"
+version = "0.1.0"
+description = "LeRobot robot plugin for Palmimo"
+authors = [{ name = "Jizai Inc.", email = "noreply@jizai.ai" }]
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    # The dynamixel extra is what carries dynamixel-sdk, which
+    # lerobot.motors.dynamixel imports at DynamixelMotorsBus construction time.
+    # Plain "lerobot" resolves without it and every entry point here dies on the
+    # first bus object.
+    "lerobot[dynamixel]",
+    # The same requirement one layer down: the SDK's own DynamixelDriver
+    # reaches dynamixel_sdk from inside connect(), and [hardware] is the
+    # extra that carries it.
+    "palmimo-sdk[hardware]",
+]
+
+[project.urls]
+Homepage = "https://palmimo.dev"
+Repository = "https://github.com/Jizai-inc/palmimo-devkit"
+Documentation = "https://docs.palmimo.dev"
+Issues = "https://github.com/Jizai-inc/palmimo-devkit/issues"
+
+[project.scripts]
+palmimo-off-torque = "lerobot_robot_palmimo.scripts.off_torque:main"
+palmimo-ping-motors = "lerobot_robot_palmimo.scripts.ping_motors:main"
+palmimo-reset-pose = "lerobot_robot_palmimo.scripts.reset_pose:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lerobot_robot_palmimo"]

@@ -1,0 +1,5 @@
+# Local-only: generated secrets (.env), OpenClaw's runtime state (volumes/),
+# and the Compose file `make setup` downloads from upstream OpenClaw.
+.env
+volumes/
+docker-compose.yml

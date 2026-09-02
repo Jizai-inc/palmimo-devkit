@@ -1,0 +1,12 @@
+{
+  "gateway": { "mode": "local" },
+  "mcp": {
+    "servers": {
+      "palmimo": {
+        "url": "${PALMIMO_MCP_URL}",
+        "transport": "streamable-http",
+        "headers": { "Authorization": "Bearer ${PALMIMO_MCP_TOKEN}" }
+      }
+    }
+  }
+}

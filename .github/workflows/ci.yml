@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fail if uv.lock is out of sync with any pyproject.toml — a forgotten
+  # `uv lock` after editing dependencies would otherwise slip through CI and
+  # make installs non-reproducible.
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+      - run: uv lock --check
+
+  # ruff and mypy debt is cleared, so lint and type both run blocking. New
+  # violations fail the PR.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+      - run: uv sync --dev
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  type:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+      - run: uv sync --dev
+      - run: uv run mypy
+
+  # 3.12 alone: the companion example pins mediapipe 0.10.18, which publishes
+  # cp312 wheels only, so the workspace does not resolve on 3.13 at all.
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    env:
+      # A ratchet, under today's 88.8%. Raise it when the real number rises.
+      COVERAGE_FLOOR: 85
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # sounddevice (palmimo_sdk's MicStream, used by the wakeword agent example)
+      # loads PortAudio at import time, so the tests need the native runtime
+      # library on the runner.
+      - run: sudo apt-get update && sudo apt-get install -y libportaudio2
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+      - run: uv sync --dev --python ${{ matrix.python-version }}
+      - run: uv run --python ${{ matrix.python-version }} pytest --cov --cov-fail-under="$COVERAGE_FLOOR"
+
+  # Every job above runs in the dev venv, where each optional dependency is
+  # already installed, so an eager import of one cannot fail there. This is the
+  # only job that installs what a user installs -- and the only one on 3.13.
+  dist:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+      - run: uv build --package palmimo-sdk --out-dir dist
+
+      - name: Install the wheel on its own and use it
+        run: |
+          uv venv --python ${{ matrix.python-version }} /tmp/dist-venv
+          uv pip install --python /tmp/dist-venv/bin/python dist/*.whl
+          /tmp/dist-venv/bin/python - <<'SMOKE'
+          import sys
+
+          import palmimo_sdk  # noqa: F401
+          from palmimo_sdk.engine import MotionEngine
+
+          optional = ("cv2", "dynamixel_sdk", "mcp", "numpy", "pydantic", "sounddevice")
+          eager = sorted(name for name in optional if name in sys.modules)
+          assert not eager, f"importing palmimo_sdk pulled in optional dependencies: {eager}"
+
+          ticks = MotionEngine().step()
+          assert ticks, "MotionEngine.step() returned no servo positions"
+          outside = {name: v for name, v in ticks.items() if not 200 <= v <= 3900}
+          assert not outside, f"tick outside the safe range: {outside}"
+          SMOKE
+
+  # The LeRobot plugins are a separate uv workspace nested under
+  # integrations/lerobot, so nothing above covers them: this repository's
+  # workspace members, ruff `exclude`, mypy `files`, and pytest `testpaths` all
+  # stop at that boundary deliberately, because the plugins depend on `lerobot`
+  # and this tree's resolution must not.
+  integration-lerobot:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integrations/lerobot
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+      - run: uv lock --check
+      - run: uv sync --dev
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest
+
+  # The documentation site is the one part of this tree built with Node rather
+  # than uv, so no job above touches it.
+  docs-site:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs-site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build

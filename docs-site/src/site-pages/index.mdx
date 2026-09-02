@@ -1,0 +1,140 @@
+---
+title: Palmimo DevKit
+description: Give AI agents a body. Developer docs for Palmimo DevKit, a six-legged tabletop AI robot you drive with your own code.
+template: splash
+hero:
+  title: |
+    <img class="hero-logo light:sl-hidden" src="/palmimo-devkit-logo-white.png" alt="" />
+    <img class="hero-logo dark:sl-hidden" src="/palmimo-devkit-logo.png" alt="Palmimo DevKit" />
+  tagline: Give AI agents a body. Developer docs for Palmimo DevKit, a six-legged tabletop AI robot you drive with your own code.
+  image:
+    html: '<img src="/images/palmimo-dev-scene.jpg" alt="Palmimo standing on a desk beside a developer at a laptop, its round face display lit yellow" />'
+  actions:
+    - text: Get started
+      link: /guides/installation/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/Jizai-inc/palmimo-devkit
+      icon: external
+      variant: minimal
+    - text: Get a DevKit
+      link: https://palmimo.dev/en
+      icon: external
+      variant: minimal
+---
+
+import RobotConsole from '@/components/RobotConsole.astro';
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+Palmimo DevKit gives AI agents a body: a customizable, general-purpose AI robot
+you drive with your own code, shipped assembled and tested. Palmimo itself is a
+six-legged desktop companion robot: 18 leg servos walk it around on a tripod
+gait, a servo neck aims a round face display, and a small expression engine
+gives it a face. It also has a camera, a microphone and a
+speaker, and the SDK hands each of them to the robot the same way — which is
+why the robot below changes its face, shows you what it sees, and records when
+you ask it to.
+
+<RobotConsole
+  src="/models/palmimo.glb"
+  alt="A 3D model of Palmimo: a round body carried on six three-jointed legs, with a three-jointed neck holding the face display"
+  caption="Drag to turn it over, scroll to zoom. The Python prompt drives this robot: what you run there, it does here."
+  examples={[
+    'robot.forward()',
+    'robot.backward()',
+    'robot.rotate_left()',
+    'robot.strafe_left()',
+    'robot.look(yaw=NeckYawDegrees(20))',
+    'robot.wave()',
+    'robot.dance()',
+    'robot.pushup()',
+    'robot.set_expression("happy")',
+    'robot.set_expression("sleepy")',
+    'robot.camera.read()',
+    'robot.stop()',
+  ]}
+/>
+
+A single **motion engine** (pure gait and inverse kinematics, no I/O) drives
+the robot through interchangeable front-ends — the `palmimo_sdk` Python API
+and example agent apps — and every motion computes in dry-run, with no
+hardware attached, before it ever reaches a servo.
+
+<div class="gait">
+  <div class="gait__legs" aria-hidden="true">
+    <span class="gait__leg gait__leg--a"></span>
+    <span class="gait__leg"></span>
+    <span class="gait__leg gait__leg--a"></span>
+    <span class="gait__leg"></span>
+    <span class="gait__leg gait__leg--a"></span>
+    <span class="gait__leg"></span>
+  </div>
+  <p class="gait__caption">Tripod A and tripod B, in anti-phase: three legs carry while three swing.</p>
+</div>
+
+## Make it move
+
+No robot yet? Every motion computes without hardware, so start anywhere.
+
+<CardGrid>
+  <LinkCard
+    title="Set up the control host"
+    description="Get the Raspberry Pi onto your network and ready to run."
+    href="/guides/raspberry-pi-setup/"
+  />
+  <LinkCard
+    title="Install the workspace"
+    description="uv sync the SDK and run a motion in dry-run."
+    href="/guides/installation/"
+  />
+</CardGrid>
+
+## Give it a brain
+
+<CardGrid>
+  <LinkCard
+    title="Serve it over MCP"
+    description="Expose the robot's tools to Claude Code, OpenClaw, or any MCP client."
+    href="/guides/mcp-server/"
+  />
+  <LinkCard
+    title="Example agents"
+    description="A wake-word agent and an always-on companion, built on the SDK's agent layer."
+    href="https://github.com/Jizai-inc/palmimo-devkit/blob/main/examples/README.md"
+  />
+  <LinkCard
+    title="LeRobot integration"
+    description="Teleoperate the robot and record datasets."
+    href="https://github.com/Jizai-inc/palmimo-devkit/blob/main/integrations/lerobot/README.md"
+  />
+</CardGrid>
+
+## Look something up
+
+<CardGrid>
+  <LinkCard
+    title="Python API"
+    description="Every method on the Palmimo facade."
+    href="/reference/api-reference/"
+  />
+  <LinkCard
+    title="Motions"
+    description="All 18 motions and their tuning knobs."
+    href="/reference/motions/"
+  />
+</CardGrid>
+
+## Understand how it works
+
+<CardGrid>
+  <LinkCard
+    title="Architecture"
+    description="Why the motion engine touches no I/O."
+    href="/explanation/architecture/"
+  />
+  <LinkCard
+    title="Motion system"
+    description="How six legs become a walk."
+    href="/explanation/motion-system/"
+  />
+</CardGrid>

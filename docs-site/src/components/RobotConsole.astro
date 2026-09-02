@@ -1,0 +1,133 @@
+---
+// A Python prompt under the robot, wired to the robot.
+//
+// The stage and the console are one component because they are one thing: the
+// console has no reason to exist without something to move, and the robot is
+// the console's output. Splitting them would mean handing one a reference to
+// the other through the page.
+import { SESSION_PREAMBLE } from '../scripts/robot-runtime.js';
+
+interface Props {
+  src: string;
+  alt: string;
+  caption: string;
+  examples: string[];
+}
+
+const { src, alt, caption, examples } = Astro.props;
+
+// Shown above the prompt because it is what the reader would write themselves:
+// the page has already run these lines, and everything they type continues the
+// same script.
+const preamble = SESSION_PREAMBLE.join('\n');
+---
+
+<!-- `not-content` is Starlight's opt-out from the spacing and typography it
+     gives prose. This is an instrument, not prose: every part of it below
+     sets its own spacing, and without the opt-out Starlight's sibling margin
+     pushes each one off the row it belongs to. -->
+<div class="stage not-content">
+  <div class="stage__frame">
+    <canvas class="stage__canvas" data-model={src} aria-label={alt} role="img"></canvas>
+    <!-- What the robot senses, stacked in one column. Hidden until the stage
+         is live, so it is never an empty box over a still. -->
+    <div class="stage__signals">
+      <!-- The renderer draws into this element's own box, so the border here
+           and the picture inside it cannot come apart. -->
+      <figure class="stage__view">
+        <figcaption class="stage__view-label">head camera</figcaption>
+      </figure>
+      <!-- The mic has nothing of its own to draw, so a capture is something to
+           watch happen here rather than a number that comes back. -->
+      <p class="stage__mic">
+        <span class="stage__mic-label">mic</span>
+        <span class="stage__mic-meter"><span class="stage__mic-fill"></span></span>
+      </p>
+    </div>
+  </div>
+  <p class="stage__fallback">
+    The 3D model needs JavaScript. The photograph above shows the same robot.
+  </p>
+  <p class="stage__caption">{caption}</p>
+
+  <div class="console">
+    <div class="console__status">
+      <p class="console__status-motion" role="status">
+        <span class="console__status-dot" aria-hidden="true">○</span>
+        <span class="console__status-label">idle</span>
+      </p>
+      <div class="console__status-actions">
+        <button class="console__ghost console__ghost--stop" type="button" disabled>stop</button>
+        <button class="console__ghost console__ghost--clear" type="button">clear</button>
+      </div>
+    </div>
+    <div class="console__log" role="log" aria-live="polite" aria-label="Console output">
+      <pre class="console__preamble">{preamble}</pre>
+      <pre class="console__line console__line--note"># Already run -- the real palmimo_sdk, with this page standing in for the camera, display and mic.</pre>
+      {/* What the reader runs, kept apart from the two lines above: "clear" empties this and only this. */}
+      <div class="console__transcript"></div>
+    </div>
+    <form class="console__form">
+      <span class="console__caret" aria-hidden="true">&gt;&gt;&gt;</span>
+      <input
+        class="console__input"
+        name="command"
+        aria-label="Python command"
+        placeholder="Enter runs the line &mdash; &uarr; / &darr; for what you have already run"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+      />
+    </form>
+    <div class="console__examples" role="group" aria-label="Example commands">
+      <span class="console__examples-label" aria-hidden="true">Try:</span>
+      {examples.map((example) => <button class="console__example" type="button">{example}</button>)}
+    </div>
+  </div>
+</div>
+
+<script>
+  import { mountStage } from '../scripts/robot-stage.js';
+  import { mountConsole } from '../scripts/robot-console.js';
+
+  type Stage = Awaited<ReturnType<typeof mountStage>>;
+
+  const canvas = document.querySelector('.stage__canvas');
+  const console_ = document.querySelector('.console');
+  if (console_ instanceof HTMLElement) {
+    // Wired before the stage and never waiting on it: the prompt is the SDK,
+    // the stage only draws what it returns. A form whose handler arrives with
+    // the model answers Enter by navigating the page away.
+    let stage: Stage | null = null;
+    mountConsole(console_, { pose: (angles) => stage?.pose(angles) });
+
+    if (canvas instanceof HTMLCanvasElement) {
+      try {
+        const stageEl = canvas.closest('.stage');
+        const viewFrame = stageEl?.querySelector('.stage__view');
+        const micMeter = stageEl?.querySelector('.stage__mic');
+        stage = await mountStage(
+          canvas,
+          canvas.dataset.model,
+          viewFrame instanceof HTMLElement ? viewFrame : undefined,
+          micMeter instanceof HTMLElement ? { mic: micMeter } : undefined
+        );
+        canvas.closest('.stage')?.classList.add('stage--live');
+        // The page's own scripts reach the robot through this, and so will a
+        // reader who would rather drive it from the browser's own console.
+        Object.assign(window, { palmimoStage: stage });
+      } catch (error) {
+        // The default fallback names the one cause this cannot be: the script
+        // is running, so JavaScript is not what is missing.
+        const fallback = canvas.closest('.stage')?.querySelector('.stage__fallback');
+        const reason = error instanceof Error ? error.message : String(error);
+        if (fallback) {
+          fallback.textContent =
+            `The 3D view could not start: ${reason}. The prompt still runs the robot, ` +
+            'and the photograph at the top of the page shows it.';
+        }
+      }
+    }
+  }
+</script>

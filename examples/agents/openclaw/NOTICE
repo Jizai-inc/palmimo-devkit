@@ -1,0 +1,11 @@
+Palmimo OpenClaw Connection Kit
+Copyright 2026 Jizai Inc.
+
+This product includes software developed at Jizai Inc.
+
+The config templates, Makefile, and skill in this directory are licensed
+under the Apache License 2.0; see LICENSE for the full text.
+
+They vendor no third-party source. OpenClaw itself is resolved at run time —
+`make setup` fetches its published, tag-pinned Compose file, and Compose
+resolves the image from that. It is attributed in THIRD_PARTY_NOTICES.md.

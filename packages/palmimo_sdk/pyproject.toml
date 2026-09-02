@@ -1,0 +1,65 @@
+[project]
+name = "palmimo-sdk"
+version = "0.1.0"
+description = "Palmimo SDK — Palmimo facade, MotionEngine, and ServoDriver abstraction"
+authors = [{ name = "Jizai Inc.", email = "noreply@jizai.ai" }]
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = ["pyserial>=3.5"]
+
+[project.urls]
+Homepage = "https://palmimo.dev"
+Repository = "https://github.com/Jizai-inc/palmimo-devkit"
+Documentation = "https://docs.palmimo.dev"
+Issues = "https://github.com/Jizai-inc/palmimo-devkit/issues"
+
+[project.optional-dependencies]
+# Hardware backend (DynamixelDriver over the Dynamixel bus; pyserial is a base
+# dep). Compute-only use needs none of this.
+hardware = ["dynamixel-sdk>=3.7.31"]
+# Face display client (FaceDisplay over USB-CDC to the face-display board).
+# Lazy-imported, so `import palmimo_sdk` stays dependency-free without it.
+face = ["pyserial"]
+# Speaker (piper-plus TTS). Opt-in so `import palmimo_sdk` stays dependency-free.
+speech = ["piper-plus"]
+# Mic streaming capture (MicStream) + GTCRN noise removal (sherpa-onnx
+# OnlineSpeechDenoiser). Lazy-imported, so `import palmimo_sdk` stays
+# dependency-free without it. sherpa-onnx-core is pinned separately because
+# aarch64 (Pi) and macOS have no prebuilt wheel and its sdist does not bundle
+# libonnxruntime; keep its version matched to sherpa-onnx (ABI compatibility).
+voice = [
+    # ai-edge-litert publishes aarch64 (Pi) wheels directly, unlike sherpa-onnx-core above — no separate pin needed.
+    "ai-edge-litert>=2.1",
+    "sounddevice>=0.4",
+    "numpy>=1.24",
+    "sherpa-onnx>=1.13.0",
+    "sherpa-onnx-core>=1.13.0 ; platform_machine == 'aarch64' or sys_platform == 'darwin'",
+]
+# LLM tool-calling layer (palmimo_sdk.agent: Tool / ToolResult / AgentToolSet).
+# pydantic is imported only inside that subpackage, so `import palmimo_sdk`
+# itself stays dependency-free without this extra. CaptureTool's image capture
+# additionally needs `[vision]` (it imports cv2 with a graceful fallback).
+agent = ["pydantic>=2"]
+# Head camera (HeadCamera over cv2.VideoCapture). Lazy-imported, so
+# `import palmimo_sdk` stays dependency-free without it.
+vision = ["opencv-python>=4"]
+# MCP server (palmimo_sdk.mcp) exposing the agent toolset over the Model
+# Context Protocol. Builds on the [agent] extra's Tool / AgentToolSet layer.
+# Pinned below 3 -- the 2.x line is the current major; a 3.x bump would need
+# its own migration (the 2.x line already dropped the low-level Server's
+# decorator-based list_tools()/call_tool() registration in favor of the
+# on_list_tools/on_call_tool constructor kwargs, and mcp.shared.memory's
+# create_connected_server_and_client_session in favor of a unified Client).
+# mcp-types, starlette, and uvicorn are all already reachable transitively
+# through `mcp` itself, but palmimo_sdk.mcp imports each of them directly
+# (server.py: `import mcp_types`; __main__.py: `import uvicorn`,
+# `from starlette...`), so they are declared here too rather than relying on
+# an undeclared transitive dependency for a direct import.
+mcp = ["mcp>=2,<3", "mcp-types>=2,<3", "starlette>=0.27", "uvicorn>=0.31.1", "palmimo-sdk[agent]"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["palmimo_sdk"]

@@ -1,0 +1,601 @@
+/* Palmimo's palette, shared with the product's landing page. The colours are
+   read off the robot itself: oak and walnut are the plywood legs, face is the
+   yellow of the display it looks at you with, moss is the room it was
+   photographed in, and paper is the desk it stands on. */
+:root {
+	--pal-paper: #faf9f6;
+	--pal-paper-warm: #f3efe7;
+	--pal-ink: #221d17;
+	--pal-ink-soft: #57503f;
+	--pal-walnut: #5c4230;
+	--pal-oak: #c7a67e;
+	--pal-oak-soft: #e8ddc9;
+	--pal-moss: #2e5c44;
+	--pal-moss-deep: #244836;
+	--pal-face: #f0c94a;
+
+	--sl-font: 'Zen Kaku Gothic New', ui-sans-serif, system-ui, -apple-system, sans-serif;
+	--sl-font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
+	--pal-font-display: 'Shippori Mincho', Georgia, serif;
+}
+
+/* Moss carries the links and controls: it is the one brand colour that clears
+   contrast against paper at body size, which face yellow and oak do not. */
+:root[data-theme='light'] {
+	--sl-color-accent-low: var(--pal-oak-soft);
+	--sl-color-accent: var(--pal-moss);
+	--sl-color-accent-high: var(--pal-moss-deep);
+	--sl-color-white: var(--pal-ink);
+	--sl-color-gray-1: #2c261e;
+	--sl-color-gray-2: var(--pal-ink-soft);
+	--sl-color-gray-3: #7d7360;
+	--sl-color-gray-4: #a89c84;
+	--sl-color-gray-5: #d8cfbc;
+	--sl-color-gray-6: var(--pal-oak-soft);
+	--sl-color-gray-7: var(--pal-paper-warm);
+	--sl-color-black: var(--pal-paper);
+	--sl-color-bg-sidebar: var(--pal-paper-warm);
+	--sl-color-bg-nav: var(--pal-paper-warm);
+}
+
+/* Dark is the same room with the lights off: the ground drops to ink and oak
+   takes over the links, since moss goes muddy against it. */
+:root[data-theme='dark'] {
+	--sl-color-accent-low: #35291c;
+	--sl-color-accent: #9c7d55;
+	--sl-color-accent-high: var(--pal-oak);
+	--sl-color-white: var(--pal-paper);
+	--sl-color-gray-1: #ece7dd;
+	--sl-color-gray-2: #ccc4b4;
+	--sl-color-gray-3: #9d9382;
+	--sl-color-gray-4: #6d6455;
+	--sl-color-gray-5: #453d33;
+	--sl-color-gray-6: #322b23;
+	--sl-color-black: #1a1613;
+	--sl-color-bg-sidebar: var(--pal-ink);
+	--sl-color-bg-nav: var(--pal-ink);
+}
+
+/* The kit's vocabulary is servo ticks, leg indices and bus rates, so the
+   labelling voice is monospaced. Prose stays in the sans face. */
+.sidebar-content summary,
+site-search button span {
+	font-family: var(--sl-font-mono);
+	letter-spacing: -0.01em;
+}
+
+.sidebar-content summary .group-label span {
+	font-size: 0.75rem;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--sl-color-gray-3);
+}
+
+/* The wordmark is a tight crop, so it needs the height a text title would have
+   taken rather than the width. */
+.site-title img {
+	height: 1.35rem;
+	width: auto;
+}
+
+/* Tick values, servo names and pin numbers read as data, not as prose. */
+.sl-markdown-content table code {
+	font-size: 0.85em;
+	color: var(--sl-color-text-accent);
+}
+
+/* The .drawio.svg diagrams carry a baked-in white ground, so on the ink theme
+   they would otherwise burn as bare white rectangles. Give them the same plate
+   in both themes, so the treatment reads as deliberate. */
+.sl-markdown-content img[src$='.drawio.svg'] {
+	background: #ffffff;
+	border-radius: 10px;
+	padding: 0.75rem;
+	box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 0.18);
+}
+
+/* The hero photograph is the argument that this is a real robot on a real
+   desk, so it is given the full width of the hero rather than a boxed corner. */
+.hero img {
+	width: 100%;
+	max-width: none;
+	border-radius: 14px;
+	box-shadow: 0 1rem 2.5rem rgb(34 29 23 / 0.22);
+}
+
+/* The heading is the lockup itself -- the same file the header carries -- so the
+   page opens on the product's name drawn rather than typeset, and the photo's
+   framing above must not follow it. */
+.hero h1 .hero-logo {
+	width: auto;
+	max-width: min(100%, 20rem);
+	border-radius: 0;
+	box-shadow: none;
+}
+
+/* The model sits on a lit stage rather than on the page: the robot is a black
+   printed frame on oak, so it disappears against the ink theme. Given the same
+   plate the diagrams get, it reads in both themes and carries its own local
+   text colours to stay legible on it. */
+.stage {
+	--stage-ground: var(--pal-paper-warm);
+	--stage-rule: #ddd3bf;
+	--stage-text: var(--pal-ink-soft);
+
+	margin: 2.5rem 0 3rem;
+	border-radius: 14px;
+	background: var(--stage-ground);
+	overflow: hidden;
+	box-shadow: 0 0.5rem 1.5rem rgb(34 29 23 / 0.18);
+}
+
+/* Vertical drags belong to the page, so a reader on a phone can scroll past the
+   robot; what is left -- horizontal drags, two fingers, the wheel -- turns it. */
+.stage__canvas {
+	display: block;
+	width: 100%;
+	height: min(28rem, 60vh);
+	touch-action: pan-y;
+}
+
+.stage__frame {
+	position: relative;
+}
+
+/* What the robot sees, in the corner of what we see. The renderer measures
+   this element and draws inside it, so the box is the whole definition of
+   where the inset goes -- there is no second copy of these numbers in the
+   script. It takes no pointer events: dragging over it still turns the stage,
+   which is what a reader who has not noticed it will try. */
+.stage__signals {
+	position: absolute;
+	top: 0.9rem;
+	right: 0.9rem;
+	width: min(26%, 11rem);
+	display: none;
+	pointer-events: none;
+}
+
+.stage--live .stage__signals {
+	display: block;
+}
+
+.stage__view {
+	position: relative;
+	width: 100%;
+	aspect-ratio: 4 / 3;
+	margin: 0;
+	border: 1px solid var(--stage-rule);
+	border-radius: 6px;
+}
+
+.stage__view-label {
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	padding: 0.15rem 0.4rem;
+	background: var(--stage-ground);
+	border-top: 1px solid var(--stage-rule);
+	border-radius: 0 0 5px 5px;
+	font-family: var(--sl-font-mono);
+	font-size: 0.6rem;
+	letter-spacing: 0.04em;
+	color: var(--stage-text);
+}
+
+.stage__caption {
+	margin: 0;
+	padding: 0.85rem 1.1rem;
+	border-top: 1px solid var(--stage-rule);
+	font-family: var(--sl-font-mono);
+	font-size: 0.75rem;
+	letter-spacing: 0.03em;
+	color: var(--stage-text);
+}
+
+/* A reader without the viewer's JavaScript still gets told what the frame was
+   for, instead of a silent empty box. */
+.stage__fallback {
+	padding: 2rem 1.1rem;
+	text-align: center;
+	color: var(--stage-text);
+}
+
+.stage--live .stage__fallback {
+	display: none;
+}
+
+/* The prompt the robot answers to. Ink rather than paper: a terminal is the
+   one thing on this page a reader already knows how to read, and dressing it
+   as prose would hide what it is. It sits inside the stage because it is not a
+   separate feature -- the robot above is this console's output. */
+.console {
+	--console-ground: var(--pal-ink);
+	--console-text: #e7e0d2;
+	--console-dim: #9d9384;
+
+	border-top: 1px solid var(--stage-rule);
+	background: var(--console-ground);
+	color: var(--console-text);
+	font-family: var(--sl-font-mono);
+	font-size: 0.8rem;
+	line-height: 1.55;
+}
+
+/* The one thing the robot's own motion cannot show: it walks forever until
+   told otherwise, and a reader who only watches the stage has no way to see
+   that. The dot is that tell, and stop/clear sit beside it because they are
+   the only two things a reader does to the console itself, not to Python. */
+.console__status {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.75rem;
+	padding: 0.6rem 1.1rem;
+	border-bottom: 1px solid #3a332a;
+}
+
+.console__status-motion {
+	margin: 0;
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	color: var(--console-dim);
+}
+
+.console__status-dot {
+	color: var(--pal-oak);
+}
+
+.console__status-dot--active {
+	color: var(--pal-face);
+	animation: status-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.35;
+	}
+}
+
+.console__status-actions {
+	display: flex;
+	gap: 0.4rem;
+}
+
+/* Quieter than .console__example: these act on the console, not on the robot,
+   so they should not compete with the commands for the reader's eye. */
+.console__ghost {
+	border: 1px solid #3a332a;
+	border-radius: 999px;
+	padding: 0.1rem 0.6rem;
+	background: none;
+	color: var(--console-dim);
+	font: inherit;
+	font-size: 0.75rem;
+	cursor: pointer;
+}
+
+.console__ghost:hover:not(:disabled),
+.console__ghost:focus-visible:not(:disabled) {
+	border-color: var(--pal-oak);
+	color: var(--pal-oak);
+}
+
+.console__ghost:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
+.console__log {
+	max-height: 12rem;
+	overflow-y: auto;
+	padding: 0.9rem 1.1rem 0.4rem;
+}
+
+/* The two lines the page already ran, shown as the script they are. Set apart
+   from the transcript below it: it is not something a reader typed here, it is
+   what any script driving this robot opens with. */
+.console__preamble {
+	margin: 0 0 0.5rem;
+	padding: 0 0 0.5rem;
+	border: none;
+	border-bottom: 1px solid #3a332a;
+	background: none;
+	color: var(--pal-oak);
+	font-size: inherit;
+	white-space: pre-wrap;
+}
+
+.console__line {
+	margin: 0;
+	padding: 0;
+	border: none;
+	background: none;
+	color: inherit;
+	font-size: inherit;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.console__line--echo {
+	color: var(--pal-face);
+}
+
+.console__line--note {
+	color: var(--console-dim);
+}
+
+/* The one colour here not read off the robot: a fault has to separate itself
+   from output at a glance, and nothing in oak-and-moss does that. */
+.console__line--error {
+	color: #e0906f;
+}
+
+.console__form {
+	display: flex;
+	align-items: baseline;
+	gap: 0.5rem;
+	padding: 0.2rem 1.1rem 0.9rem;
+}
+
+.console__caret {
+	color: var(--pal-face);
+	user-select: none;
+}
+
+.console__input {
+	flex: 1;
+	min-width: 0;
+	border: none;
+	background: none;
+	color: inherit;
+	font: inherit;
+	caret-color: var(--pal-face);
+}
+
+.console__input:focus {
+	outline: none;
+}
+
+/* The two keys worth knowing, on the line they apply to rather than on a line
+   of their own under the console. It leaves as soon as the reader types, which
+   is the moment it has done its job. */
+.console__input::placeholder {
+	color: var(--console-dim);
+	opacity: 1;
+}
+
+.console__examples {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+	margin: 0;
+	padding: 0 1.1rem 1rem;
+}
+
+/* Narrow enough that a chip is most of the width, so wrapping gives one chip
+   per row and the examples grow taller than the robot they are examples for.
+   Swiped instead: the row keeps the height it has on a desktop, and the chips
+   past the edge are reached the way anything else on a phone is. */
+@media (max-width: 40rem) {
+	.console__examples {
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+
+	.console__examples::-webkit-scrollbar {
+		display: none;
+	}
+
+	.console__example,
+	.console__examples-label {
+		flex: none;
+	}
+
+	/* Code, so it scrolls rather than wraps: a line broken mid-expression at
+	   this width is harder to read than one that runs off the edge, and the
+	   preamble is the shape of the reader's own script. */
+	.console__preamble {
+		white-space: pre;
+		overflow-x: auto;
+	}
+}
+
+.console__examples-label {
+	align-self: center;
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--console-dim);
+}
+
+.console__example {
+	border: 1px solid #4a4237;
+	border-radius: 999px;
+	padding: 0.15rem 0.7rem;
+	background: none;
+	color: var(--console-dim);
+	font: inherit;
+	cursor: pointer;
+}
+
+.console__example:hover,
+.console__example:focus-visible {
+	border-color: var(--pal-oak);
+	color: var(--pal-oak);
+}
+
+/* Wide enough to set the prompt beside the robot rather than under it. They are
+   read together -- a line typed at the prompt is answered by the model -- and
+   stacked they are a screen apart. Starlight caps the column at 1080px, so
+   above this breakpoint the stage is always that wide: the terminal's half is
+   565px against a 493px preamble, and the split does not move again. */
+@media (min-width: 70rem) {
+	.stage {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+		align-items: start;
+	}
+
+	.stage__frame,
+	.stage__fallback,
+	.stage__caption {
+		grid-column: 1;
+	}
+
+	/* Spans whatever rows the left column ends up with -- the fallback is there
+	   until the stage is live, and gone after. Extra rows are empty and zero. */
+	.console {
+		grid-column: 2;
+		grid-row: 1 / span 3;
+		display: flex;
+		flex-direction: column;
+		align-self: stretch;
+		border-top: none;
+		border-left: 1px solid var(--stage-rule);
+	}
+
+	/* The height the robot takes is height the transcript can have, instead of
+	   a band of empty ink under the examples. Sized from the space left over
+	   rather than from what it holds -- a basis of `auto` would let a long
+	   session push the whole stage taller as the reader worked. */
+	.console__log {
+		flex: 1 1 0;
+		min-height: 0;
+		max-height: none;
+	}
+}
+
+
+/* The signature: the gait itself. Three legs carry while three swing, then they
+   trade -- the anti-phase tripod every motion in the kit is built on. Walnut is
+   tripod A and moss is tripod B, the pairing the motion pages use. */
+.gait {
+	margin: 1rem 0 3rem;
+	border-top: 1px solid var(--sl-color-gray-5);
+	padding-top: 1.25rem;
+}
+
+.gait__legs {
+	display: flex;
+	gap: 0.35rem;
+	align-items: flex-end;
+	height: 1.75rem;
+	width: min(100%, 13rem);
+}
+
+.gait__leg {
+	flex: 1;
+	border-radius: 1px;
+	background: var(--pal-moss);
+	height: 0.35rem;
+	animation: gait-step 1.8s steps(1, end) infinite;
+}
+
+.gait__leg--a {
+	background: var(--pal-walnut);
+	animation-delay: -0.9s;
+}
+
+:root[data-theme='dark'] .gait__leg {
+	background: #4f8f6d;
+}
+
+:root[data-theme='dark'] .gait__leg--a {
+	background: var(--pal-oak);
+}
+
+@keyframes gait-step {
+	0%,
+	50% {
+		height: 1.75rem;
+		opacity: 1;
+	}
+	50.01%,
+	100% {
+		height: 0.35rem;
+		opacity: 0.45;
+	}
+}
+
+.gait__caption {
+	margin-top: 0.75rem;
+	font-family: var(--sl-font-mono);
+	font-size: 0.75rem;
+	letter-spacing: 0.04em;
+	color: var(--sl-color-gray-3);
+}
+
+/* Neutral stance is where the robot parks between motions, and it is where this
+   stands still for a reader who asked for less movement. */
+@media (prefers-reduced-motion: reduce) {
+	.gait__leg {
+		animation: none;
+		height: 1rem;
+		opacity: 1;
+	}
+
+	.console__status-dot--active {
+		animation: none;
+		opacity: 1;
+	}
+}
+
+/* The mic's own corner of the stage, under what the camera sees. Labelled even
+   when nothing is happening, so a meter that fills mid-capture is read as this
+   robot's microphone rather than as the browser reaching for the reader's. */
+.stage__mic {
+	margin: 0.5rem 0 0;
+	font-family: var(--sl-font-mono);
+	font-size: 0.6rem;
+	letter-spacing: 0.04em;
+	color: var(--stage-text);
+}
+
+.stage__mic-label {
+	display: block;
+}
+
+.stage__mic-meter {
+	display: block;
+	height: 3px;
+	margin: 0.25rem 0;
+	border: 1px solid var(--stage-rule);
+	border-radius: 2px;
+	overflow: hidden;
+}
+
+.stage__mic-fill {
+	display: block;
+	width: 0;
+	height: 100%;
+	background: var(--sl-color-accent);
+}
+
+/* Runs for exactly as long as the capture the reader asked for. */
+.stage__mic.is-live .stage__mic-fill {
+	animation: stage-capture var(--capture-seconds, 3s) linear forwards;
+}
+
+@keyframes stage-capture {
+	from {
+		width: 0;
+	}
+	to {
+		width: 100%;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.stage__mic.is-live .stage__mic-fill {
+		animation: none;
+		width: 100%;
+	}
+}

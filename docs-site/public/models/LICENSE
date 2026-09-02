@@ -1,0 +1,21 @@
+Palmimo robot model (palmimo.glb)
+Copyright 2026 Jizai Inc. All rights reserved.
+
+This file is a display-only asset, included so that the Palmimo DevKit
+documentation site can show the robot. It is NOT covered by the Apache
+License 2.0 that applies to the rest of this repository.
+
+Permitted without further permission:
+
+  - Viewing the model on the documentation site.
+  - Redistributing it unmodified as part of a copy or fork of this
+    repository, with this notice intact.
+
+Not permitted without prior written permission from Jizai Inc.:
+
+  - Modifying the model or any part of it.
+  - Extracting geometry, dimensions, or joint placement from it for use
+    elsewhere, including fabrication and 3D printing.
+  - Using it as the basis for another design or product.
+
+To request permission, use the contact form at https://palmimo.dev/en

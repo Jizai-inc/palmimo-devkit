@@ -1,0 +1,215 @@
+[project]
+name = "palmimo-devkit-software"
+version = "0.1.0"
+description = "Palmimo DevKit software utilities"
+authors = [{ name = "Jizai Inc.", email = "noreply@jizai.ai" }]
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "dynamixel-sdk>=3.7.31",
+    "palmimo-sdk",
+    "pyserial>=3.5",
+    "tqdm>=4.66.0",
+    "palmimo-wakeword-agent",
+    "palmimo-companion-agent",
+]
+
+[project.urls]
+Homepage = "https://palmimo.dev"
+Repository = "https://github.com/Jizai-inc/palmimo-devkit"
+Documentation = "https://docs.palmimo.dev"
+Issues = "https://github.com/Jizai-inc/palmimo-devkit/issues"
+
+[project.optional-dependencies]
+# SDK streaming mic capture + GTCRN denoise (MicStream / palmimo_sdk.audio).
+# Forwards to the palmimo-sdk member's own `voice` extra so
+# `uv sync --extra voice` works from the workspace root.
+voice = ["palmimo-sdk[voice]"]
+# SDK camera capture (palmimo_sdk.io.camera). Forwards to the palmimo-sdk
+# member's own `vision` extra so `uv sync --extra vision` works from the
+# workspace root.
+vision = ["palmimo-sdk[vision]"]
+# SDK MCP server (palmimo_sdk.mcp). Forwards to the palmimo-sdk member's own
+# `mcp` extra so `uv sync --extra mcp` works from the workspace root -- unlike
+# voice/speech/hardware, nothing else in the workspace depends on the `mcp`
+# package transitively, so it needs this extra to land in the shared venv.
+mcp = ["palmimo-sdk[mcp]"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.8,<3",
+    "pytest>=8,<10",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.3,<1",
+    "types-PyYAML",
+    # The mcp extra's dependencies reach the dev venv only through this line:
+    # CI runs `uv sync --dev` + full pytest, and unlike pydantic (pulled in
+    # transitively by the wakeword example) nothing else provides the `mcp`
+    # package, so without it packages/palmimo_sdk/tests/test_mcp_server.py
+    # fails to import instead of being exercised.
+    "palmimo-sdk[mcp]",
+    "pytest-cov>=5",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--import-mode=importlib"
+# packages/palmimo_sdk uses a self-nested palmimo_sdk/palmimo_sdk/ layout (the
+# outer directory shares its name with the package). --import-mode=importlib
+# does not consider namespace packages by default, so the outer directory
+# itself resolves as an empty namespace package and shadows the real editable
+# package (reproducible by importing <pkg> from a test under <pkg>/tests/).
+# Include namespace packages in resolution to avoid this.
+consider_namespace_packages = true
+testpaths = [
+    "tests",
+    "packages/palmimo_sdk/tests",
+    "examples",
+]
+
+[tool.coverage.run]
+# Code needing a servo bus stays in scope and reads as an honest zero
+# (`io/_dynamixel_bus.py`); the floor is set with it counted, not excluded.
+source = ["palmimo_sdk", "palmimo_wakeword_agent", "palmimo_companion_agent"]
+
+[tool.uv]
+# g2p-en declares a dependency on `distance` but never imports it (verified by
+# grepping the installed package); `distance` is GPL-2.0, so override g2p-en's
+# metadata to drop the unused declaration rather than carry a GPL package in
+# the lockfile.
+[[tool.uv.dependency-metadata]]
+name = "g2p-en"
+version = "2.1.0"
+requires-dist = ["inflect", "nltk", "numpy"]
+
+[tool.uv.workspace]
+members = ["packages/*", "examples/*", "examples/agents/*"]
+# `examples/*` matches the `examples/agents` directory itself (it holds no
+# pyproject.toml of its own — only its `wakeword/` and `companion/` children,
+# matched via `examples/agents/*`, are real projects), so exclude it
+# explicitly. `examples/agents/openclaw` is a config-and-docs connection kit
+# with no Python code of its own (see its README), so it is excluded the
+# same way.
+#
+# `integrations/lerobot` is a workspace of its own and must stay one. No member
+# glob reaches it today, so this entry changes nothing right now — it is here
+# so that widening a glob later cannot quietly swallow it. Making it a member
+# would resolve `lerobot`, and with it draccus -> pyyaml-include (GPLv3+), into
+# this tree's uv.lock, which is the closure the shipped image installs.
+# tests/contracts/test_self_containment.py records the same boundary from the
+# other side.
+exclude = ["examples/agents", "examples/agents/openclaw", "integrations/lerobot"]
+
+[tool.uv.sources]
+palmimo-sdk = { workspace = true }
+palmimo-wakeword-agent = { workspace = true }
+palmimo-companion-agent = { workspace = true }
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+include = [
+    "examples/**/*.py",
+    "packages/palmimo_sdk/**/*.py",
+    "scripts/**/*.py",
+    "tests/**/*.py",
+]
+exclude = [
+    ".venv",
+    "__pycache__",
+    # The nested LeRobot workspace lints itself, in its own CI job and against
+    # its own [tool.ruff]. Without this it is linted twice: `include` above
+    # does not stop ruff from descending into it, because ruff resolves each
+    # file against the nearest pyproject.toml carrying a [tool.ruff] and the
+    # integration's own `include` then matches. The result agrees today (both
+    # runs apply the integration's settings), but one tree answering to two
+    # jobs makes a failure's owner ambiguous, and mypy `files` and pytest
+    # `testpaths` already stop at this boundary.
+    #
+    # A basename pattern, like `.venv`/`__pycache__` above, so it would also
+    # match an `integrations/` at some other depth. The anchored `/integrations`
+    # that would say "just this one" was measured not to work here (ruff 0.14.4
+    # put all 12 files back in scope), so the loose form is the one that
+    # actually excludes.
+    "integrations",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors (PEP-8)
+    "W",      # pycodestyle warnings (PEP-8)
+    "F",      # Pyflakes (logic error detection)
+    "I",      # isort (import ordering)
+    "N",      # pep8-naming (naming conventions)
+    "UP",     # pyupgrade (update to modern Python syntax)
+    "B",      # flake8-bugbear (bug-prone patterns)
+    "C4",     # flake8-comprehensions (comprehension optimization)
+    "SIM",    # flake8-simplify (code simplification)
+    "RUF",    # Ruff-specific rules
+    "TID251", # flake8-tidy-imports: banned-api (bans reaching into palmimo_sdk.io)
+]
+ignore = [
+    "E501",   # line-too-long (controlled by line-length instead)
+    "E741",   # ambiguous variable name (l, O, I, etc. - allowed in math expressions)
+    "E402",   # module-import-not-at-top (allows imports after sys.path manipulation)
+    "N806",   # non-lowercase-variable-in-function (allows uppercase matrix variables)
+    "B008",   # function-call-in-default-argument (needed for Pydantic, etc.)
+    "RUF001", # ambiguous-unicode-character-string (the robot speaks Japanese)
+    "RUF002", # ambiguous-unicode-character-docstring (en dash, minus sign, and › in English prose)
+    "RUF003", # ambiguous-unicode-character-comment (same typography as docstrings)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["palmimo_sdk", "palmimo_wakeword_agent", "palmimo_companion_agent"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"palmimo_sdk.io" = { msg = "palmimo_sdk.io is an internal layer. Import from palmimo_sdk (its public surface) instead." }
+
+[tool.ruff.lint.per-file-ignores]
+# palmimo_sdk's own package/tests legitimately reach into its own io/ layer.
+"packages/palmimo_sdk/**" = ["TID251"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = false  # disabled because torch's incomplete type stubs make tensor ops return Any
+warn_unused_configs = true
+# AGENTS.md requires type hints on all function signatures.
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+explicit_package_bases = true
+namespace_packages = true
+# Needed since packages/palmimo_sdk/palmimo_sdk shipped py.typed: without this,
+# the same file resolves to two different module names (once via `files`
+# below, once via `import palmimo_sdk...` through the installed package) and
+# mypy errors with "Source file found twice under different module names".
+# Anchoring mypy_path here makes both routes agree on "palmimo_sdk...".
+mypy_path = ["packages/palmimo_sdk"]
+# Suppress errors when a third-party library has no type stubs. Checked with
+# this OFF: the untyped set is a long tail, not a small/stable
+# one -- dynamixel_sdk, piper-plus, sherpa-onnx, mediapipe, etc., plus both
+# example agent packages, which don't ship their own py.typed yet. Kept as a
+# documented blind spot rather than an enumerated allowlist.
+ignore_missing_imports = true
+# Target directories
+files = [
+    "examples/",
+    "packages/palmimo_sdk/",
+    "scripts/",
+    "tests/",
+]
+exclude = [
+    "\\.venv",
+]

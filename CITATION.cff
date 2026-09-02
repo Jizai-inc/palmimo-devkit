@@ -1,0 +1,12 @@
+# Read by GitHub's "Cite this repository" button and by citation tooling.
+# Add `version` and `date-released` alongside the first tagged release.
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: Palmimo DevKit
+type: software
+authors:
+  - name: Jizai Inc.
+    website: https://jizai.ai/
+url: https://github.com/Jizai-inc/palmimo-devkit
+repository-code: https://github.com/Jizai-inc/palmimo-devkit
+license: Apache-2.0

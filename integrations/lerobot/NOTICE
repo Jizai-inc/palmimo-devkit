@@ -1,0 +1,12 @@
+Palmimo LeRobot Integration
+Copyright 2026 Jizai Inc.
+
+This product includes software developed at Jizai Inc.
+
+The plugins in this workspace are licensed under the Apache License 2.0; see
+LICENSE for the full text.
+
+They vendor no third-party source. Everything else is resolved at install time
+by uv from this workspace's lock file, and some of it carries terms stronger or
+narrower than Apache-2.0 — including copyleft and proprietary components reached
+through LeRobot. Those are attributed in THIRD_PARTY_NOTICES.md.

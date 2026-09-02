@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="680px" height="450px" viewBox="0 0 680 450">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#333333"/></marker>
+</defs>
+<rect x="0" y="0" width="680" height="450" fill="#ffffff"/>
+
+<rect x="20" y="20" width="640" height="72" rx="3" fill="#FFE6CC" stroke="#D79B00" stroke-width="1"/>
+<text x="340" y="47" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#7a4a00" text-anchor="middle">Example agent apps / User application</text>
+<text x="340" y="70" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#7a4a00" text-anchor="middle">User-facing CLI or custom scripts</text>
+
+<path d="M 340 92 L 340 106" fill="none" stroke="#333333" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<rect x="20" y="108" width="640" height="88" rx="3" fill="#FFF2CC" stroke="#D6B656" stroke-width="1"/>
+<text x="340" y="130" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#7a6a00" text-anchor="middle">palmimo_sdk.robot — Palmimo facade</text>
+<text x="340" y="151" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" fill="#222222" text-anchor="middle">Public API: forward() / wave() / play() / look() …</text>
+<text x="340" y="167" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#222222" text-anchor="middle">Maps string command → Motion enum</text>
+<text x="340" y="183" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#222222" text-anchor="middle">Owns state + connection lifecycle (with-block)</text>
+
+<path d="M 340 196 L 340 210" fill="none" stroke="#333333" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="352" y="207" font-family="Helvetica, Arial, sans-serif" font-size="9" font-style="italic" fill="#7a6a00">step() per frame</text>
+
+<rect x="20" y="212" width="640" height="82" rx="3" fill="#D5E8D4" stroke="#82B366" stroke-width="1"/>
+<text x="340" y="236" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#2d5a2d" text-anchor="middle">palmimo_sdk.engine — MotionEngine</text>
+<text x="340" y="257" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#222222" text-anchor="middle">Pure computation: gait generation, IK, servo calc</text>
+<text x="340" y="273" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#222222" text-anchor="middle">No hardware I/O — returns a position dict per frame</text>
+
+<path d="M 340 294 L 340 308" fill="none" stroke="#333333" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="352" y="305" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9" font-style="italic" fill="#2d5a2d">Dict[str, int] · servo → tick</text>
+
+<rect x="20" y="310" width="640" height="88" rx="3" fill="#DAE8FC" stroke="#6C8EBF" stroke-width="1"/>
+<text x="340" y="334" font-family="Helvetica, Arial, sans-serif" font-size="13" font-weight="bold" fill="#1f3a5f" text-anchor="middle">palmimo_sdk.io.ServoDriver — I/O boundary (ABC)</text>
+<text x="340" y="356" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#222222" text-anchor="middle">Adapts the position dict → backend</text>
+<text x="340" y="372" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" fill="#222222" text-anchor="middle">DynamixelDriver drives the bus (dynamixel_sdk)</text>
+<text x="340" y="388" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#555555" text-anchor="middle">compute-only when no driver is injected</text>
+
+<text x="340" y="426" font-family="Helvetica, Arial, sans-serif" font-size="10" font-style="italic" fill="#333333" text-anchor="middle">Computation ≠ Communication — engine.py never touches serial ports</text>
+</svg>

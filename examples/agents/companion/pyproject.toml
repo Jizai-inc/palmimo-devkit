@@ -1,0 +1,60 @@
+[project]
+name = "palmimo-companion-agent"
+version = "0.1.0"
+description = "Companion voice agent example for Palmimo (LLM tool-calling + guarded speech routing)"
+authors = [{ name = "Jizai Inc.", email = "noreply@jizai.ai" }]
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "litellm>=1.40",
+    "pydantic-settings>=2.0",
+    # MicStream (streaming mic capture + GTCRN denoise), int16_to_wav, and the
+    # head camera (palmimo_sdk.io.camera), for the speech pipeline's audio
+    # source (see palmimo_companion_agent.pipeline.speech) and the capture
+    # tool. `agent` is the palmimo_sdk.agent Tool/AgentToolSet layer this
+    # agent's own tools (core.tools) build on. `speech` is piper, the default
+    # TTS backend; wiring builds a Speaker unconditionally, so it has to be
+    # installed even when settings.voice_backend selects another engine.
+    # `hardware` is dynamixel-sdk, which DynamixelDriver reaches from inside
+    # Palmimo.connect(); hardware defaults to True, so a stock run drives the
+    # servo bus. `face` is the FaceDisplay client wiring attaches alongside it.
+    "palmimo-sdk[voice,vision,agent,speech,hardware,face]",
+    "numpy>=1.24",
+    # Silero VAD v5 ONNX inference (see palmimo_companion_agent.pipeline.vad), same
+    # runtime the wakeword example uses for the same model.
+    "onnxruntime>=1.17",
+    # main.py's typer CLI and tui.py's Textual front end (see
+    # palmimo_companion_agent.main / .pipeline.ui.cli / .pipeline.ui.tui).
+    "typer>=0.12",
+    "textual>=0.60",
+    # The realtime voice session (palmimo_companion_agent.realtime) talks to
+    # the OpenAI Realtime API over a websocket.
+    "websockets>=14",
+    # Resampling for the realtime session's mic upsample and pitch shift.
+    "scipy>=1.11",
+    # Camera-based reflexes (palmimo_companion_agent.core.vision:
+    # WaveDetector / FaceLocator / VisionWatch). A regular dependency, not an
+    # extra: hardware=True (the default) builds these unconditionally -- see
+    # wiring.py's docstring. mediapipe pinned to 0.10.18 -- newer releases
+    # changed the Tasks API this depends on (HandLandmarker / FaceDetector
+    # options).
+    "opencv-python>=4",
+    "mediapipe==0.10.18",
+]
+
+[project.urls]
+Homepage = "https://palmimo.dev"
+Repository = "https://github.com/Jizai-inc/palmimo-devkit"
+Documentation = "https://docs.palmimo.dev"
+Issues = "https://github.com/Jizai-inc/palmimo-devkit/issues"
+
+[project.scripts]
+palmimo-companion-agent = "palmimo_companion_agent.main:run"
+palmimo-realtime = "palmimo_companion_agent.realtime.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["palmimo_companion_agent"]

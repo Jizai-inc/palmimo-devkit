@@ -1,0 +1,12 @@
+# Who reviews a change here. The branch protection rule on `main` requires an
+# approval from someone named below, and GitHub never counts a pull request's
+# own author toward it, so every change is read by a second maintainer.
+#
+# One rule for the whole tree: these maintainers review across it rather than
+# owning separate areas, and a per-path split would have to name owners this
+# project does not have yet. Split it the day an area gets a distinct owner --
+# a later, more specific rule wins over this one.
+#
+# Every name here needs write access to the repository; a name that does not
+# have it is silently ignored, which reads exactly like a working rule.
+* @ksk-taka @isaka1022 @DoskoiYuta

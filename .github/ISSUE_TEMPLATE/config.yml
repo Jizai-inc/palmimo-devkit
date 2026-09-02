@@ -1,0 +1,22 @@
+# The two templates beside this file are the shapes an issue takes here: a bug
+# report and a feature request. Blank issues are off so a report arrives with
+# the fields triage needs -- most notably the hardware ones, without which a
+# motion problem cannot be reproduced.
+#
+# The links below are the same routing SUPPORT.md describes, rendered where a
+# reader is already standing when they reach for "New issue". Keep the two in
+# step; SUPPORT.md is the page that owns the routing.
+blank_issues_enabled: false
+contact_links:
+  - name: Question, setup help, or an idea
+    url: https://github.com/Jizai-inc/palmimo-devkit/discussions/categories/q-a
+    about: Ask in Discussions. A "how do I..." gets answered faster there, and the answer stays findable for the next person.
+  - name: Show what you built
+    url: https://github.com/Jizai-inc/palmimo-devkit/discussions/categories/show-and-tell
+    about: A motion, an app, or a modification you made to the kit.
+  - name: Warranty, repairs, or paid support for your DevKit
+    url: https://palmimo.dev/en/contact
+    about: Hardware warranty and paid support (custom development, training) go through Jizai's contact form, not GitHub.
+  - name: Report a security vulnerability
+    url: https://github.com/Jizai-inc/palmimo-devkit/security/advisories/new
+    about: Report privately through GitHub, never as a public issue. See SECURITY.md, including for physical-safety reports.

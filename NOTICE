@@ -1,0 +1,13 @@
+Palmimo DevKit
+Copyright 2026 Jizai Inc.
+
+This product includes software developed at Jizai Inc.
+
+Third-party components are attributed in:
+
+  - THIRD_PARTY_NOTICES.md
+  - packages/palmimo_sdk/THIRD_PARTY_NOTICES.md
+  - examples/agents/companion/THIRD_PARTY_NOTICES.md
+  - examples/agents/openclaw/THIRD_PARTY_NOTICES.md
+  - examples/agents/wakeword/THIRD_PARTY_NOTICES.md
+  - integrations/lerobot/THIRD_PARTY_NOTICES.md

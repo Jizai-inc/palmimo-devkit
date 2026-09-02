@@ -1,0 +1,140 @@
+[project]
+name = "palmimo-lerobot-integration"
+version = "0.1.0"
+description = "LeRobot integration for Palmimo (robot + teleoperator plugins)"
+authors = [{ name = "Jizai Inc.", email = "noreply@jizai.ai" }]
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "lerobot",
+    "lerobot_robot_palmimo",
+    "lerobot_teleoperator_palmimo",
+    "palmimo-sdk",
+]
+
+[project.urls]
+Homepage = "https://palmimo.dev"
+Repository = "https://github.com/Jizai-inc/palmimo-devkit"
+Documentation = "https://docs.palmimo.dev"
+Issues = "https://github.com/Jizai-inc/palmimo-devkit/issues"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.8,<2",
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.3,<1",
+    "types-PyYAML",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--import-mode=importlib"
+# lerobot_teleoperator_palmimo uses the self-nested <pkg>/<pkg>/ layout, where the
+# outer directory and the package share a name. --import-mode=importlib ignores
+# namespace packages by default, so the empty outer directory resolves as one and
+# shadows the editable install; resolving namespace packages too keeps it visible.
+consider_namespace_packages = true
+testpaths = [
+    "lerobot_robot_palmimo/tests",
+    "lerobot_teleoperator_palmimo/tests",
+]
+
+[tool.uv.workspace]
+members = ["lerobot_robot_palmimo", "lerobot_teleoperator_palmimo"]
+
+[tool.uv.sources]
+lerobot = { git = "https://github.com/huggingface/lerobot", tag = "v0.5.1" }
+lerobot_robot_palmimo = { workspace = true }
+lerobot_teleoperator_palmimo = { workspace = true }
+palmimo-sdk = { path = "../../packages/palmimo_sdk", editable = true }
+
+# =============================================================================
+# Ruff Configuration (PEP-8 plus additional checks)
+# =============================================================================
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+include = [
+    "lerobot_robot_palmimo/**/*.py",
+    "lerobot_teleoperator_palmimo/**/*.py",
+]
+exclude = [
+    ".venv",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors (PEP-8)
+    "W",      # pycodestyle warnings (PEP-8)
+    "F",      # Pyflakes (logic error detection)
+    "I",      # isort (import ordering)
+    "N",      # pep8-naming (naming conventions)
+    "UP",     # pyupgrade (update to modern Python syntax)
+    "B",      # flake8-bugbear (bug-prone patterns)
+    "C4",     # flake8-comprehensions (comprehension optimization)
+    "SIM",    # flake8-simplify (code simplification)
+    "RUF",    # Ruff-specific rules
+    "TID251", # flake8-tidy-imports: banned-api (bans reaching into palmimo_sdk.io)
+]
+# The RUF001-003 entries match the repository-root pyproject.toml, which this
+# tree is kept in step with. They are not what holds this tree to English: they
+# flag ambiguous punctuation (full-width parens, en dash, minus sign), never
+# Japanese itself, so a Japanese comment written with ASCII punctuation passes
+# them. English-only is enforced by the contract tests in tests/contracts/
+# instead.
+ignore = [
+    "E501",   # line-too-long (controlled by line-length instead)
+    "E741",   # ambiguous variable name (l, O, I, etc. - allowed in math expressions)
+    "E402",   # module-import-not-at-top (allows imports after sys.path manipulation)
+    "N806",   # non-lowercase-variable-in-function (allows uppercase matrix variables)
+    "B008",   # function-call-in-default-argument (needed for Pydantic, etc.)
+    "RUF001", # ambiguous-unicode-character-string (kept in step with the repository root)
+    "RUF002", # ambiguous-unicode-character-docstring (en dash, minus sign, and › in English prose)
+    "RUF003", # ambiguous-unicode-character-comment (same typography as docstrings)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["lerobot_robot_palmimo", "lerobot_teleoperator_palmimo", "palmimo_sdk"]
+force-single-line = false
+lines-after-imports = 2
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"palmimo_sdk.io" = { msg = "palmimo_sdk.io is an internal layer. Import from palmimo_sdk (its public surface) instead." }
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# =============================================================================
+# Mypy Configuration (type checking)
+# =============================================================================
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = false  # disabled because torch's incomplete type stubs make tensor ops return Any
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+show_error_codes = true
+explicit_package_bases = true
+namespace_packages = true
+# Suppress errors when a third-party library has no type stubs. Checked with
+# this OFF, mirroring the repository-root pyproject.toml: a long tail, not a
+# small/stable set -- `lerobot` itself, plus neither plugin here ships its own
+# py.typed yet. Kept as a documented blind spot (mirror this decision if it ever
+# changes here).
+ignore_missing_imports = true
+files = [
+    "lerobot_robot_palmimo/",
+    "lerobot_teleoperator_palmimo/",
+]
+exclude = [
+    "\\.venv",
+]

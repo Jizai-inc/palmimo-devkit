@@ -1,0 +1,78 @@
+# This tree is published as a standalone repository, so it carries a complete
+# ignore list of its own.
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.uv/
+
+# Testing, linting and type checking
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+tmp/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# IDEs and editors
+.vscode/
+.idea/
+.project
+.pydevproject
+.settings/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Runtime capture output (audio/images recorded on the robot; may contain personal data)
+outputs/
+
+# Servo waveform captures/plots (CWD-relative default)
+wave_outputs/
+
+# piper voice models. The SDK caches them outside this tree (see README.md,
+# "First-Time Setup for Voice Output"), so nothing here should land in the
+# working tree anymore; these patterns stay as the backstop for a piper
+# --download-model run by hand from the repository root, whose default target
+# is the current directory. Each such run writes a large .onnx, plus its
+# config as either config.json (piper-plus catalogue voices) or
+# <name>.onnx.json (piper's standard voices). Loading a voice from there also
+# writes piper's ORT-optimized copy (<name>.cpu.opt.onnx) and its .ok sentinel
+# beside it.
+/*.onnx
+/*.onnx.json
+/*.onnx.ok
+/config.json

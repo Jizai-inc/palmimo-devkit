@@ -1,0 +1,32 @@
+# Shapes the "What's Changed" section GitHub auto-generates for a draft
+# release (`gh release create --generate-notes`, see
+# .github/workflows/release.yml) from merged pull requests' labels. Label
+# pull requests before merging -- see doc/guides/releasing.md for the full
+# releasing procedure and the hand-written notes template that goes above
+# this generated section.
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+      - dependencies
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking-change
+    - title: SDK & motions
+      labels:
+        - sdk
+        - motion
+    - title: Examples & integrations
+      labels:
+        - example
+        - integration
+    - title: Fixes
+      labels:
+        - bug
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Other changes
+      labels:
+        - "*"
