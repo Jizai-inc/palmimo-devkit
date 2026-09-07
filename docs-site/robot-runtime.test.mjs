@@ -24,8 +24,8 @@ const LEG_JOINTS = ['leg_1_yaw', 'leg_1_pitch1', 'leg_1_pitch2'];
 
 test('the SDK boots and stands at neutral', () => {
   const angles = runtime.angles();
-  assert.equal(Object.keys(angles).length, 20);
-  for (const joint of [...LEG_JOINTS, 'neck_yaw', 'neck_pitch1']) {
+  assert.equal(Object.keys(angles).length, 21);
+  for (const joint of [...LEG_JOINTS, 'neck_yaw', 'neck_pitch1', 'neck_pitch2']) {
     assert.equal(angles[joint], 0, `${joint} should stand at neutral`);
   }
 });

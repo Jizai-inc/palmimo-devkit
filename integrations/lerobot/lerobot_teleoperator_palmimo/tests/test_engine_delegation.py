@@ -206,6 +206,40 @@ def test_neck_pitch_split_matches_engine_head_total_at_full_chin_up_deflection()
     assert teleop_total == pytest.approx(engine_total, abs=2)
 
 
+def test_neck_yaw_does_not_borrow_pitchs_chin_up_extended_floor() -> None:
+    """Yaw's reachable border is the ordinary +-amplitude around center, not
+    pitch2's chin-up ``up_reach`` extension -- that extension exists for
+    pitch2's own look-only wide band (see MotionEngine._apply_neck), not yaw.
+
+    Before this, yaw shared its floor with pitch's extended chin-up ``min_pos``,
+    so a held neck_yaw_right key could walk yaw down to center-600 at the
+    default share -- twice as far as MotionEngine.look(yaw=-1) itself ever
+    reaches (+-amplitude, 300 ticks).
+    """
+    t = _teleop()
+    keys = t.config.teleop_keys
+    for _ in range(2 * 2 * t._neck_amplitude // t._neck_step + 2):  # would saturate the extended floor
+        t._update_neck_from_keys({keys["neck_yaw_right"]})
+    assert t._neck_positions["neck_yaw"] == t._neutral - t._neck_amplitude
+
+
+def test_neck_pitch_split_follows_engine_instance_share_override() -> None:
+    """Overriding the owned engine's neck_pitch2_share changes the teleop's own
+    pitch1/pitch2 split.
+
+    Before this, the split read MotionEngine's class constant instead of the
+    instance attribute, so overriding share on ``t._engine`` (the documented
+    way to retune the split, same as any other instance-overridable engine
+    knob) silently kept the teleop on the shipped default.
+    """
+    t = _teleop()
+    t._engine.neck_pitch2_share = 0.0  # the "pitch1 only" sentinel
+    keys = t.config.teleop_keys
+    for _ in range(2 * t._neck_amplitude // t._neck_step + 2):  # saturate, like set_neck(pitch=1.0)
+        t._update_neck_from_keys({keys["neck_pitch_up"]})
+    assert t._neck_positions["neck_pitch2"] == t._neutral
+
+
 class _FakeKeyboard:
     """Mimics lerobot KeyboardTeleop.get_action(): returns ``dict.fromkeys(held, None)``
     — keys are the held chars, values are ``None``. Guards the extraction path so a

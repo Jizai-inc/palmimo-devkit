@@ -593,6 +593,26 @@ def test_look_pitch_up_converts_via_the_larger_up_travel() -> None:
     assert robot._engine._neck_target_pitch == pytest.approx(-1.0)
 
 
+def test_look_pitch_up_converts_via_the_engine_instances_live_reach() -> None:
+    """The degrees->normalized conversion for a negative NeckPitchDegrees uses
+    the engine INSTANCE's current chin-up reach (neck_pitch_up_reach_deg), not
+    the class-level NECK_PITCH_UP_TRAVEL_DEG -- so overriding neck_pitch2_share
+    (the documented way to retune the split) changes what a given degree value
+    converts to.
+
+    At the shipped default trim (15 deg), share=0.0's actual chin-up reach is
+    ~11.4 deg (pitch1's own asymmetric band, not the ~26.4 deg symmetric
+    NECK_PITCH_TRAVEL_DEG a same-value-as-share>0 fallback would have used) --
+    without reading the live reach, this request would land far short of -1.0.
+    """
+    robot = Palmimo()
+    robot._engine.neck_pitch2_share = 0.0
+    reach = robot._engine.neck_pitch_up_reach_deg
+    assert reach == pytest.approx(11.37, abs=0.1)
+    robot.look(pitch=NeckPitchDegrees(-reach))
+    assert robot._engine._neck_target_pitch == pytest.approx(-1.0)
+
+
 def test_look_rejects_yaw_value_object_passed_as_pitch() -> None:
     """A value object for the wrong axis (a yaw value passed as pitch) is clearly rejected with TypeError."""
     robot = Palmimo()

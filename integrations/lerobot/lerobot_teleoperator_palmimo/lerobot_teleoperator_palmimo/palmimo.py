@@ -335,7 +335,12 @@ class PalmimoTeleop(Teleoperator):
         """Update neck position from held character keys (see config.teleop_keys)."""
         nk = self.config.teleop_keys
         center = self._neutral
-        share = MotionEngine.NECK_PITCH2_SHARE
+        # Read the split knobs off the owned engine INSTANCE, not the class --
+        # a caller who overrides self._engine.neck_pitch2_share/sign (same as
+        # any other instance-overridable engine knob) must see this teleop's
+        # split follow it, instead of silently staying on the shipped default.
+        share = self._engine.neck_pitch2_share
+        sign = self._engine.neck_pitch2_sign
         # Chin-up reach, mirroring MotionEngine._apply_neck's `up_reach`: this
         # teleop carries no rest trim (center is always NEUTRAL), so pitch1's
         # own spare room above center simplifies to the same `amp` pitch2
@@ -344,8 +349,13 @@ class PalmimoTeleop(Teleoperator):
         # LIMIT needs to match the engine; unlike look(), nothing here reads
         # real degrees off this constant.
         up_reach = self._neck_amplitude * 2 if share > 0.0 else self._neck_amplitude
-        min_pos = center - up_reach
-        max_pos = center + self._neck_amplitude
+        pitch_min_pos = center - up_reach
+        pitch_max_pos = center + self._neck_amplitude
+        # Yaw shares no chin-up extension (that band exists only for pitch2's
+        # look-only up_reach, see MotionEngine._apply_neck) -- its border is
+        # the ordinary symmetric +-amplitude around center.
+        yaw_min_pos = center - self._neck_amplitude
+        yaw_max_pos = center + self._neck_amplitude
 
         # Pitch control (up/down): walk the undivided total with the historical
         # pitch1-only increment/clamp rule, then split it across neck_pitch1/
@@ -354,9 +364,9 @@ class PalmimoTeleop(Teleoperator):
         # pitch1, which drove the combined head angle 1.5x past a single-joint
         # walk at the default 0.5 share.
         if nk["neck_pitch_up"] in pressed:
-            self._neck_pitch_total = min(self._neck_pitch_total + self._neck_step, max_pos)
+            self._neck_pitch_total = min(self._neck_pitch_total + self._neck_step, pitch_max_pos)
         elif nk["neck_pitch_down"] in pressed:
-            self._neck_pitch_total = max(self._neck_pitch_total - self._neck_step, min_pos)
+            self._neck_pitch_total = max(self._neck_pitch_total - self._neck_step, pitch_min_pos)
         else:
             current = self._neck_pitch_total
             if abs(current - center) < self._neck_step:
@@ -367,7 +377,6 @@ class PalmimoTeleop(Teleoperator):
                 self._neck_pitch_total += self._neck_step
 
         total_offset = self._neck_pitch_total - center
-        sign = MotionEngine.NECK_PITCH2_SIGN
         # Same split as MotionEngine._apply_neck: pitch1's own basis is always
         # the symmetric +-amp total, UNCHANGED by the chin-up extension above
         # -- pitch1 must never be asked to swing harder than the pre-extension
@@ -390,9 +399,9 @@ class PalmimoTeleop(Teleoperator):
 
         # Yaw control (left/right)
         if nk["neck_yaw_left"] in pressed:
-            self._neck_positions["neck_yaw"] = min(self._neck_positions["neck_yaw"] + self._neck_step, max_pos)
+            self._neck_positions["neck_yaw"] = min(self._neck_positions["neck_yaw"] + self._neck_step, yaw_max_pos)
         elif nk["neck_yaw_right"] in pressed:
-            self._neck_positions["neck_yaw"] = max(self._neck_positions["neck_yaw"] - self._neck_step, min_pos)
+            self._neck_positions["neck_yaw"] = max(self._neck_positions["neck_yaw"] - self._neck_step, yaw_min_pos)
         else:
             current = self._neck_positions["neck_yaw"]
             if abs(current - center) < self._neck_step:

@@ -188,8 +188,8 @@ class NeckPitchDegrees:
     """A neck PITCH angle expressed in real degrees.
 
     Self-validating: construction raises :class:`ValueError` if *value* falls
-    outside the neck's actual mechanical pitch travel on that side — the
-    chin-DOWN travel (:attr:`~palmimo_sdk.engine.MotionEngine.NECK_PITCH_TRAVEL_DEG`,
+    outside the neck's SHIPPED-DEFAULT mechanical pitch travel on that side —
+    the chin-DOWN travel (:attr:`~palmimo_sdk.engine.MotionEngine.NECK_PITCH_TRAVEL_DEG`,
     ~26.4 deg) for a non-negative *value*, the larger chin-UP travel
     (:attr:`~palmimo_sdk.engine.MotionEngine.NECK_PITCH_UP_TRAVEL_DEG`, ~37.7
     deg at the shipped defaults) for a negative one. The two differ because
@@ -197,9 +197,13 @@ class NeckPitchDegrees:
     what pitch1 alone covers (see the engine's ``_apply_neck``) but not the
     chin-down side — range-checking is this value object's own
     responsibility, not :meth:`Palmimo.look`'s, so an out-of-range request
-    fails loudly at the call site instead of silently saturating. Converted
-    by :meth:`Palmimo.look` into the engine's normalized [-1, 1] input by
-    dividing by that same per-side travel.
+    fails loudly at the call site instead of silently saturating. This value
+    object is built with no engine to hand, so it can only check against the
+    class-level (shipped-default) travel; :meth:`Palmimo.look` then converts
+    it into the engine's normalized [-1, 1] input by dividing by the chin-up
+    side's LIVE reach (:attr:`~palmimo_sdk.engine.MotionEngine.neck_pitch_up_reach_deg`,
+    which tracks that engine instance's own ``neck_rest_pitch_deg``/
+    ``neck_pitch2_share``) rather than this class-level bound.
 
     A separate class from :class:`NeckYawDegrees` on purpose: yaw has no
     second joint and stays symmetric, and keeping the types distinct also
@@ -1715,7 +1719,11 @@ class Palmimo:
         if isinstance(value, NeckPitchDegrees):
             # Chin-up (negative) travels farther than chin-down -- see
             # NeckPitchDegrees' docstring and MotionEngine._apply_neck.
-            travel = self._engine.NECK_PITCH_TRAVEL_DEG if value.value >= 0 else self._engine.NECK_PITCH_UP_TRAVEL_DEG
+            # neck_pitch_up_reach_deg reads the engine's LIVE
+            # neck_rest_pitch_deg/neck_pitch2_share rather than the
+            # class-level NECK_PITCH_UP_TRAVEL_DEG (shipped-default only), so
+            # an instance override is reflected in the conversion.
+            travel = self._engine.NECK_PITCH_TRAVEL_DEG if value.value >= 0 else self._engine.neck_pitch_up_reach_deg
             return value.value / travel
         if isinstance(value, NeckPitchNormalized):
             return value.value

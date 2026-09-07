@@ -599,6 +599,23 @@ def test_stretch_tall_pose_folds_all_femurs() -> None:
     assert mid["neck_pitch1"] < n  # neck points up (negative offset = up on hardware)
 
 
+def test_stretch_head_raise_is_unaffected_by_neck_pitch2_share() -> None:
+    """STRETCH's chin-up is a choreographed pose (stretch_neck_up), not a look()
+    target -- it must not additionally draw on pitch2's look-only up_reach
+    extension. Without the look-sourced gate, share=0.5 reached roughly 1.4x
+    further than share=0.0 (observed: -90 vs -128 ticks) even though both
+    are driven by the same stretch_neck_up knob.
+    """
+    totals = {}
+    for share in (0.0, 0.5):
+        engine = MotionEngine()
+        engine.neck_pitch2_share = share
+        engine.motion = Motion.STRETCH
+        mid = _run_seconds(engine, _stretch_mid_hold_s(engine))
+        totals[share] = _head_total(mid, engine)
+    assert totals[0.5] == pytest.approx(totals[0.0], abs=1)
+
+
 def test_stretch_pose_left_right_symmetric() -> None:
     """The hold posture is left-right symmetric (same angle apart from the pitch_sign flip)."""
     engine = MotionEngine()
