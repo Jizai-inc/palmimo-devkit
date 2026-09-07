@@ -128,7 +128,7 @@ test('the control period follows the robot at the prompt', async () => {
 test('print reaches the console output', async () => {
   printed.length = 0;
   await runtime.run('print(len(robot.positions), "servos")');
-  assert.equal(printed.join('').trim(), '20 servos');
+  assert.equal(printed.join('').trim(), '21 servos');
 });
 
 test('an unfinished block asks for the next line', async () => {
