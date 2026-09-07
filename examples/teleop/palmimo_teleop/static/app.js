@@ -40,21 +40,22 @@
     // Built with textContent, never innerHTML: `motion` and the other fields
     // arrive over an unauthenticated LAN WebSocket, so nothing from that
     // payload may be interpreted as markup.
-    const cells = [
-      [status.pilot_present ? "pilot: connected" : "pilot: none", null],
-      ["motion: " + (status.motion || "idle"), null],
-      ["fps: " + status.loop_fps.toFixed(1), null],
-      ["bus: " + (status.servo_attached ? "attached" : "compute-only"), status.servo_attached ? "status-ok" : "status-bad"],
-      ["camera: " + (status.camera_ok ? "ok" : "unavailable"), status.camera_ok ? "status-ok" : "status-bad"],
-      ["servo: " + (status.robot_ok === false ? "fault" : "ok"), status.robot_ok === false ? "status-bad" : "status-ok"],
-    ];
     statusBar.replaceChildren();
-    cells.forEach(function (cell) {
+    const addCell = function (text, className) {
       const span = document.createElement("span");
-      span.textContent = cell[0];
-      if (cell[1]) span.className = cell[1];
+      span.textContent = text;
+      if (className) span.className = className;
       statusBar.appendChild(span);
-    });
+    };
+    const okOrBad = function (ok) {
+      return ok ? "status-ok" : "status-bad";
+    };
+    addCell(status.pilot_present ? "pilot: connected" : "pilot: none");
+    addCell("motion: " + (status.motion || "idle"));
+    addCell("fps: " + status.loop_fps.toFixed(1));
+    addCell("bus: " + (status.servo_attached ? "attached" : "compute-only"), okOrBad(status.servo_attached));
+    addCell("camera: " + (status.camera_ok ? "ok" : "unavailable"), okOrBad(status.camera_ok));
+    addCell("servo: " + (status.robot_ok === false ? "fault" : "ok"), okOrBad(status.robot_ok !== false));
   }
 
   // The pilot page dropped its own #status-bar, so a compute-only or
