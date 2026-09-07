@@ -24,7 +24,7 @@ from typing import NamedTuple
 from dynamixel_sdk import COMM_SUCCESS, PacketHandler, PortHandler
 from tqdm import tqdm
 
-from palmimo_sdk import PortDetectionError, find_servo_port
+from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, PortDetectionError, find_servo_port
 
 
 PROTOCOL_VERSION = 2.0
@@ -178,11 +178,6 @@ READ_ATTEMPTS = 4
 # that carried it. The vendor handler masks it off the same way before judging
 # an error (`not_alert_error = error & ~ERRBIT_ALERT`).
 ERRBIT_ALERT = 0x80
-
-# Goal clamp mirroring the SDK's safe tick range (palmimo_sdk/io/dynamixel.py):
-# a servo's own Min/Max_Position_Limit is usually tighter and wins where it is.
-SAFE_MIN_TICK = 200
-SAFE_MAX_TICK = 3900
 
 # Hardware_Error_Status bit meanings, for readable output.
 _HW_BITS = {

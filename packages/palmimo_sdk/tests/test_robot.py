@@ -1225,7 +1225,7 @@ class RecordingDriver(ServoDriver):
         self._connected = False
         self.events.append("disconnect")
 
-    def write_positions(self, positions: dict[str, int]) -> None:
+    def _write_positions(self, positions: dict[str, int]) -> None:
         pass
 
 

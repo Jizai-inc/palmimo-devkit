@@ -32,3 +32,16 @@ def test_tts_types_are_listed_in_dunder_all() -> None:
     assert "PiperEngine" in palmimo_sdk.__all__
     assert "TtsEngine" in palmimo_sdk.__all__
     assert "TtsVoice" in palmimo_sdk.__all__
+
+
+def test_safe_tick_range_is_exported_from_package_root() -> None:
+    """``SAFE_MIN_TICK`` / ``SAFE_MAX_TICK`` are reachable from the package root, not just ``palmimo_sdk.io.base``."""
+    from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK
+    from palmimo_sdk.io import base as io_base
+
+    assert palmimo_sdk.SAFE_MIN_TICK is io_base.SAFE_MIN_TICK
+    assert palmimo_sdk.SAFE_MAX_TICK is io_base.SAFE_MAX_TICK
+    assert SAFE_MIN_TICK == 200
+    assert SAFE_MAX_TICK == 3900
+    assert "SAFE_MIN_TICK" in palmimo_sdk.__all__
+    assert "SAFE_MAX_TICK" in palmimo_sdk.__all__

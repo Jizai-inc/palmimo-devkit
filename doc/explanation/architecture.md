@@ -252,7 +252,8 @@ from the SDK design perspective. The guiding principle is to fail safe even if c
 stops or an SSH session drops.
 
 - **Safe servo range** — strictly enforce 200–3900 ticks, staying away from the
-  mechanical limits (0 / 4095) (clamped in `io/dynamixel.py`)
+  mechanical limits (0 / 4095) (clamped in `io/base.py`'s `ServoDriver.write_positions`,
+  so every backend gets it, not just the Dynamixel one)
 - **Neutral stance at startup** — connection and script startup always begin smoothly
   from the neutral stance; abrupt jumps are prohibited
 - **Servo telemetry** — `ServoDriver.read_telemetry()` reads present current, input
