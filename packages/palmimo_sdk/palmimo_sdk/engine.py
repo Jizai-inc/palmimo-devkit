@@ -93,9 +93,11 @@ class MotionEngine:
     # The neck is body -> pitch1 -> pitch2 -> yaw. pitch1 alone stalled lifting
     # the head near the top of its travel and overheated on real hardware, so
     # `_apply_neck` splits the look-pitch offset across both joints instead of
-    # loading it all on pitch1; the head's total angle is unchanged, only each
-    # joint's own swing shrinks. 0.0 keeps every look motion on pitch1 only
-    # (the pre-pitch2 behavior). Instance-overridable, same as ``gait_speed``.
+    # loading it all on pitch1; any share > 0 lets the head reach its full
+    # symmetric travel by having pitch2 absorb what pitch1's own band can't
+    # carry (see `_apply_neck`). 0.0 keeps every look motion on pitch1 only
+    # (the pre-pitch2 behavior, asymmetry included). Instance-overridable,
+    # same as ``gait_speed``.
     NECK_PITCH2_SHARE: ClassVar[float] = 0.5
     # pitch2 tick direction relative to pitch1 -- hardware-confirmed (2026-09,
     # by driving the split live): a tick increase tips the chin DOWN on both
@@ -1663,17 +1665,26 @@ class MotionEngine:
         share = max(0.0, min(1.0, self.neck_pitch2_share))
         sign = 1 if self.neck_pitch2_sign >= 0 else -1
 
-        # The combined head-pitch offset ("total") is decided FIRST, by the
-        # historical pitch1-only rule (clamp against the servo-neutral safety
-        # band -- the trim shifts the working center, not the mechanical
-        # limits). Splitting the already-clamped total across pitch1/pitch2
-        # keeps the head's combined angle identical to that single-joint
-        # implementation for any share: only each joint's own swing shrinks.
-        # Splitting an UNCLAMPED per-joint target instead (the earlier bug)
-        # let pitch1 sit at the old single-joint extreme while pitch2 piled
-        # more on top, so the combined angle overshot the old implementation's.
+        # The combined head-pitch offset ("total") is decided FIRST, clamped
+        # symmetrically about `center` (the rest-trimmed front) rather than
+        # against the raw NEUTRAL+-amp band. Clamping against NEUTRAL+-amp
+        # instead would make the trim eat into one side's travel: a positive
+        # trim shifts `center` below NEUTRAL, so the NEUTRAL+amp ceiling is
+        # reached sooner on the chin-up side than the chin-down side, giving
+        # the head an asymmetric range around its own front.
+        #
+        # pitch1 carries (1-share) of `total`, clamped to the raw NEUTRAL+-amp
+        # servo band (its own mechanical/rest-trim limit). Whatever `total`
+        # that clamp leaves unmet is not dropped -- pitch2 picks up the
+        # remainder (oriented by `sign`, no rest trim of its own), so the
+        # head's combined angle still reaches the full symmetric `total`
+        # even where pitch1 alone would have stalled against its band. This
+        # only applies when share > 0: share == 0.0 is the documented "look
+        # motion on pitch1 only" sentinel (see NECK_PITCH2_SHARE), so it must
+        # reproduce the old single-joint asymmetry exactly rather than fix it
+        # -- pitch2 stays at NEUTRAL, untouched, in that case.
         offset = self._neck_target_pitch * amp
-        total = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, center + int(offset))) - center
+        total = max(-amp, min(amp, int(offset)))
 
         # Each joint's own per-frame step is scaled by its share of the total
         # swing, so the combined head-pitch speed matches the old single-joint
@@ -1682,15 +1693,16 @@ class MotionEngine:
         step_p1 = max(1, round(step * (1.0 - share)))
         step_p2 = max(1, round(step * share))
 
-        # pitch1 carries (1-share) of the total and rides on the resting trim.
         target_p1 = center + int((1.0 - share) * total)
         target_p1 = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, target_p1))
         self._neck["neck_pitch1"] = self._step_toward(self._neck["neck_pitch1"], target_p1, step_p1)
 
-        # pitch2 carries the rest, oriented by sign, and has no rest trim of
-        # its own -- it works purely as an offset from raw NEUTRAL.
-        target_p2 = self.NEUTRAL + int(sign * share * total)
-        target_p2 = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, target_p2))
+        if share > 0.0:
+            p1_contribution = target_p1 - center
+            target_p2 = self.NEUTRAL + int(sign * (total - p1_contribution))
+            target_p2 = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, target_p2))
+        else:
+            target_p2 = self.NEUTRAL
         self._neck["neck_pitch2"] = self._step_toward(self._neck["neck_pitch2"], target_p2, step_p2)
 
         # Yaw

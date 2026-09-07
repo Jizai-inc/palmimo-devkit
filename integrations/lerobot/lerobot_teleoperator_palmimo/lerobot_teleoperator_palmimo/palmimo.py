@@ -360,8 +360,20 @@ class PalmimoTeleop(Teleoperator):
         total_offset = self._neck_pitch_total - center
         share = MotionEngine.NECK_PITCH2_SHARE
         sign = MotionEngine.NECK_PITCH2_SIGN
-        self._neck_positions["neck_pitch1"] = center + round((1.0 - share) * total_offset)
-        self._neck_positions["neck_pitch2"] = center + round(sign * share * total_offset)
+        # Same split as MotionEngine._apply_neck: pitch1 carries (1-share) of
+        # the offset (clamped to its own +-amp band around center), and
+        # pitch2 -- unless share == 0.0, the "pitch1 only" sentinel -- picks
+        # up whatever that clamp left uncarried, so the combined head angle
+        # still reaches the full offset instead of stalling on pitch1 alone.
+        p1_offset = round((1.0 - share) * total_offset)
+        p1_offset = max(-self._neck_amplitude, min(self._neck_amplitude, p1_offset))
+        self._neck_positions["neck_pitch1"] = center + p1_offset
+        if share > 0.0:
+            p2_offset = round(sign * (total_offset - p1_offset))
+            p2_offset = max(-self._neck_amplitude, min(self._neck_amplitude, p2_offset))
+        else:
+            p2_offset = 0
+        self._neck_positions["neck_pitch2"] = center + p2_offset
 
         # Yaw control (left/right)
         if nk["neck_yaw_left"] in pressed:

@@ -174,34 +174,83 @@ def _head_total(pos: dict[str, int], engine: MotionEngine) -> int:
 
 @pytest.mark.parametrize("trim", [0.0, 15.0, -20.0])
 @pytest.mark.parametrize("x", [-1.0, -0.5, 0.0, 0.5, 1.0])
-@pytest.mark.parametrize("share", [0.0, 0.25, 0.5, 1.0])
-def test_neck_pitch2_share_does_not_change_combined_head_angle(share: float, x: float, trim: float) -> None:
-    """set_neck(pitch=x)'s combined head-pitch offset (pitch1 + sign*pitch2) converges to
-    the same value regardless of neck_pitch2_share -- splitting the offset across two
-    joints (the hardware fix for pitch1 stalling/overheating lifting the head alone)
-    changes only each joint's own swing, never the head's total angle.
+@pytest.mark.parametrize("share", [0.5, 0.75, 1.0])
+def test_neck_pitch2_share_reaches_symmetric_head_total_when_split(share: float, x: float, trim: float) -> None:
+    """With pitch2 actually taking part in the split (share > 0), set_neck(pitch=x)'s
+    combined head-pitch offset (pitch1 + sign*pitch2) reaches the full symmetric
+    ``x * amplitude`` for any share -- pitch2 absorbs whatever pitch1's own
+    NEUTRAL+-amplitude band can't carry once the rest trim shifts pitch1's center
+    off NEUTRAL, instead of the head's up/down range coming out lopsided around
+    its own front.
     """
-    reference = MotionEngine()
-    reference.neck_rest_pitch_deg = trim
-    reference.neck_pitch2_share = 0.0  # pre-pitch2 (pitch1-only) behavior, the ground truth
-    reference.set_neck(pitch=x)
-    for _ in range(400):  # plenty of steps to fully converge
-        reference.step()
-    reference_total = _head_total(reference.get_positions(), reference)
-
     engine = MotionEngine()
     engine.neck_rest_pitch_deg = trim
     engine.neck_pitch2_share = share
     engine.set_neck(pitch=x)
-    for _ in range(400):
+    for _ in range(400):  # plenty of steps to fully converge
         engine.step()
     pos = engine.get_positions()
     amp = engine._neck_amplitude
     n = engine.NEUTRAL
 
-    assert _head_total(pos, engine) == pytest.approx(reference_total, abs=2)
+    assert _head_total(pos, engine) == pytest.approx(round(x * amp), abs=2)
     assert n - amp <= pos["neck_pitch1"] <= n + amp
     assert n - amp <= pos["neck_pitch2"] <= n + amp
+
+
+def _old_pitch1_only_head_total(engine: MotionEngine, x: float) -> int:
+    """Head-pitch total the pre-pitch2, pitch1-only rule would have produced: the
+    look offset clamped against the servo-neutral safety band around the
+    *rest-trimmed* center, which is where the up/down asymmetry came from."""
+    center = engine.neck_pitch_center()
+    amp = engine._neck_amplitude
+    offset = round(x * amp)
+    return max(engine.NEUTRAL - amp, min(engine.NEUTRAL + amp, center + offset)) - center
+
+
+@pytest.mark.parametrize("trim", [0.0, 15.0, -20.0])
+def test_neck_pitch2_share_zero_reproduces_pitch1_only_head_total(trim: float) -> None:
+    """neck_pitch2_share == 0.0 is the documented "look motion on pitch1 only" sentinel:
+    pitch2 must stay at NEUTRAL and the head total must stay at the old, possibly
+    asymmetric, pitch1-only value -- not the symmetric range a nonzero share reaches.
+    Without this, a caller relying on share=0.0 for the historical single-joint
+    behavior would silently get pitch2 movement instead.
+    """
+    engine = MotionEngine()
+    engine.neck_rest_pitch_deg = trim
+    engine.neck_pitch2_share = 0.0
+    engine.set_neck(pitch=-1.0)
+    for _ in range(400):
+        engine.step()
+    pos = engine.get_positions()
+
+    assert pos["neck_pitch2"] == engine.NEUTRAL
+    assert _head_total(pos, engine) == _old_pitch1_only_head_total(engine, -1.0)
+
+
+@pytest.mark.parametrize("trim", [0.0, 15.0, -20.0])
+def test_neck_pitch2_share_does_not_increase_pitch1_swing(trim: float) -> None:
+    """Splitting a maxed-out look onto pitch2 (share=0.5) never makes pitch1's own
+    swing bigger than the pre-pitch2 (share=0) single-joint swing -- pitch2 is
+    there to relieve pitch1's load, not add to it.
+    """
+    baseline = MotionEngine()
+    baseline.neck_rest_pitch_deg = trim
+    baseline.neck_pitch2_share = 0.0
+    baseline.set_neck(pitch=-1.0)
+    for _ in range(400):
+        baseline.step()
+    baseline_swing = abs(baseline.get_positions()["neck_pitch1"] - baseline.neck_pitch_center())
+
+    split = MotionEngine()
+    split.neck_rest_pitch_deg = trim
+    split.neck_pitch2_share = 0.5
+    split.set_neck(pitch=-1.0)
+    for _ in range(400):
+        split.step()
+    split_swing = abs(split.get_positions()["neck_pitch1"] - split.neck_pitch_center())
+
+    assert split_swing <= baseline_swing
 
 
 def _frames_to_converge(engine: MotionEngine, target_pitch: float) -> int:
@@ -235,29 +284,6 @@ def test_neck_pitch2_share_does_not_slow_down_look_convergence() -> None:
     split_frames = _frames_to_converge(split, 1.0)
 
     assert split_frames == pytest.approx(baseline_frames, abs=1)
-
-
-def test_neck_pitch2_share_shrinks_pitch1_swing_at_extreme() -> None:
-    """At a maxed-out look target, splitting the offset onto pitch2 (share=0.5) shrinks
-    pitch1's own swing to at most half of the pre-pitch2 (share=0) swing -- the point of
-    the split, since pitch1 alone stalled/overheated lifting the head at the top of its
-    travel.
-    """
-    baseline = MotionEngine()
-    baseline.neck_pitch2_share = 0.0
-    baseline.set_neck(pitch=-1.0)
-    for _ in range(400):
-        baseline.step()
-    baseline_swing = abs(baseline.get_positions()["neck_pitch1"] - baseline.neck_pitch_center())
-
-    split = MotionEngine()
-    split.neck_pitch2_share = 0.5
-    split.set_neck(pitch=-1.0)
-    for _ in range(400):
-        split.step()
-    split_swing = abs(split.get_positions()["neck_pitch1"] - split.neck_pitch_center())
-
-    assert split_swing <= baseline_swing / 2 + 1
 
 
 def test_neck_pitch2_sign_is_normalized_to_plus_or_minus_one() -> None:
