@@ -287,7 +287,10 @@ def _check_for(path: Path) -> Callable[[Path], bool] | None:
         return _has_japanese_prose
     if path.suffix in {".md", ".mdx"}:
         return _has_japanese_markdown_prose
-    if path.suffix == ".astro":
+    if path.suffix in {".astro", ".html"}:
+        # Plain HTML is the same two-language shape as an Astro component --
+        # inline `<script>`/`<style>` in `//`/`/* */`, template markup in
+        # `<!-- -->` -- so it answers to the same check.
         return _has_japanese_astro_comment
     if path.name == "NOTICE" or path.relative_to(SOFTWARE_ROOT).as_posix() in AUTHORED_NOTICES:
         # Attribution prose we author, unlike the verbatim LICENSE copies.

@@ -9,6 +9,10 @@ a member.
 
 - `agents/` — Standalone agent implementation examples, one uv project each;
   see [agents/README.md](agents/README.md) for what each one is.
+- `teleop/` — Web-based manual teleoperation: a phone/laptop browser drives
+  the robot over a WebSocket and views its head camera over MJPEG, on the
+  same LAN with no authentication. See
+  [teleop/README.md](teleop/README.md).
 
 ## Running
 
@@ -19,4 +23,5 @@ command, CLI options, and design notes live in its own README --
 [agents/wakeword/README.md](agents/wakeword/README.md),
 [agents/companion/README.md](agents/companion/README.md), and
 [agents/openclaw/README.md](agents/openclaw/README.md), whose kit runs from its
-own directory rather than the repository root.
+own directory rather than the repository root. `teleop/`'s own launch command
+and options are in [teleop/README.md](teleop/README.md).

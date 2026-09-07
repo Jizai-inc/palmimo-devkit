@@ -123,6 +123,7 @@ COMMAND_PAGES = frozenset(
         "examples/agents/companion/README.md",
         "examples/agents/openclaw/README.md",
         "examples/agents/wakeword/README.md",
+        "examples/teleop/README.md",
         # Its own uv workspace, resolved separately from this one, so its
         # install and run commands cannot be stated from here.
         "integrations/lerobot/README.md",

@@ -12,6 +12,7 @@ dependencies = [
     "tqdm>=4.66.0",
     "palmimo-wakeword-agent",
     "palmimo-companion-agent",
+    "palmimo-teleop",
 ]
 
 [project.urls]
@@ -70,7 +71,7 @@ testpaths = [
 [tool.coverage.run]
 # Code needing a servo bus stays in scope and reads as an honest zero
 # (`io/_dynamixel_bus.py`); the floor is set with it counted, not excluded.
-source = ["palmimo_sdk", "palmimo_wakeword_agent", "palmimo_companion_agent"]
+source = ["palmimo_sdk", "palmimo_wakeword_agent", "palmimo_companion_agent", "palmimo_teleop"]
 
 [tool.uv]
 # g2p-en declares a dependency on `distance` but never imports it (verified by
@@ -104,6 +105,7 @@ exclude = ["examples/agents", "examples/agents/openclaw", "integrations/lerobot"
 palmimo-sdk = { workspace = true }
 palmimo-wakeword-agent = { workspace = true }
 palmimo-companion-agent = { workspace = true }
+palmimo-teleop = { workspace = true }
 
 [tool.ruff]
 line-length = 120
@@ -160,7 +162,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["palmimo_sdk", "palmimo_wakeword_agent", "palmimo_companion_agent"]
+known-first-party = ["palmimo_sdk", "palmimo_wakeword_agent", "palmimo_companion_agent", "palmimo_teleop"]
 force-single-line = false
 lines-after-imports = 2
 
