@@ -37,29 +37,24 @@
 
   function renderStatusBar(status) {
     if (!statusBar) return;
-    const pilotSpan = status.pilot_present ? "pilot: connected" : "pilot: none";
-    const motionSpan = "motion: " + (status.motion || "idle");
-    const cameraClass = status.camera_ok ? "status-ok" : "status-bad";
-    const cameraSpan =
-      '<span class="' + cameraClass + '">camera: ' + (status.camera_ok ? "ok" : "unavailable") + "</span>";
-    const busClass = status.servo_attached ? "status-ok" : "status-bad";
-    const busSpan =
-      '<span class="' + busClass + '">bus: ' + (status.servo_attached ? "attached" : "compute-only") + "</span>";
-    const servoClass = status.robot_ok === false ? "status-bad" : "status-ok";
-    const servoSpan =
-      '<span class="' + servoClass + '">servo: ' + (status.robot_ok === false ? "fault" : "ok") + "</span>";
-    const fpsSpan = "fps: " + status.loop_fps.toFixed(1);
-    statusBar.innerHTML =
-      "<span>" +
-      pilotSpan +
-      "</span><span>" +
-      motionSpan +
-      "</span><span>" +
-      fpsSpan +
-      "</span>" +
-      busSpan +
-      cameraSpan +
-      servoSpan;
+    // Built with textContent, never innerHTML: `motion` and the other fields
+    // arrive over an unauthenticated LAN WebSocket, so nothing from that
+    // payload may be interpreted as markup.
+    const cells = [
+      [status.pilot_present ? "pilot: connected" : "pilot: none", null],
+      ["motion: " + (status.motion || "idle"), null],
+      ["fps: " + status.loop_fps.toFixed(1), null],
+      ["bus: " + (status.servo_attached ? "attached" : "compute-only"), status.servo_attached ? "status-ok" : "status-bad"],
+      ["camera: " + (status.camera_ok ? "ok" : "unavailable"), status.camera_ok ? "status-ok" : "status-bad"],
+      ["servo: " + (status.robot_ok === false ? "fault" : "ok"), status.robot_ok === false ? "status-bad" : "status-ok"],
+    ];
+    statusBar.replaceChildren();
+    cells.forEach(function (cell) {
+      const span = document.createElement("span");
+      span.textContent = cell[0];
+      if (cell[1]) span.className = cell[1];
+      statusBar.appendChild(span);
+    });
   }
 
   // The pilot page dropped its own #status-bar, so a compute-only or
