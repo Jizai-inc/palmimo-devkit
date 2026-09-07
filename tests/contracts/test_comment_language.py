@@ -35,8 +35,8 @@ import pytest
 SOFTWARE_ROOT = Path(__file__).resolve().parents[2]
 # .cff (Citation File Format) is YAML with a different suffix.
 CONFIG_SUFFIXES = frozenset({".toml", ".yaml", ".yml", ".sh", ".json5", ".json", ".cff"})
-# CODEOWNERS takes `#` comments and no suffix, like the two below.
-CONFIG_NAMES = frozenset({".gitignore", "Makefile", "CODEOWNERS"})
+# These take `#` comments and carry no suffix to match on.
+CONFIG_NAMES = frozenset({".gitignore", "Makefile"})
 BINARY_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".glb"})
 LOG_METHODS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
 
