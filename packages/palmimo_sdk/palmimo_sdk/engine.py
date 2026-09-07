@@ -97,10 +97,11 @@ class MotionEngine:
     # joint's own swing shrinks. 0.0 keeps every look motion on pitch1 only
     # (the pre-pitch2 behavior). Instance-overridable, same as ``gait_speed``.
     NECK_PITCH2_SHARE: ClassVar[float] = 0.5
-    # pitch2 tick direction relative to pitch1 -- hardware-confirmed (2026-09):
-    # pitch1 tick increase tips the chin DOWN, pitch2 tick increase tips the
-    # chin UP, a mirror image of pitch1, hence -1.
-    NECK_PITCH2_SIGN: ClassVar[int] = -1
+    # pitch2 tick direction relative to pitch1 -- hardware-confirmed (2026-09,
+    # by driving the split live): a tick increase tips the chin DOWN on both
+    # joints, so they share the same sign. -1 would make them fight each other
+    # (the head barely moves) rather than add up.
+    NECK_PITCH2_SIGN: ClassVar[int] = 1
     L1: float = kinematics.L1
     L2: float = kinematics.L2
     L3: float = kinematics.L3
@@ -1686,7 +1687,7 @@ class MotionEngine:
         target_p1 = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, target_p1))
         self._neck["neck_pitch1"] = self._step_toward(self._neck["neck_pitch1"], target_p1, step_p1)
 
-        # pitch2 carries the rest, mirrored by sign, and has no rest trim of
+        # pitch2 carries the rest, oriented by sign, and has no rest trim of
         # its own -- it works purely as an offset from raw NEUTRAL.
         target_p2 = self.NEUTRAL + int(sign * share * total)
         target_p2 = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, target_p2))

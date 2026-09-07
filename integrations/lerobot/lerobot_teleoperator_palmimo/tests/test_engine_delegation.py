@@ -120,8 +120,9 @@ def test_neck_char_keys_move_neck() -> None:
     assert t._neck_positions["neck_yaw"] < center
 
 
-def test_neck_pitch2_moves_opposite_pitch1_instead_of_staying_at_neutral() -> None:
-    """neck_pitch2 moves opposite neck_pitch1 as the pitch keys move it off center.
+def test_neck_pitch2_follows_the_pitch_split_instead_of_staying_at_neutral() -> None:
+    """neck_pitch2 takes its share of the head pitch (oriented by the engine's sign)
+    as the pitch keys move it off center.
 
     Before this, neck_pitch2 was hardcoded to neutral regardless of pitch1,
     which put the full head-lift moment on pitch1 alone -- the failure mode
@@ -129,14 +130,19 @@ def test_neck_pitch2_moves_opposite_pitch1_instead_of_staying_at_neutral() -> No
     """
     keys = _teleop().config.teleop_keys
     center = _teleop()._neutral
+    sign = MotionEngine.NECK_PITCH2_SIGN
 
     t = _teleop()
     t._update_neck_from_keys({keys["neck_pitch_up"]})
-    assert t._neck_positions["neck_pitch2"] < center
+    p1 = t._neck_positions["neck_pitch1"] - center
+    assert p1 != 0
+    assert sign * (t._neck_positions["neck_pitch2"] - center) * p1 > 0
 
     t = _teleop()
     t._update_neck_from_keys({keys["neck_pitch_down"]})
-    assert t._neck_positions["neck_pitch2"] > center
+    p1 = t._neck_positions["neck_pitch1"] - center
+    assert p1 != 0
+    assert sign * (t._neck_positions["neck_pitch2"] - center) * p1 > 0
 
 
 def test_neck_pitch_split_matches_engine_head_total_at_full_deflection() -> None:

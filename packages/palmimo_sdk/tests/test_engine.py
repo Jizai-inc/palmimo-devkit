@@ -364,10 +364,10 @@ def test_bow_pose_tilts_forward_on_planted_rear() -> None:
     assert front > middle > 0
     assert mid["leg_1_pitch1"] == n  # RL: rear leg stays at neutral (doesn't lift)
     # neck lowers from its front (rest-trimmed) center; pitch1 and pitch2 share the
-    # dip and pitch2 mirrors pitch1's sign (see MotionEngine.NECK_PITCH2_SIGN), so a
-    # chin-down dip means pitch1 rises above its center while pitch2 drops below NEUTRAL.
+    # dip, pitch2 oriented by MotionEngine.NECK_PITCH2_SIGN, so a chin-down dip
+    # moves pitch1 above its center and pitch2 the same physical way.
     assert mid["neck_pitch1"] > engine.neck_pitch_center()
-    assert mid["neck_pitch2"] < n
+    assert engine.NECK_PITCH2_SIGN * (mid["neck_pitch2"] - n) > 0
     # The combined head-pitch dip (pitch1 + sign*pitch2) is at least bow_neck_down's
     # worth of ticks, regardless of how the split shares it between the two joints.
     head_total = (mid["neck_pitch1"] - engine.neck_pitch_center()) + engine.NECK_PITCH2_SIGN * (mid["neck_pitch2"] - n)

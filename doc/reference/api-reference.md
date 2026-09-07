@@ -205,8 +205,8 @@ The neck is body -> `neck_pitch1` -> `neck_pitch2` -> `neck_yaw`. `look()`'s
 pitch target is split across both pitch joints (`MotionEngine.NECK_PITCH2_SHARE`,
 0.5 by default) rather than loaded entirely onto `neck_pitch1` — the head's total
 pitch angle is unchanged, but each joint's own swing shrinks, which is what fixed
-an overheating `neck_pitch1` on hardware. `neck_pitch2` mirrors `neck_pitch1`'s
-tick direction (`MotionEngine.NECK_PITCH2_SIGN = -1`, hardware-confirmed 2026-09).
+an overheating `neck_pitch1` on hardware. `neck_pitch2` shares `neck_pitch1`'s
+tick direction (`MotionEngine.NECK_PITCH2_SIGN = 1`, hardware-confirmed 2026-09).
 `nod()` drives `neck_pitch1` and `head_shake()` drives `neck_yaw`; either way
 `neck_pitch2` is blended back to its raw-neutral rest point over the same
 window that eases a pre-gesture look position home, so the gesture always
