@@ -541,13 +541,19 @@ def test_look_degrees_at_full_travel_reaches_normalized_one() -> None:
 
 
 def test_neck_pitch_degrees_beyond_travel_raises_value_error_at_construction() -> None:
-    """A NeckPitchDegrees value beyond the real range of motion raises ValueError instead of
-    saturating (the value object owns its own validation)."""
-    travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    """A NeckPitchDegrees value beyond the real range of motion for that side raises
+    ValueError instead of saturating (the value object owns its own validation).
+
+    Chin-down (non-negative) and chin-up (negative) validate against different
+    travels (see NeckPitchDegrees' docstring) -- without checking both sides,
+    a regression collapsing them back to one symmetric bound would go unnoticed.
+    """
+    down_travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    up_travel = MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
     with pytest.raises(ValueError, match="pitch"):
-        NeckPitchDegrees(travel + 0.001)
+        NeckPitchDegrees(down_travel + 0.001)
     with pytest.raises(ValueError, match="pitch"):
-        NeckPitchDegrees(-(travel + 0.001))
+        NeckPitchDegrees(-(up_travel + 0.001))
 
 
 def test_neck_yaw_degrees_beyond_travel_raises_value_error_at_construction() -> None:
@@ -561,13 +567,30 @@ def test_neck_yaw_degrees_beyond_travel_raises_value_error_at_construction() -> 
 
 def test_neck_degrees_accepts_boundary_value_exactly_at_travel() -> None:
     """A value exactly at the real range of motion is accepted as a boundary value (not
-    rejected by floating-point rounding)."""
-    pitch_travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    rejected by floating-point rounding) -- pitch's chin-down and chin-up sides each
+    at their own (different) travel."""
+    down_travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    up_travel = MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
     yaw_travel = MotionEngine.NECK_YAW_TRAVEL_DEG
-    assert NeckPitchDegrees(pitch_travel).value == pitch_travel
-    assert NeckPitchDegrees(-pitch_travel).value == -pitch_travel
+    assert NeckPitchDegrees(down_travel).value == down_travel
+    assert NeckPitchDegrees(-up_travel).value == -up_travel
     assert NeckYawDegrees(yaw_travel).value == yaw_travel
     assert NeckYawDegrees(-yaw_travel).value == -yaw_travel
+
+
+def test_look_pitch_up_converts_via_the_larger_up_travel() -> None:
+    """A negative (chin-up) NeckPitchDegrees normalizes by dividing by
+    NECK_PITCH_UP_TRAVEL_DEG, not NECK_PITCH_TRAVEL_DEG -- the two differ because
+    pitch2 extends the chin-up reach past pitch1's own travel (see
+    NeckPitchDegrees' docstring). Using the wrong (smaller) travel would send the
+    engine a normalized value short of what the caller actually asked for.
+    """
+    robot = Palmimo()
+    up_travel = MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
+    robot.look(pitch=NeckPitchDegrees(-up_travel / 2))
+    assert robot._engine._neck_target_pitch == pytest.approx(-0.5)
+    robot.look(pitch=NeckPitchDegrees(-up_travel))
+    assert robot._engine._neck_target_pitch == pytest.approx(-1.0)
 
 
 def test_look_rejects_yaw_value_object_passed_as_pitch() -> None:

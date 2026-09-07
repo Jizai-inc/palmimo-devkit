@@ -172,16 +172,48 @@ def _head_total(pos: dict[str, int], engine: MotionEngine) -> int:
     )
 
 
+def _expected_head_total_when_split(engine: MotionEngine, x: float) -> int:
+    """Expected combined head-pitch offset for a converged set_neck(pitch=x),
+    share > 0, mirroring _apply_neck's split.
+
+    pitch1's own target is always computed from the symmetric ``total`` (``x *
+    amplitude``, clamped to +-amplitude) -- unaffected by the chin-up
+    extension below, so pitch1 never swings harder than the pre-pitch2 split
+    already asked of it (see _apply_neck). pitch2's remainder is computed
+    against that same ``total`` on the chin-down side (x >= 0), but against
+    the larger ``up_reach`` on the chin-up side (x < 0): pitch1's own spare
+    room above ``center`` up to its raw band ceiling, plus the full raw band
+    pitch2 can then cover on its own.
+    """
+    center = engine.neck_pitch_center()
+    amp = engine._neck_amplitude
+    share = max(0.0, min(1.0, engine.neck_pitch2_share))
+    sign = 1 if engine.neck_pitch2_sign >= 0 else -1
+    n = engine.NEUTRAL
+
+    total = max(-amp, min(amp, int(x * amp)))
+    p1_target = max(n - amp, min(n + amp, center + int((1.0 - share) * total)))
+    p1_contribution = p1_target - center
+
+    up_reach = (center - (n - amp)) + amp
+    remainder_total = max(-up_reach, min(amp, int(x * up_reach))) if x < 0.0 else total
+    p2_target = max(n - amp, min(n + amp, n + int(sign * (remainder_total - p1_contribution))))
+    p2_contribution = p2_target - n
+
+    return p1_contribution + sign * p2_contribution
+
+
 @pytest.mark.parametrize("trim", [0.0, 15.0, -20.0])
 @pytest.mark.parametrize("x", [-1.0, -0.5, 0.0, 0.5, 1.0])
 @pytest.mark.parametrize("share", [0.5, 0.75, 1.0])
-def test_neck_pitch2_share_reaches_symmetric_head_total_when_split(share: float, x: float, trim: float) -> None:
+def test_neck_pitch2_share_reaches_extended_head_total_when_split(share: float, x: float, trim: float) -> None:
     """With pitch2 actually taking part in the split (share > 0), set_neck(pitch=x)'s
-    combined head-pitch offset (pitch1 + sign*pitch2) reaches the full symmetric
-    ``x * amplitude`` for any share -- pitch2 absorbs whatever pitch1's own
-    NEUTRAL+-amplitude band can't carry once the rest trim shifts pitch1's center
-    off NEUTRAL, instead of the head's up/down range coming out lopsided around
-    its own front.
+    combined head-pitch offset (pitch1 + sign*pitch2) matches the split formula
+    (see _expected_head_total_when_split / _apply_neck) for any share -- pitch2
+    absorbs whatever pitch1's own NEUTRAL+-amplitude band can't carry once the
+    rest trim shifts pitch1's center off NEUTRAL, on both the chin-down side
+    (the historical symmetric range) and, further still, the chin-up side
+    (pitch2's own full raw band beyond that).
     """
     engine = MotionEngine()
     engine.neck_rest_pitch_deg = trim
@@ -193,9 +225,49 @@ def test_neck_pitch2_share_reaches_symmetric_head_total_when_split(share: float,
     amp = engine._neck_amplitude
     n = engine.NEUTRAL
 
-    assert _head_total(pos, engine) == pytest.approx(round(x * amp), abs=2)
+    assert _head_total(pos, engine) == pytest.approx(_expected_head_total_when_split(engine, x), abs=2)
     assert n - amp <= pos["neck_pitch1"] <= n + amp
     assert n - amp <= pos["neck_pitch2"] <= n + amp
+
+
+@pytest.mark.parametrize("trim", [0.0, 15.0, -20.0])
+@pytest.mark.parametrize("share", [0.5, 0.75, 1.0])
+def test_neck_pitch2_reaches_its_own_raw_band_edge_at_full_chin_up(share: float, trim: float) -> None:
+    """A maxed-out chin-up look (x=-1) always drives pitch2 all the way to its
+    own raw band edge (NEUTRAL-amplitude), for any share/trim -- pitch2's
+    remainder demand (up_reach minus whatever pitch1 already carries) is
+    always >= amplitude at x=-1, since up_reach itself is pitch1's own spare
+    room plus a full amplitude. Without the chin-up extension, pitch2 would
+    stall wherever pitch1's share alone left it (its pre-extension ceiling),
+    leaving this room unused.
+    """
+    engine = MotionEngine()
+    engine.neck_rest_pitch_deg = trim
+    engine.neck_pitch2_share = share
+    engine.set_neck(pitch=-1.0)
+    for _ in range(400):
+        engine.step()
+    pos = engine.get_positions()
+    assert pos["neck_pitch2"] == engine.NEUTRAL - engine._neck_amplitude
+
+
+def test_neck_look_up_reaches_pitch2_raw_band_edge_at_default_trim() -> None:
+    """At the shipped defaults (neck_rest_pitch_deg=15, neck_pitch2_share=0.5),
+    a maxed-out chin-up look converges with BOTH pitch1 and pitch2 at their raw
+    band edge (1748 = NEUTRAL-amplitude), matching the hardware observation
+    that motivated the chin-up extension: pitch1 alone stalled at 1748 while
+    pitch2 (2048-171=1877) still had 129 ticks of unused room before ITS OWN
+    1748 edge.
+    """
+    engine = MotionEngine()
+    engine.set_neck(pitch=-1.0)
+    for _ in range(400):
+        engine.step()
+    pos = engine.get_positions()
+    edge = engine.NEUTRAL - engine._neck_amplitude
+    assert pos["neck_pitch1"] == edge
+    assert pos["neck_pitch2"] == edge
+    assert _head_total(pos, engine) == -429
 
 
 def _old_pitch1_only_head_total(engine: MotionEngine, x: float) -> int:
@@ -317,6 +389,22 @@ def test_neck_travel_deg_is_public_per_axis_and_matches_amplitude_ticks() -> Non
     assert pytest.approx(expected) == MotionEngine.NECK_YAW_TRAVEL_DEG
     # measured: 300 ticks / (4096/360) ≈ 26.37 degrees.
     assert pytest.approx(26.3671875) == MotionEngine.NECK_PITCH_TRAVEL_DEG
+
+
+def test_neck_pitch_up_travel_deg_matches_up_reach_at_shipped_defaults() -> None:
+    """NECK_PITCH_UP_TRAVEL_DEG is the degree equivalent of _apply_neck's
+    up_reach (see that method) at the shipped defaults
+    (_NECK_REST_PITCH_DEG=15, NECK_PITCH2_SHARE=0.5) -- the larger chin-up
+    travel that NeckPitchDegrees/Palmimo.look() validate/convert negative
+    (chin-up) values against. Without this matching the engine's actual
+    up-side ceiling, a caller's real-degree look-up request would silently
+    over- or under-shoot the physical travel.
+    """
+    trim_ticks = round(MotionEngine._NECK_REST_PITCH_DEG * MotionEngine.TICK_PER_DEG)
+    up_reach_ticks = 2 * MotionEngine.NECK_AMPLITUDE_TICKS - trim_ticks
+    assert pytest.approx(up_reach_ticks / MotionEngine.TICK_PER_DEG) == MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
+    # measured: (2*300 - 171) ticks / (4096/360) ≈ 37.7 degrees.
+    assert pytest.approx(37.705, abs=0.01) == MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
     assert pytest.approx(26.3671875) == MotionEngine.NECK_YAW_TRAVEL_DEG
 
 

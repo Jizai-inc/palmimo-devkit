@@ -174,6 +174,38 @@ def test_neck_pitch_split_matches_engine_head_total_at_full_deflection() -> None
     assert teleop_total == pytest.approx(engine_total, abs=2)
 
 
+def test_neck_pitch_split_matches_engine_head_total_at_full_chin_up_deflection() -> None:
+    """The teleop's combined pitch1+pitch2 head angle on the extended chin-up side
+    (the "neck_pitch_down" key, which walks the tick total below center) matches
+    MotionEngine's own split for set_neck(pitch=-1.0).
+
+    Before the chin-up extension, this side reached only NECK_AMPLITUDE_TICKS
+    like the chin-down side; without this test, the teleop's reachable chin-up
+    ceiling could silently drift from the engine's (e.g. if only one of the two
+    was updated), leaving a recorded teleop episode's neck targets outside what
+    MotionEngine.look() can ever reproduce.
+    """
+    t = _teleop()
+    keys = t.config.teleop_keys
+    for _ in range(2 * 2 * t._neck_amplitude // t._neck_step + 2):  # saturate the (doubled) chin-up reach
+        t._update_neck_from_keys({keys["neck_pitch_down"]})
+    teleop_total = (t._neck_positions["neck_pitch1"] - t._neutral) + MotionEngine.NECK_PITCH2_SIGN * (
+        t._neck_positions["neck_pitch2"] - t._neutral
+    )
+
+    engine = MotionEngine()
+    engine.neck_rest_pitch_deg = 0.0  # the teleop has no rest-trim concept; compare on equal footing
+    engine.set_neck(pitch=-1.0)
+    for _ in range(400):  # plenty of steps to fully converge
+        engine.step()
+    engine_pos = engine.get_positions()
+    engine_total = (engine_pos["neck_pitch1"] - engine.NEUTRAL) + MotionEngine.NECK_PITCH2_SIGN * (
+        engine_pos["neck_pitch2"] - engine.NEUTRAL
+    )
+
+    assert teleop_total == pytest.approx(engine_total, abs=2)
+
+
 class _FakeKeyboard:
     """Mimics lerobot KeyboardTeleop.get_action(): returns ``dict.fromkeys(held, None)``
     — keys are the held chars, values are ``None``. Guards the extraction path so a

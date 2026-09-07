@@ -335,7 +335,16 @@ class PalmimoTeleop(Teleoperator):
         """Update neck position from held character keys (see config.teleop_keys)."""
         nk = self.config.teleop_keys
         center = self._neutral
-        min_pos = center - self._neck_amplitude
+        share = MotionEngine.NECK_PITCH2_SHARE
+        # Chin-up reach, mirroring MotionEngine._apply_neck's `up_reach`: this
+        # teleop carries no rest trim (center is always NEUTRAL), so pitch1's
+        # own spare room above center simplifies to the same `amp` pitch2
+        # then covers on its own -- amp + amp -- instead of engine.py's
+        # trim-dependent (center - (NEUTRAL - amp)) + amp. Only the reachable
+        # LIMIT needs to match the engine; unlike look(), nothing here reads
+        # real degrees off this constant.
+        up_reach = self._neck_amplitude * 2 if share > 0.0 else self._neck_amplitude
+        min_pos = center - up_reach
         max_pos = center + self._neck_amplitude
 
         # Pitch control (up/down): walk the undivided total with the historical
@@ -358,14 +367,18 @@ class PalmimoTeleop(Teleoperator):
                 self._neck_pitch_total += self._neck_step
 
         total_offset = self._neck_pitch_total - center
-        share = MotionEngine.NECK_PITCH2_SHARE
         sign = MotionEngine.NECK_PITCH2_SIGN
-        # Same split as MotionEngine._apply_neck: pitch1 carries (1-share) of
-        # the offset (clamped to its own +-amp band around center), and
-        # pitch2 -- unless share == 0.0, the "pitch1 only" sentinel -- picks
-        # up whatever that clamp left uncarried, so the combined head angle
-        # still reaches the full offset instead of stalling on pitch1 alone.
-        p1_offset = round((1.0 - share) * total_offset)
+        # Same split as MotionEngine._apply_neck: pitch1's own basis is always
+        # the symmetric +-amp total, UNCHANGED by the chin-up extension above
+        # -- pitch1 must never be asked to swing harder than the pre-extension
+        # split already did, or the extra chin-up reach would come at the cost
+        # of re-introducing pitch1's overheating risk. pitch2 -- unless
+        # share == 0.0, the "pitch1 only" sentinel -- picks up whatever pitch1's
+        # own clamp left uncarried from the (possibly chin-up-extended)
+        # total_offset, so the combined head angle reaches the full extended
+        # offset instead of stalling on pitch1's own band.
+        p1_basis = max(-self._neck_amplitude, min(self._neck_amplitude, total_offset))
+        p1_offset = round((1.0 - share) * p1_basis)
         p1_offset = max(-self._neck_amplitude, min(self._neck_amplitude, p1_offset))
         self._neck_positions["neck_pitch1"] = center + p1_offset
         if share > 0.0:

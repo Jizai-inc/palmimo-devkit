@@ -86,6 +86,11 @@ class MotionEngine:
     # without an API break -- today both read the same ``_neck_amplitude`` in
     # ``_apply_neck``/``_apply_neck_gesture``, so the two constants happen to
     # be equal, but nothing here assumes that stays true.
+    #
+    # NECK_PITCH_TRAVEL_DEG covers the chin-DOWN side (and yaw, both ways) --
+    # unaffected by the pitch2 split below. The chin-UP side is asymmetric
+    # (see NECK_PITCH_UP_TRAVEL_DEG further down, once the rest-trim knob it
+    # depends on is defined).
     NECK_AMPLITUDE_TICKS: ClassVar[int] = 300
     NECK_PITCH_TRAVEL_DEG: ClassVar[float] = NECK_AMPLITUDE_TICKS / TICK_PER_DEG  # ~26.37 deg
     NECK_YAW_TRAVEL_DEG: ClassVar[float] = NECK_AMPLITUDE_TICKS / TICK_PER_DEG  # ~26.37 deg
@@ -1516,6 +1521,23 @@ class MotionEngine:
     # relocate the neck's working center outside a sane mechanical window.
     _NECK_REST_LIMIT_DEG: ClassVar[float] = 20.0
 
+    # Chin-up mechanical travel (deg), PUBLIC alongside NECK_PITCH_TRAVEL_DEG
+    # for the same reason (see that constant's comment) and used the same way
+    # by NeckPitchDegrees/look() for negative (chin-up) values. Unlike the
+    # down side, the up-side ceiling `_apply_neck` actually reaches
+    # (`up_reach`) depends on two per-instance knobs -- neck_rest_pitch_deg
+    # and neck_pitch2_share -- so this class-level constant is only exact at
+    # their shipped defaults (_NECK_REST_PITCH_DEG, NECK_PITCH2_SHARE); a
+    # caller who changes either no longer has a precise class-level bound.
+    # Formula mirrors `_apply_neck`'s `up_reach`: pitch1's own spare room
+    # above the rest-trimmed center (amp - trim ticks) plus the full raw
+    # band pitch2 then covers on its own (+ amp).
+    NECK_PITCH_UP_TRAVEL_DEG: ClassVar[float] = (
+        (2 * NECK_AMPLITUDE_TICKS - round(_NECK_REST_PITCH_DEG * TICK_PER_DEG)) / TICK_PER_DEG
+        if NECK_PITCH2_SHARE > 0.0
+        else NECK_PITCH_TRAVEL_DEG
+    )
+
     def neck_pitch_center(self) -> int:
         """Neck-pitch tick that counts as "front" (rest trim applied).
 
@@ -1674,15 +1696,16 @@ class MotionEngine:
         # the head an asymmetric range around its own front.
         #
         # pitch1 carries (1-share) of `total`, clamped to the raw NEUTRAL+-amp
-        # servo band (its own mechanical/rest-trim limit). Whatever `total`
-        # that clamp leaves unmet is not dropped -- pitch2 picks up the
-        # remainder (oriented by `sign`, no rest trim of its own), so the
-        # head's combined angle still reaches the full symmetric `total`
-        # even where pitch1 alone would have stalled against its band. This
-        # only applies when share > 0: share == 0.0 is the documented "look
-        # motion on pitch1 only" sentinel (see NECK_PITCH2_SHARE), so it must
-        # reproduce the old single-joint asymmetry exactly rather than fix it
-        # -- pitch2 stays at NEUTRAL, untouched, in that case.
+        # servo band (its own mechanical/rest-trim limit) -- UNCHANGED by the
+        # chin-up extension below, on purpose: pitch1's own target must never
+        # depend on how far pitch2 can still reach, or a caller with little
+        # rest-trim headroom (e.g. a negative trim, chin-down rest) would make
+        # pitch1 swing harder than this single `total`-based split already
+        # asks of it, re-introducing the overheating risk pitch2 exists to
+        # relieve (see NECK_PITCH2_SHARE). This only applies when share > 0:
+        # share == 0.0 is the documented "look motion on pitch1 only" sentinel,
+        # so it must reproduce the old single-joint asymmetry exactly rather
+        # than fix it -- pitch2 stays at NEUTRAL, untouched, in that case.
         offset = self._neck_target_pitch * amp
         total = max(-amp, min(amp, int(offset)))
 
@@ -1699,7 +1722,26 @@ class MotionEngine:
 
         if share > 0.0:
             p1_contribution = target_p1 - center
-            target_p2 = self.NEUTRAL + int(sign * (total - p1_contribution))
+            # pitch2's own remainder is computed against `total` (the
+            # symmetric ±amp demand) on the chin-down side, same as always.
+            # On the chin-up side (x < 0) it is computed against `up_reach`
+            # instead: pitch1's own spare room above `center` up to its raw
+            # band ceiling, PLUS the full raw band pitch2 can then cover on
+            # its own. Hardware observation (2026-09, real-robot look-up
+            # test): with share > 0, pitch1 alone reaches its ceiling well
+            # before pitch2 reaches ITS raw band edge, leaving chin-up travel
+            # on the table even though pitch2 has room to keep going --
+            # amp-only clamping on the up side wastes that room. Only
+            # pitch2's OWN remainder is widened; pitch1's contribution above
+            # is untouched, so this never asks pitch1 for more than the
+            # symmetric split already did (see that comment).
+            up_reach = (center - (self.NEUTRAL - amp)) + amp
+            remainder_total = (
+                max(-up_reach, min(amp, int(self._neck_target_pitch * up_reach)))
+                if self._neck_target_pitch < 0.0
+                else total
+            )
+            target_p2 = self.NEUTRAL + int(sign * (remainder_total - p1_contribution))
             target_p2 = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, target_p2))
         else:
             target_p2 = self.NEUTRAL

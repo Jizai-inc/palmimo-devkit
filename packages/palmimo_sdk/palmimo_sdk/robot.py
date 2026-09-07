@@ -188,28 +188,33 @@ class NeckPitchDegrees:
     """A neck PITCH angle expressed in real degrees.
 
     Self-validating: construction raises :class:`ValueError` if *value* falls
-    outside the neck's actual mechanical pitch travel
-    (:attr:`~palmimo_sdk.engine.MotionEngine.NECK_PITCH_TRAVEL_DEG`, ~26.4 deg)
-    — range-checking is this value object's own responsibility, not
-    :meth:`Palmimo.look`'s, so an out-of-range request fails loudly at the
-    call site instead of silently saturating. Converted by :meth:`Palmimo.look`
-    into the engine's normalized [-1, 1] input by dividing by that same travel.
+    outside the neck's actual mechanical pitch travel on that side — the
+    chin-DOWN travel (:attr:`~palmimo_sdk.engine.MotionEngine.NECK_PITCH_TRAVEL_DEG`,
+    ~26.4 deg) for a non-negative *value*, the larger chin-UP travel
+    (:attr:`~palmimo_sdk.engine.MotionEngine.NECK_PITCH_UP_TRAVEL_DEG`, ~37.7
+    deg at the shipped defaults) for a negative one. The two differ because
+    the neck's second pitch joint (pitch2) can extend the chin-up reach past
+    what pitch1 alone covers (see the engine's ``_apply_neck``) but not the
+    chin-down side — range-checking is this value object's own
+    responsibility, not :meth:`Palmimo.look`'s, so an out-of-range request
+    fails loudly at the call site instead of silently saturating. Converted
+    by :meth:`Palmimo.look` into the engine's normalized [-1, 1] input by
+    dividing by that same per-side travel.
 
-    A separate class from :class:`NeckYawDegrees` on purpose: the two axes'
-    travel limits happen to be equal today (both derive from the shared
-    ``NECK_AMPLITUDE_TICKS``), but nothing here assumes that stays true, and
-    keeping them distinct types also lets :meth:`Palmimo.look` reject an
-    axis-swapped argument (e.g. a yaw value passed as ``pitch=``) with a clear
-    :class:`TypeError` instead of silently accepting it.
+    A separate class from :class:`NeckYawDegrees` on purpose: yaw has no
+    second joint and stays symmetric, and keeping the types distinct also
+    lets :meth:`Palmimo.look` reject an axis-swapped argument (e.g. a yaw
+    value passed as ``pitch=``) with a clear :class:`TypeError` instead of
+    silently accepting it.
     """
 
     value: float
 
     def __post_init__(self) -> None:
-        travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+        travel = MotionEngine.NECK_PITCH_TRAVEL_DEG if self.value >= 0 else MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
         if abs(self.value) > travel:
             raise ValueError(
-                f"NeckPitchDegrees({self.value!r}) exceeds the neck's actual pitch travel of ±{travel:.2f} deg."
+                f"NeckPitchDegrees({self.value!r}) exceeds the neck's actual pitch travel of {travel:.2f} deg on that side."
             )
 
 
@@ -1680,11 +1685,14 @@ class Palmimo:
         - :class:`NeckPitchDegrees` / :class:`NeckYawDegrees` — a real neck
           angle for that axis, converted to normalized by dividing by the
           axis's actual mechanical travel
-          (:attr:`~palmimo_sdk.engine.MotionEngine.NECK_PITCH_TRAVEL_DEG` /
-          :attr:`~palmimo_sdk.engine.MotionEngine.NECK_YAW_TRAVEL_DEG`, ~26.4
-          deg today on both). Self-validates at construction (raises
-          :class:`ValueError` past that travel) — no clamping needed here,
-          since a value object can only exist in-range.
+          (:attr:`~palmimo_sdk.engine.MotionEngine.NECK_YAW_TRAVEL_DEG`, ~26.4
+          deg, for yaw both ways; for pitch,
+          :attr:`~palmimo_sdk.engine.MotionEngine.NECK_PITCH_TRAVEL_DEG`
+          (~26.4 deg) chin-down and the larger
+          :attr:`~palmimo_sdk.engine.MotionEngine.NECK_PITCH_UP_TRAVEL_DEG`
+          (~37.7 deg at the shipped defaults) chin-up). Self-validates at
+          construction (raises :class:`ValueError` past that travel) — no
+          clamping needed here, since a value object can only exist in-range.
 
         Passing the wrong axis's value object (e.g. a :class:`NeckYawDegrees`
         as *pitch*) raises :class:`TypeError` rather than being silently
@@ -1705,7 +1713,10 @@ class Palmimo:
     def _pitch_to_normalized(self, value: float | NeckPitchDegrees | NeckPitchNormalized) -> float:
         """Convert a look() pitch argument to the engine's normalized [-1, 1] float."""
         if isinstance(value, NeckPitchDegrees):
-            return value.value / self._engine.NECK_PITCH_TRAVEL_DEG
+            # Chin-up (negative) travels farther than chin-down -- see
+            # NeckPitchDegrees' docstring and MotionEngine._apply_neck.
+            travel = self._engine.NECK_PITCH_TRAVEL_DEG if value.value >= 0 else self._engine.NECK_PITCH_UP_TRAVEL_DEG
+            return value.value / travel
         if isinstance(value, NeckPitchNormalized):
             return value.value
         if isinstance(value, NeckYawDegrees | NeckYawNormalized):
