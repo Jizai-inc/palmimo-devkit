@@ -109,9 +109,13 @@ The pilot page sends one control frame every 100ms
 (`{"move", "rotate", "neck", "seq"}`) on a fixed interval rather than only on
 input change -- this doubles as the deadman heartbeat. If the server goes
 **400ms** without a frame from the pilot (`session.DEADMAN_TIMEOUT_S`), the
-robot loop stops translation, rotation, and any playing gesture on its own;
-the pilot slot itself stays held as long as the WebSocket is still open, so a
-brief network hiccup does not lose the slot, only the motion. A pilot
+robot loop stops translation, rotation, any playing gesture, **and the
+neck** on its own -- the neck returns to center (`pitch=0, yaw=0`), it does
+not hold whatever target the pilot last aimed it at, since an unattended
+neck held at an extreme (e.g. fully up) is a known cause of neck-servo
+overheating on real hardware. The pilot slot itself stays held as long as
+the WebSocket is still open, so a brief network hiccup does not lose the
+slot, only the motion. A pilot
 WebSocket disconnecting outright stops the robot and releases the slot -- the
 deadman timer and that disconnect handling are the only stop paths: there is
 no separate emergency-stop control, since a closed WebSocket already gets the
@@ -246,12 +250,26 @@ viewer page keeps `body` scrollable for its normal document flow.
 anyone who can reach the port -- this example is built for a single trusted
 LAN (e.g. the robot's own Wi-Fi AP or a home network), not for exposing the
 robot over the open internet or an untrusted network. Do not port-forward
-this server.
+this server. `/api/control` does check the WebSocket's `Origin` header
+against the request's own `Host` (rejecting a mismatch with code 1008)
+since WebSocket connections are not covered by CORS and a browser tab open
+to any other site on the LAN could otherwise open a control socket to this
+server -- but that is a same-site check, not authentication: anyone who can
+reach the port and load a page served from it (or any client that sends no
+`Origin` at all, e.g. a non-browser script) can still drive.
 
 Only one pilot can drive at a time. There is no separate emergency-stop
 control: the 400ms deadman timer and the pilot-disconnect handling (see
 [Safety: the deadman timer](#safety-the-deadman-timer)) are what stop the
 robot when something goes wrong.
+
+**Avoid holding the neck at an extreme for a long time.** The deadman
+timer recenters the neck on its own (see above), but a pilot who keeps the
+neck stick pushed fully up/down/left/right for an extended period is still
+holding the neck servo at that extreme the whole time -- this is a known
+cause of neck-servo overheating on real hardware. A temperature guard on
+the servo itself is a follow-up on the `palmimo_sdk` side, not something
+this example implements.
 
 ## Limitations
 

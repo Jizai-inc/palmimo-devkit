@@ -188,14 +188,17 @@ class PilotSession:
     def effective_input(self) -> PilotInput:
         """Resolve what `robot_loop.RobotLoop` should apply right now.
 
-        Move/rotate/gesture collapse to inert (translation/rotation/gesture
-        off) when there is no pilot or the deadman has expired -- but the
-        last-known neck target is always preserved, since holding gaze is
-        never unsafe the way un-commanded translation or a running gesture
-        is. A playing gesture (`play()`) is reported only while its window
-        (`GESTURE_PLAY_SECONDS`) has not yet elapsed -- there is no separate
-        "expire" step; this simply stops reporting it once `_now()` passes
-        `gesture_until`.
+        Move/rotate/gesture/neck all collapse to inert (translation,
+        rotation, gesture off, neck centered) when there is no pilot or the
+        deadman has expired. The neck used to hold its last-known target
+        through a deadman expiry on the theory that holding gaze is never
+        unsafe; a physical robot proved otherwise -- holding the neck at an
+        extreme (e.g. fully up) is a known cause of neck-servo overheating,
+        so an unattended neck must recenter, not freeze wherever the pilot
+        last left it. A playing gesture (`play()`) is reported only while
+        its window (`GESTURE_PLAY_SECONDS`) has not yet elapsed -- there is
+        no separate "expire" step; this simply stops reporting it once
+        `_now()` passes `gesture_until`.
 
         Reads `self._state` into a local exactly once: a second read could
         observe a fresher `_PilotState` the writer replaced in between,
@@ -205,7 +208,7 @@ class PilotSession:
         state = self._state
         current = state.input
         if not self.pilot_present or self._deadman_expired(state):
-            return PilotInput(neck_pitch=current.neck_pitch, neck_yaw=current.neck_yaw)
+            return PilotInput()
         gesture = None
         if state.gesture_until is not None and self._now() < state.gesture_until:
             gesture = state.playing_gesture

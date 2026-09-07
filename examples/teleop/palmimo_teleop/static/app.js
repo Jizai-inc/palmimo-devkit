@@ -414,15 +414,21 @@
   }
 
   // Losing focus or backgrounding the tab must not leave a stale direction
-  // held server-side until the next 100ms tick happens to notice -- clear
-  // every input source and push the release immediately. A gesture already
-  // playing is left alone: it is server-timed (`GESTURE_PLAY_SECONDS`), not
-  // held client-side, so there is nothing here to release.
+  // -- or a stale neck target -- held server-side until the next 100ms tick
+  // happens to notice, so this clears every input source (including the
+  // neck stick, which otherwise keeps whatever off-center target it had
+  // when focus was lost) and pushes the release immediately. A gesture
+  // already playing is left alone: it is server-timed
+  // (`GESTURE_PLAY_SECONDS`), not held client-side, so there is nothing
+  // here to release.
   function clearAllInputsAndSendIdle() {
     touchHeld.clear();
     touchRotateHeld.clear();
     heldKeys.clear();
     dragging = false;
+    neckPitch = 0;
+    neckYaw = 0;
+    if (stick && handle) setHandlePosition(0, 0);
     sendFrame();
   }
 

@@ -113,17 +113,18 @@ def test_effective_input_stops_translation_after_the_deadman_window() -> None:
     assert effective.rotate == 0
 
 
-def test_effective_input_deadman_preserves_the_last_neck_target() -> None:
-    # Without this, a lost connection would snap the neck back to center
-    # instead of holding gaze -- unlike un-commanded translation, that is
-    # never itself unsafe.
+def test_effective_input_recenters_the_neck_after_the_deadman_window() -> None:
+    # Without this, a lost connection would leave the neck frozen wherever
+    # the pilot last aimed it -- holding an extreme neck position
+    # unattended is a known cause of neck-servo overheating on real
+    # hardware, unlike un-commanded translation which is simply stopped.
     session, clock = _session()
     session.acquire_pilot("a")
     session.update_pilot_input("a", move="forward", rotate=0, neck_pitch=0.5, neck_yaw=-0.5)
     clock.advance(DEADMAN_TIMEOUT_S + 0.01)
     effective = session.effective_input()
-    assert effective.neck_pitch == 0.5
-    assert effective.neck_yaw == -0.5
+    assert effective.neck_pitch == 0.0
+    assert effective.neck_yaw == 0.0
 
 
 def test_effective_input_with_no_pilot_is_inert() -> None:

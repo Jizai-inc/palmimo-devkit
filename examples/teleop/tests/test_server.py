@@ -2,15 +2,24 @@
 `--dry-run --no-camera` `Palmimo` and the real `PilotSession`/`RobotLoop`/`VideoStream` --
 no real servo bus, no real camera, no real time."""
 
+import asyncio
 import time
 from collections.abc import Callable, Iterator
+from typing import Any
 
 import pytest
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from palmimo_sdk import Palmimo, ServoDriver
 from palmimo_teleop.robot_loop import RobotLoop
-from palmimo_teleop.server import _validate_pilot_message, _validate_play_message, create_app
+from palmimo_teleop.server import (
+    _ConnectionRegistry,
+    _control_connection,
+    _validate_pilot_message,
+    _validate_play_message,
+    create_app,
+)
 from palmimo_teleop.session import PilotSession
 from palmimo_teleop.video import VideoStream
 
@@ -263,6 +272,128 @@ def test_play_message_from_the_pilot_starts_the_gesture(
         ws.send_json({"move": None, "rotate": 0, "neck": {"pitch": 0.0, "yaw": 0.0}, "seq": 1})
         ws.send_json({"play": "dance"})
         assert _wait_for(lambda: session.effective_input().gesture == "dance")
+
+
+class _FakeWebSocket:
+    """Minimal WebSocket double for exercising `_control_connection` and
+    `_ConnectionRegistry` directly, without a real ASGI handshake -- gives tests
+    control over exactly how/when `send_json` fails or stalls, which a real
+    socket does not offer on demand."""
+
+    def __init__(self, incoming: list[object] | None = None, *, fail_send: BaseException | None = None) -> None:
+        self._incoming = list(incoming) if incoming else []
+        self._fail_send = fail_send
+        self.sent: list[dict[str, Any]] = []
+        self.closed_with: int | None = None
+
+    async def receive_json(self) -> object:
+        if not self._incoming:
+            raise WebSocketDisconnect()
+        return self._incoming.pop(0)
+
+    async def send_json(self, payload: dict[str, Any]) -> None:
+        if self._fail_send is not None:
+            raise self._fail_send
+        self.sent.append(payload)
+
+    async def close(self, code: int = 1000) -> None:
+        self.closed_with = code
+
+
+class _HangingWebSocket:
+    """A WebSocket double whose `send_json` never completes on its own -- for
+    exercising `_ConnectionRegistry`'s per-send timeout."""
+
+    def __init__(self) -> None:
+        self.closed_with: int | None = None
+
+    async def send_json(self, payload: dict[str, Any]) -> None:
+        await asyncio.Event().wait()
+
+    async def close(self, code: int = 1000) -> None:
+        self.closed_with = code
+
+
+async def test_pilot_slot_is_released_when_the_grant_send_fails() -> None:
+    # Without this, a grant `send_json` that fails with anything other than
+    # WebSocketDisconnect (e.g. a peer that closed mid-handshake surfacing
+    # as RuntimeError) would leave the pilot slot held forever: `role` used
+    # to only become "pilot" as a side effect of that same send succeeding,
+    # so the handler's `finally` never saw it and never released the slot.
+    session = PilotSession()
+    registry = _ConnectionRegistry()
+    ws = _FakeWebSocket([{"role": "pilot"}], fail_send=RuntimeError("peer gone"))
+    with pytest.raises(RuntimeError):
+        await _control_connection(ws, session, registry, client_id=1)
+    assert session.pilot_present is False
+    assert session.acquire_pilot(2) is True
+
+
+@pytest.mark.parametrize("bad_first", ["hi", [1, 2]])
+def test_non_dict_first_message_closes_the_connection(client: TestClient, bad_first: object) -> None:
+    # Without this, a non-dict first message would reach `.get("role")` and
+    # raise AttributeError, crashing the handler instead of being rejected
+    # the same way an unrecognized role string already is.
+    with pytest.raises(WebSocketDisconnect), client.websocket_connect("/api/control") as ws:
+        ws.send_json(bad_first)
+        ws.receive_json()
+
+
+@pytest.mark.parametrize(
+    "bad_frame",
+    [
+        {"move": [], "rotate": 0, "neck": {}},
+        {"move": None, "rotate": [], "neck": {}},
+        {"move": None, "rotate": 0, "neck": {"pitch": 10**400}},
+        {"play": []},
+    ],
+)
+def test_pilot_connection_survives_type_confused_frames(
+    client_and_session: tuple[TestClient, PilotSession], bad_frame: dict[str, Any]
+) -> None:
+    # Without this, a `move`/`rotate` sent as a list (unhashable, raising
+    # TypeError from the frozenset membership check) or a neck value too
+    # large for `float()` (raising OverflowError) would crash the
+    # connection instead of just having the one bad frame dropped.
+    client, session = client_and_session
+    with client.websocket_connect("/api/control") as ws:
+        ws.send_json({"role": "pilot"})
+        ws.receive_json()
+        ws.send_json(bad_frame)
+        ws.send_json({"move": "forward", "rotate": 0, "neck": {"pitch": 0.0, "yaw": 0.0}, "seq": 1})
+        assert _wait_for(lambda: session.effective_input().move == "forward")
+
+
+def test_control_connection_is_rejected_for_a_mismatched_origin(client: TestClient) -> None:
+    # Without this, any page on the LAN could open this WebSocket and drive
+    # the robot -- WebSocket connections are not subject to CORS, so
+    # nothing else stops a cross-site page from doing so.
+    with (
+        pytest.raises(WebSocketDisconnect),
+        client.websocket_connect("/api/control", headers={"origin": "http://evil.example"}) as ws,
+    ):
+        ws.receive_json()
+
+
+def test_control_connection_is_accepted_for_a_matching_origin(client: TestClient) -> None:
+    with client.websocket_connect("/api/control", headers={"origin": "http://testserver"}) as ws:
+        ws.send_json({"role": "viewer"})
+        assert ws.receive_json() == {"granted": True}
+
+
+async def test_broadcast_delivers_to_other_sockets_despite_one_failing_or_stalling() -> None:
+    # Without this, one client raising from `send_json` (a closed peer) or
+    # never returning from it (a stalled peer, no clean close) would delay
+    # or drop the status update every other connected client is waiting on.
+    registry = _ConnectionRegistry(send_timeout_s=0.05)
+    healthy = _FakeWebSocket()
+    failing = _FakeWebSocket(fail_send=RuntimeError("peer gone"))
+    hanging = _HangingWebSocket()
+    await registry.add(healthy)
+    await registry.add(failing)
+    await registry.add(hanging)
+    await asyncio.wait_for(registry.broadcast({"pilot_present": False, "motion": None}), timeout=1.0)
+    assert healthy.sent == [{"pilot_present": False, "motion": None}]
 
 
 def test_play_message_from_a_viewer_is_dropped(
