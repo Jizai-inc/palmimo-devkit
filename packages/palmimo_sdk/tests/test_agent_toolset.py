@@ -621,7 +621,7 @@ async def test_call_disarms_after_a_tool_that_never_paces_so_it_does_not_leak() 
     robot.cancel()
     robot.forward()
     pos = robot.run(steps=5)
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 async def test_call_direct_run_without_toolset_keeps_unarmed_semantics() -> None:
@@ -634,7 +634,7 @@ async def test_call_direct_run_without_toolset_keeps_unarmed_semantics() -> None
     robot.cancel()  # idle cancel, no toolset involved, no scope armed
     robot.forward()
     pos = robot.run(steps=5)  # must NOT raise
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 # ----------------------------------------------------------------------

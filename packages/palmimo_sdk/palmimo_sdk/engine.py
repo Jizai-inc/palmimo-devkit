@@ -89,6 +89,18 @@ class MotionEngine:
     NECK_AMPLITUDE_TICKS: ClassVar[int] = 300
     NECK_PITCH_TRAVEL_DEG: ClassVar[float] = NECK_AMPLITUDE_TICKS / TICK_PER_DEG  # ~26.37 deg
     NECK_YAW_TRAVEL_DEG: ClassVar[float] = NECK_AMPLITUDE_TICKS / TICK_PER_DEG  # ~26.37 deg
+
+    # The neck is body -> pitch1 -> pitch2 -> yaw. pitch1 alone stalled lifting
+    # the head near the top of its travel and overheated on real hardware, so
+    # `_apply_neck` splits the look-pitch offset across both joints instead of
+    # loading it all on pitch1; the head's total angle is unchanged, only each
+    # joint's own swing shrinks. 0.0 keeps every look motion on pitch1 only
+    # (the pre-pitch2 behavior). Instance-overridable, same as ``gait_speed``.
+    NECK_PITCH2_SHARE: ClassVar[float] = 0.5
+    # pitch2 tick direction relative to pitch1 -- hardware-confirmed (2026-09):
+    # pitch1 tick increase tips the chin DOWN, pitch2 tick increase tips the
+    # chin UP, a mirror image of pitch1, hence -1.
+    NECK_PITCH2_SIGN: ClassVar[int] = -1
     L1: float = kinematics.L1
     L2: float = kinematics.L2
     L3: float = kinematics.L3
@@ -266,7 +278,7 @@ class MotionEngine:
         # and the neck pose captured at that moment so an off-center head can
         # be blended home instead of snapping (see _apply_neck_gesture).
         self._gesture_phase: float = 0.0
-        self._gesture_neck_start: tuple[int, int] = (0, 0)
+        self._gesture_neck_start: tuple[int, int, int] = (0, 0, 0)
 
         # Servo positions (raw ticks)
         self._leg: dict[str, int] = {}
@@ -279,11 +291,16 @@ class MotionEngine:
         self._neck: dict[str, int] = {
             "neck_yaw": self.NEUTRAL,
             "neck_pitch1": self.NEUTRAL,
+            "neck_pitch2": self.NEUTRAL,
         }
 
         # Neck limits
         self._neck_amplitude: int = self.NECK_AMPLITUDE_TICKS
         self._neck_step: int = 15
+
+        # pitch1/pitch2 look-offset split -- see NECK_PITCH2_SHARE/NECK_PITCH2_SIGN.
+        self.neck_pitch2_share: float = self.NECK_PITCH2_SHARE
+        self.neck_pitch2_sign: int = self.NECK_PITCH2_SIGN
 
         # Resting pitch trim (deg; positive raises the gaze). Defines the
         # neck-pitch that counts as "front": idle look targets settle around
@@ -365,6 +382,7 @@ class MotionEngine:
             self._gesture_phase = 0.0
             self._gesture_neck_start = (
                 self._neck["neck_pitch1"] - self.neck_pitch_center(),
+                self._neck["neck_pitch2"] - self.NEUTRAL,
                 self._neck["neck_yaw"] - self.NEUTRAL,
             )
         self._motion = value
@@ -404,7 +422,7 @@ class MotionEngine:
         Returns:
             dict[str, int]: Mapping of motor name to raw Dynamixel tick value.
                 Keys: ``leg_{1-6}_{yaw,pitch1,pitch2}``, ``neck_yaw``,
-                ``neck_pitch1``.
+                ``neck_pitch1``, ``neck_pitch2``.
         """
         if self._motion == Motion.IDLE:
             self._apply_idle()
@@ -488,7 +506,8 @@ class MotionEngine:
         another controller (e.g. the facade's timed neutral glide) has moved
         the neck directly, so the next gesture blends from the real pose
         instead of a stale internal one. Only keys the engine owns
-        (``neck_yaw`` / ``neck_pitch1``) are applied; others are ignored.
+        (``neck_yaw`` / ``neck_pitch1`` / ``neck_pitch2``) are applied; others
+        are ignored.
 
         Args:
             positions (dict[str, int]): Motor name -> raw Dynamixel tick.
@@ -1579,7 +1598,12 @@ class MotionEngine:
         the keyframe offsets (raised-cosine interpolated); whatever off-center
         pose the head started with is blended out over the first
         ``_GESTURE_BLEND_S`` so the gesture can fire from any look direction
-        without a snap and always ends facing front.
+        without a snap and always ends facing front. pitch2 is never a
+        keyframe axis itself (the gesture keyframes are authored on pitch1/
+        yaw) but is blended home by the same window, so a gesture fired from a
+        split look position doesn't leave pitch2 stranded off-center while
+        pitch1 plays the stroke -- that would exceed the old single-joint
+        gesture's combined head angle and skip the front-facing end pose.
         """
         self._gesture_phase += self._WAVE_DT
         t = self._gesture_phase
@@ -1588,9 +1612,10 @@ class MotionEngine:
         # when the knobs make the first stroke shorter than the blend window.
         blend_s = min(self._GESTURE_BLEND_S, keys[1][0])
         w = 0.5 * (1.0 + math.cos(math.pi * t / blend_s)) if t < blend_s else 0.0
-        start_pitch, start_yaw = self._gesture_neck_start
+        start_pitch, start_pitch2, start_yaw = self._gesture_neck_start
         offset = {"neck_pitch1": start_pitch * w, "neck_yaw": start_yaw * w}
         offset[axis] += self._interp_keyframes(keys, t)
+        pitch2_offset = start_pitch2 * w
         # Clamp the COMBINED offset: when the gesture fires from a deflected
         # head, the fading blend residual and the keyframe stroke can point the
         # same way on the driven axis and their sum would exceed the neck's
@@ -1600,6 +1625,7 @@ class MotionEngine:
         # ...and clamp the absolute pitch to the servo-neutral safety band too:
         # the rest trim shifts the working center, not the mechanical limits.
         self._neck["neck_pitch1"] = max(self.NEUTRAL - lim, min(self.NEUTRAL + lim, pitch))
+        self._neck["neck_pitch2"] = self.NEUTRAL + round(max(-lim, min(lim, pitch2_offset)))
         self._neck["neck_yaw"] = self.NEUTRAL + round(max(-lim, min(lim, offset["neck_yaw"])))
         # Zero the look target so IDLE after the gesture holds the front-facing
         # pose instead of pulling back toward a stale look() direction.
@@ -1618,35 +1644,54 @@ class MotionEngine:
     # NECK
     # ================================================================
 
+    @staticmethod
+    def _step_toward(current: int, target: int, step: int) -> int:
+        """Move *current* one *step* closer to *target*, snapping when within reach."""
+        if abs(current - target) <= step:
+            return target
+        return current + step if current < target else current - step
+
     def _apply_neck(self) -> None:
         """Smoothly move neck toward target position."""
-        center = self.NEUTRAL
+        center = self.neck_pitch_center()
         amp = self._neck_amplitude
         # Scale the per-cycle step by dt so the neck's approach speed is
         # wall-clock-true at any control rate (identical to the historical
         # 15 ticks/frame at the 60 fps default).
         step = max(1, round(self._neck_step * self.dt * 60.0))
+        share = max(0.0, min(1.0, self.neck_pitch2_share))
+        sign = 1 if self.neck_pitch2_sign >= 0 else -1
 
-        # Pitch — look targets ride on the resting trim (the trimmed center is
-        # what "front" means for the head), but never leave the servo-neutral
-        # safety band: the trim shifts the working center, not the mechanical
-        # limits, so trim + full deflection must not stack past NEUTRAL±amp.
-        target_p = self.neck_pitch_center() + int(self._neck_target_pitch * amp)
-        target_p = max(center - amp, min(center + amp, target_p))
-        current_p = self._neck["neck_pitch1"]
-        if abs(current_p - target_p) <= step:
-            self._neck["neck_pitch1"] = target_p
-        elif current_p < target_p:
-            self._neck["neck_pitch1"] += step
-        else:
-            self._neck["neck_pitch1"] -= step
+        # The combined head-pitch offset ("total") is decided FIRST, by the
+        # historical pitch1-only rule (clamp against the servo-neutral safety
+        # band -- the trim shifts the working center, not the mechanical
+        # limits). Splitting the already-clamped total across pitch1/pitch2
+        # keeps the head's combined angle identical to that single-joint
+        # implementation for any share: only each joint's own swing shrinks.
+        # Splitting an UNCLAMPED per-joint target instead (the earlier bug)
+        # let pitch1 sit at the old single-joint extreme while pitch2 piled
+        # more on top, so the combined angle overshot the old implementation's.
+        offset = self._neck_target_pitch * amp
+        total = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, center + int(offset))) - center
+
+        # Each joint's own per-frame step is scaled by its share of the total
+        # swing, so the combined head-pitch speed matches the old single-joint
+        # rate (step ticks/frame) instead of both joints moving a full step at
+        # once and doubling it.
+        step_p1 = max(1, round(step * (1.0 - share)))
+        step_p2 = max(1, round(step * share))
+
+        # pitch1 carries (1-share) of the total and rides on the resting trim.
+        target_p1 = center + int((1.0 - share) * total)
+        target_p1 = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, target_p1))
+        self._neck["neck_pitch1"] = self._step_toward(self._neck["neck_pitch1"], target_p1, step_p1)
+
+        # pitch2 carries the rest, mirrored by sign, and has no rest trim of
+        # its own -- it works purely as an offset from raw NEUTRAL.
+        target_p2 = self.NEUTRAL + int(sign * share * total)
+        target_p2 = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, target_p2))
+        self._neck["neck_pitch2"] = self._step_toward(self._neck["neck_pitch2"], target_p2, step_p2)
 
         # Yaw
-        target_y = center + int(self._neck_target_yaw * amp)
-        current_y = self._neck["neck_yaw"]
-        if abs(current_y - target_y) <= step:
-            self._neck["neck_yaw"] = target_y
-        elif current_y < target_y:
-            self._neck["neck_yaw"] += step
-        else:
-            self._neck["neck_yaw"] -= step
+        target_y = self.NEUTRAL + int(self._neck_target_yaw * amp)
+        self._neck["neck_yaw"] = self._step_toward(self._neck["neck_yaw"], target_y, step)

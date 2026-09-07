@@ -129,8 +129,10 @@ _STRETCH_LEG_PV = 120
 # driven neck axes run PV=0 (track each streamed goal crisply; the command
 # stream itself is already raised-cosine smooth) and the driver's OWN default
 # profile is restored when it ends (fallback below for drivers that don't
-# expose it). Only the axes the engine drives are touched.
-_NECK_GESTURE_MOTORS = ("neck_pitch1", "neck_yaw")
+# expose it). Only the axes the engine drives are touched -- pitch2 is
+# included because the gesture also blends it home alongside pitch1/yaw (see
+# MotionEngine._apply_neck_gesture).
+_NECK_GESTURE_MOTORS = ("neck_pitch1", "neck_pitch2", "neck_yaw")
 _NECK_GESTURE_PV = 0
 _NECK_GESTURE_RESTORE_PV_FALLBACK = 300
 # Dance finishing flourish — a lingering hold followed by a slow return,

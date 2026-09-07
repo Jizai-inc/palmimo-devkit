@@ -68,7 +68,7 @@ def test_perform_dance_returns_to_neutral_and_idles() -> None:
     """perform_dance returns to neutral after the routine and ends in IDLE (compute-only)."""
     robot = Palmimo()  # compute-only: no real-time glide needed
     pos = robot.perform_dance(sways=0, end_hold=0.0, settle=0.0)
-    assert len(pos) == 20
+    assert len(pos) == 21
     assert robot.motion == "idle"
     # Eased home. neck_pitch1 settles at the trimmed rest center
     # (neck_rest_pitch_deg, introduced with the nod/head-shake gestures), not
@@ -133,7 +133,7 @@ def test_perform_dance_cancelled_during_settle_glide_leaves_motion_idle() -> Non
 
         def read_positions(self) -> dict[str, int]:
             names = [f"leg_{i}_{s}" for i in range(1, 7) for s in ("yaw", "pitch1", "pitch2")]
-            names += ["neck_yaw", "neck_pitch1"]
+            names += ["neck_yaw", "neck_pitch1", "neck_pitch2"]
             return dict.fromkeys(names, 2048)
 
         def write_positions(self, positions: dict[str, int]) -> None:
@@ -149,11 +149,11 @@ def test_perform_dance_cancelled_during_settle_glide_leaves_motion_idle() -> Non
 
 
 def test_step_returns_positions() -> None:
-    """step() returns a position dict for all 20 motors."""
+    """step() returns a position dict for all 21 motors."""
     robot = Palmimo()
     robot.forward()
     pos = robot.step()
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 def test_on_step_callback_is_invoked() -> None:
@@ -163,7 +163,7 @@ def test_on_step_callback_is_invoked() -> None:
     robot.forward()
     robot.step_n(5)
     assert len(seen) == 5
-    assert all(len(p) == 20 for p in seen)
+    assert all(len(p) == 21 for p in seen)
 
 
 def test_cancel_raises_motion_cancelled_mid_run() -> None:
@@ -189,7 +189,7 @@ def test_cancel_while_idle_does_not_carry_over_to_next_run() -> None:
     robot.cancel()  # nothing running yet
     robot.forward()
     pos = robot.run(steps=5)  # must NOT raise: run()'s entry snapshot postdates the idle cancel
-    assert len(pos) == 20
+    assert len(pos) == 21
     assert robot.motion == "forward"
 
 
@@ -202,7 +202,7 @@ def test_run_snapshot_ignores_cancel_count_bumped_before_it_started() -> None:
     robot._cancel_count += 1  # a stale cancel from a completely separate earlier call
     robot.forward()
     pos = robot.run(steps=3)
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 def test_pace_ignores_cancels_that_predate_its_snapshot() -> None:
@@ -337,7 +337,7 @@ def test_disarm_cancel_scope_prevents_leaking_into_next_run() -> None:
     robot.cancel()  # unarmed at this point -- an ordinary idle cancel
     robot.forward()
     pos = robot.run(steps=5)  # must NOT raise
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 def test_unarmed_run_semantics_are_unchanged() -> None:
@@ -349,7 +349,7 @@ def test_unarmed_run_semantics_are_unchanged() -> None:
     robot.cancel()  # idle cancel, no scope armed
     robot.forward()
     pos = robot.run(steps=5)  # must NOT raise
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 # ----------------------------------------------------------------------
@@ -613,7 +613,7 @@ def test_play_yields_expected_frame_count() -> None:
     robot = Palmimo()
     frames = list(robot.play([("forward", 0.2), ("look_around", 0.2)], fps=60))
     assert len(frames) == round(0.2 * 60) * 2
-    assert all(len(f) == 20 for f in frames)
+    assert all(len(f) == 21 for f in frames)
 
 
 def test_fps_and_dt_defaults() -> None:
@@ -643,7 +643,7 @@ def test_run_steps_advances_expected_cycles() -> None:
     robot.forward()
     final = robot.run(steps=10)
     assert len(seen) == 10
-    assert len(final) == 20
+    assert len(final) == 21
 
 
 def test_run_seconds_converts_via_fps() -> None:
@@ -679,7 +679,7 @@ def test_run_zero_returns_pose_without_stepping() -> None:
     robot = Palmimo(on_step=seen.append)
     pos = robot.run(steps=0)
     assert seen == []
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 def test_run_is_paced_by_control_rate() -> None:
@@ -698,7 +698,7 @@ def test_play_typed_routine_frame_count() -> None:
     routine = [RoutineStep(Motion.FORWARD, 0.2), RoutineStep(Motion.DANCE, 0.1)]
     frames = list(robot.play(routine, fps=60))
     assert len(frames) == round(0.2 * 60) + round(0.1 * 60)
-    assert all(len(f) == 20 for f in frames)
+    assert all(len(f) == 21 for f in frames)
 
 
 def test_run_and_play_agree_on_duration_to_steps() -> None:
@@ -813,19 +813,19 @@ class _PVRecorder:
 
 
 def test_neck_gesture_pv_applied_and_restored() -> None:
-    """During a gesture the two neck axes get PV=0, restored to the default PV on exit (same shape as wave tuning)."""
+    """During a gesture the three neck axes get PV=0, restored to the default PV on exit (same shape as wave tuning)."""
     driver = _PVRecorder()
     robot = Palmimo(driver=cast(ServoDriver, driver))
     robot.step()  # idle — no tuning traffic
     assert driver.calls == []
     robot.nod()
     robot.step()  # gesture enter -> PV=0 on the neck axes
-    assert driver.calls == [(0, ("neck_pitch1", "neck_yaw"))]
+    assert driver.calls == [(0, ("neck_pitch1", "neck_pitch2", "neck_yaw"))]
     robot.step()  # steady state -> no re-write
     assert len(driver.calls) == 1
     robot.stop()
     robot.step()  # gesture exit -> default PV restored
-    assert driver.calls[-1] == (300, ("neck_pitch1", "neck_yaw"))
+    assert driver.calls[-1] == (300, ("neck_pitch1", "neck_pitch2", "neck_yaw"))
 
 
 def test_return_to_neutral_converges_with_rest_trim() -> None:
@@ -839,6 +839,19 @@ def test_return_to_neutral_converges_with_rest_trim() -> None:
     pos = robot.positions
     assert pos["neck_pitch1"] == robot.engine.neck_pitch_center()
     assert all(abs(t - 2048) <= 2 for n, t in pos.items() if n != "neck_pitch1")
+
+
+def test_return_to_neutral_brings_pitch2_back_from_a_look_extreme() -> None:
+    """return_to_neutral brings neck_pitch2 back to NEUTRAL once look() has released
+    the neck -- without this, a joint the facade doesn't name explicitly (unlike
+    neck_pitch1's rest-trim target) could be left stranded off-center."""
+    robot = Palmimo()
+    robot.look(pitch=1.0)
+    robot.step_n(60)
+    assert robot.positions["neck_pitch2"] != robot.engine.NEUTRAL
+    robot.look_center()
+    robot.return_to_neutral()
+    assert robot.positions["neck_pitch2"] == robot.engine.NEUTRAL
 
 
 class _GlideDriver:
@@ -860,7 +873,7 @@ class _GlideDriver:
 
     def read_positions(self) -> dict[str, int]:
         names = [f"leg_{i}_{s}" for i in range(1, 7) for s in ("yaw", "pitch1", "pitch2")]
-        names += ["neck_yaw", "neck_pitch1"]
+        names += ["neck_yaw", "neck_pitch1", "neck_pitch2"]
         return dict.fromkeys(names, self.pose)
 
     def write_positions(self, positions: dict[str, int]) -> None:

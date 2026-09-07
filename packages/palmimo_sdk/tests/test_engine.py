@@ -36,18 +36,32 @@ def _run_seconds(engine: MotionEngine, seconds: float) -> dict[str, int]:
     return pos
 
 
-def test_step_emits_20_motors() -> None:
-    """step() returns 18 leg axes + 2 neck axes = 20 motors."""
+def test_step_emits_21_motors() -> None:
+    """step() returns 18 leg axes + 3 neck axes = 21 motors."""
     engine = MotionEngine()
     pos = engine.step()
-    assert len(pos) == 20
-    assert {"leg_1_yaw", "leg_6_pitch2", "neck_yaw", "neck_pitch1"} <= set(pos)
+    assert len(pos) == 21
+    assert {"leg_1_yaw", "leg_6_pitch2", "neck_yaw", "neck_pitch1", "neck_pitch2"} <= set(pos)
 
 
 @pytest.mark.parametrize("motion", ALL_MOTIONS, ids=lambda m: m.name.lower())
 def test_every_motion_stays_in_safe_range(motion: Motion) -> None:
     """Every motion stays within the safe tick range even after 120 steps."""
     engine = MotionEngine()
+    engine.motion = motion
+    for _ in range(120):
+        pos = engine.step()
+        for name, tick in pos.items():
+            assert SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK, f"{motion.name}/{name}={tick} out of range"
+
+
+@pytest.mark.parametrize("motion", ALL_MOTIONS, ids=lambda m: m.name.lower())
+@pytest.mark.parametrize("look", [(-1.0, -1.0), (1.0, 1.0)], ids=["look_neg", "look_pos"])
+def test_every_motion_stays_in_safe_range_at_look_extremes(motion: Motion, look: tuple[float, float]) -> None:
+    """Even with a maxed-out look target (both neck_pitch1 and neck_pitch2 driven to
+    their extremes), every motion stays within the safe tick range."""
+    engine = MotionEngine()
+    engine.set_neck(pitch=look[0], yaw=look[1])
     engine.motion = motion
     for _ in range(120):
         pos = engine.step()
@@ -149,6 +163,119 @@ def test_neck_target_is_clamped() -> None:
     assert abs(pos["neck_yaw"] - engine.NEUTRAL) <= 300
 
 
+def _head_total(pos: dict[str, int], engine: MotionEngine) -> int:
+    """Combined head-pitch offset from front: pitch1's own offset plus pitch2's,
+    mirrored onto the same sign convention -- independent of how the offset is
+    split between the two joints."""
+    return (pos["neck_pitch1"] - engine.neck_pitch_center()) + engine.neck_pitch2_sign * (
+        pos["neck_pitch2"] - engine.NEUTRAL
+    )
+
+
+@pytest.mark.parametrize("trim", [0.0, 15.0, -20.0])
+@pytest.mark.parametrize("x", [-1.0, -0.5, 0.0, 0.5, 1.0])
+@pytest.mark.parametrize("share", [0.0, 0.25, 0.5, 1.0])
+def test_neck_pitch2_share_does_not_change_combined_head_angle(share: float, x: float, trim: float) -> None:
+    """set_neck(pitch=x)'s combined head-pitch offset (pitch1 + sign*pitch2) converges to
+    the same value regardless of neck_pitch2_share -- splitting the offset across two
+    joints (the hardware fix for pitch1 stalling/overheating lifting the head alone)
+    changes only each joint's own swing, never the head's total angle.
+    """
+    reference = MotionEngine()
+    reference.neck_rest_pitch_deg = trim
+    reference.neck_pitch2_share = 0.0  # pre-pitch2 (pitch1-only) behavior, the ground truth
+    reference.set_neck(pitch=x)
+    for _ in range(400):  # plenty of steps to fully converge
+        reference.step()
+    reference_total = _head_total(reference.get_positions(), reference)
+
+    engine = MotionEngine()
+    engine.neck_rest_pitch_deg = trim
+    engine.neck_pitch2_share = share
+    engine.set_neck(pitch=x)
+    for _ in range(400):
+        engine.step()
+    pos = engine.get_positions()
+    amp = engine._neck_amplitude
+    n = engine.NEUTRAL
+
+    assert _head_total(pos, engine) == pytest.approx(reference_total, abs=2)
+    assert n - amp <= pos["neck_pitch1"] <= n + amp
+    assert n - amp <= pos["neck_pitch2"] <= n + amp
+
+
+def _frames_to_converge(engine: MotionEngine, target_pitch: float) -> int:
+    """Number of step() calls until set_neck(pitch=target_pitch) fully converges
+    (the frame at which the neck ticks stop changing from the previous frame)."""
+    engine.set_neck(pitch=target_pitch)
+    previous = engine.get_positions()
+    for i in range(1, 401):
+        pos = engine.step()
+        if pos == previous:  # steady state: this step didn't move anything
+            return i - 1
+        previous = pos
+    raise AssertionError("did not converge within 400 steps")
+
+
+def test_neck_pitch2_share_does_not_slow_down_look_convergence() -> None:
+    """Splitting the offset across pitch1/pitch2 (share=0.5) doesn't take longer to
+    converge than the pre-pitch2 (share=0) single-joint look -- each joint's own
+    per-frame step is scaled by its share of the total so the combined head-pitch
+    speed matches the old single-joint rate instead of both joints moving a full
+    step and doubling it.
+    """
+    baseline = MotionEngine()
+    baseline.neck_rest_pitch_deg = 0.0  # isolate the share/step-scaling effect from the trim
+    baseline.neck_pitch2_share = 0.0
+    baseline_frames = _frames_to_converge(baseline, 1.0)
+
+    split = MotionEngine()
+    split.neck_rest_pitch_deg = 0.0
+    split.neck_pitch2_share = 0.5
+    split_frames = _frames_to_converge(split, 1.0)
+
+    assert split_frames == pytest.approx(baseline_frames, abs=1)
+
+
+def test_neck_pitch2_share_shrinks_pitch1_swing_at_extreme() -> None:
+    """At a maxed-out look target, splitting the offset onto pitch2 (share=0.5) shrinks
+    pitch1's own swing to at most half of the pre-pitch2 (share=0) swing -- the point of
+    the split, since pitch1 alone stalled/overheated lifting the head at the top of its
+    travel.
+    """
+    baseline = MotionEngine()
+    baseline.neck_pitch2_share = 0.0
+    baseline.set_neck(pitch=-1.0)
+    for _ in range(400):
+        baseline.step()
+    baseline_swing = abs(baseline.get_positions()["neck_pitch1"] - baseline.neck_pitch_center())
+
+    split = MotionEngine()
+    split.neck_pitch2_share = 0.5
+    split.set_neck(pitch=-1.0)
+    for _ in range(400):
+        split.step()
+    split_swing = abs(split.get_positions()["neck_pitch1"] - split.neck_pitch_center())
+
+    assert split_swing <= baseline_swing / 2 + 1
+
+
+def test_neck_pitch2_sign_is_normalized_to_plus_or_minus_one() -> None:
+    """neck_pitch2_sign is normalized to ±1 -- an abused value (e.g. 0 or 2) doesn't
+    zero out pitch2's contribution or scale it beyond the intended mirror.
+    """
+    zeroed = MotionEngine()
+    zeroed.neck_pitch2_sign = 0
+    zeroed.neck_pitch2_share = 0.5
+    zeroed.set_neck(pitch=1.0)
+    for _ in range(400):
+        zeroed.step()
+    pos = zeroed.get_positions()
+    # 0 normalizes to +1 (>= 0 is truthy), not "no effect" (a zeroed sign would leave
+    # pitch2 at NEUTRAL) and not a doubled magnitude either.
+    assert pos["neck_pitch2"] - zeroed.NEUTRAL == pytest.approx(150, abs=2)
+
+
 def test_neck_travel_deg_is_public_per_axis_and_matches_amplitude_ticks() -> None:
     """NECK_PITCH_TRAVEL_DEG / NECK_YAW_TRAVEL_DEG are public per-axis constants
     derived from NECK_AMPLITUDE_TICKS and TICK_PER_DEG.
@@ -236,7 +363,15 @@ def test_bow_pose_tilts_forward_on_planted_rear() -> None:
     middle = abs(mid["leg_2_pitch1"] - n)  # ML: dips half as much
     assert front > middle > 0
     assert mid["leg_1_pitch1"] == n  # RL: rear leg stays at neutral (doesn't lift)
-    assert mid["neck_pitch1"] > n  # neck lowers (positive offset = downward on hardware)
+    # neck lowers from its front (rest-trimmed) center; pitch1 and pitch2 share the
+    # dip and pitch2 mirrors pitch1's sign (see MotionEngine.NECK_PITCH2_SIGN), so a
+    # chin-down dip means pitch1 rises above its center while pitch2 drops below NEUTRAL.
+    assert mid["neck_pitch1"] > engine.neck_pitch_center()
+    assert mid["neck_pitch2"] < n
+    # The combined head-pitch dip (pitch1 + sign*pitch2) is at least bow_neck_down's
+    # worth of ticks, regardless of how the split shares it between the two joints.
+    head_total = (mid["neck_pitch1"] - engine.neck_pitch_center()) + engine.NECK_PITCH2_SIGN * (mid["neck_pitch2"] - n)
+    assert head_total >= 0.9 * engine.bow_neck_down * engine._neck_amplitude
 
 
 def test_bow_pose_left_right_symmetric() -> None:
@@ -724,11 +859,72 @@ def test_gesture_seconds_matches_timeline() -> None:
 def test_set_neck_positions_seeds_only_neck_keys() -> None:
     """set_neck_positions writes only neck_* keys and ignores leg keys."""
     engine = MotionEngine()
-    engine.set_neck_positions({"neck_pitch1": 1877, "neck_yaw": 2100, "leg_1_yaw": 9999})
+    engine.set_neck_positions({"neck_pitch1": 1877, "neck_pitch2": 1950, "neck_yaw": 2100, "leg_1_yaw": 9999})
     pos = engine.get_positions()
     assert pos["neck_pitch1"] == 1877
+    assert pos["neck_pitch2"] == 1950
     assert pos["neck_yaw"] == 2100
     assert pos["leg_1_yaw"] == engine.NEUTRAL
+
+
+@pytest.mark.parametrize("look", [1.0, -1.0])
+def test_nod_from_split_look_peaks_like_nod_from_center(look: float) -> None:
+    """NOD's peak combined head-pitch offset from a maxed-out look start is close to a
+    NOD fired from dead center.
+
+    Before this, only pitch1 was blended home for the gesture; pitch2 stayed at the
+    look position, so a gesture fired from a deflected look pushed the combined head
+    angle beyond the gesture's own designed range (pitch1's keyframe swing plus the
+    frozen pitch2 offset).
+    """
+    centered = MotionEngine()
+    centered.motion = Motion.NOD
+    centered_peak = max(_head_total(centered.step(), centered) for _ in range(GESTURE_STEPS))
+
+    deflected = MotionEngine()
+    deflected.set_neck(pitch=look)
+    for _ in range(60):  # converge to the split look position before firing
+        deflected.step()
+    deflected.motion = Motion.NOD
+    deflected_peak = max(_head_total(deflected.step(), deflected) for _ in range(GESTURE_STEPS))
+
+    assert deflected_peak == pytest.approx(centered_peak, abs=20)
+
+
+@pytest.mark.parametrize("motion", [Motion.NOD, Motion.HEAD_SHAKE])
+@pytest.mark.parametrize("look", [1.0, -1.0])
+def test_gesture_from_split_look_ends_facing_front(motion: Motion, look: float) -> None:
+    """A gesture fired from a maxed-out (pitch1/pitch2-split) look ends with the
+    combined head-pitch offset at zero, facing front -- both joints, not just pitch1.
+    """
+    engine = MotionEngine()
+    engine.set_neck(pitch=look)
+    for _ in range(60):
+        engine.step()
+    engine.motion = motion
+    for _ in range(GESTURE_STEPS):
+        pos = engine.step()
+    assert _head_total(pos, engine) == pytest.approx(0, abs=2)
+
+
+def test_gesture_pitch2_blend_step_matches_pitch1_scale() -> None:
+    """pitch2's frame-to-frame change while blending home during a gesture stays on the
+    same scale as pitch1's own blend -- fixing pitch2's freeze must not introduce a
+    harder snap than the existing (already-accepted) single-joint gesture blend.
+    """
+    engine = MotionEngine()
+    engine.set_neck(pitch=1.0)
+    for _ in range(60):
+        engine.step()
+    engine.motion = Motion.NOD
+    prev = engine.get_positions()
+    max_delta = {"neck_pitch1": 0, "neck_pitch2": 0}
+    for _ in range(GESTURE_STEPS):
+        pos = engine.step()
+        for key in max_delta:
+            max_delta[key] = max(max_delta[key], abs(pos[key] - prev[key]))
+        prev = pos
+    assert max_delta["neck_pitch2"] <= max_delta["neck_pitch1"] * 1.5 + 2
 
 
 # WAVE — official single-arm gesture

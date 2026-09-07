@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from palmimo_sdk import Motion
+from palmimo_sdk import Motion, MotionEngine
 
 
 if TYPE_CHECKING:
@@ -61,12 +61,12 @@ def test_stop_sets_engine_idle() -> None:
 
 
 def test_engine_step_feeds_full_motor_set() -> None:
-    """The engine returns all 20 motors; the teleop keeps only the 18 leg ones."""
+    """The engine returns all 21 motors; the teleop keeps only the 18 leg ones."""
     t = _teleop()
     t._move_forward()
     pos = t._engine.step()
-    assert len(pos) == 20
-    assert {"leg_1_yaw", "leg_6_pitch2", "neck_yaw"} <= set(pos)
+    assert len(pos) == 21
+    assert {"leg_1_yaw", "leg_6_pitch2", "neck_yaw", "neck_pitch2"} <= set(pos)
     assert len(t._leg_positions) == 18
 
 
@@ -118,6 +118,54 @@ def test_neck_char_keys_move_neck() -> None:
     t = _teleop()
     t._update_neck_from_keys({keys["neck_yaw_right"]})
     assert t._neck_positions["neck_yaw"] < center
+
+
+def test_neck_pitch2_moves_opposite_pitch1_instead_of_staying_at_neutral() -> None:
+    """neck_pitch2 moves opposite neck_pitch1 as the pitch keys move it off center.
+
+    Before this, neck_pitch2 was hardcoded to neutral regardless of pitch1,
+    which put the full head-lift moment on pitch1 alone -- the failure mode
+    that overheated it on hardware.
+    """
+    keys = _teleop().config.teleop_keys
+    center = _teleop()._neutral
+
+    t = _teleop()
+    t._update_neck_from_keys({keys["neck_pitch_up"]})
+    assert t._neck_positions["neck_pitch2"] < center
+
+    t = _teleop()
+    t._update_neck_from_keys({keys["neck_pitch_down"]})
+    assert t._neck_positions["neck_pitch2"] > center
+
+
+def test_neck_pitch_split_matches_engine_head_total_at_full_deflection() -> None:
+    """The teleop's combined pitch1+pitch2 head angle matches MotionEngine's own
+    NECK_PITCH2_SHARE/NECK_PITCH2_SIGN split for the same full-deflection target.
+
+    Before this, pitch1 walked the full amplitude on its own and pitch2 was
+    added on top instead of sharing it, so the combined head angle overshot the
+    engine's (1 + NECK_PITCH2_SHARE)x -- 1.5x at the default 0.5 share.
+    """
+    t = _teleop()
+    keys = t.config.teleop_keys
+    for _ in range(2 * t._neck_amplitude // t._neck_step + 2):  # saturate, like set_neck(pitch=1.0)
+        t._update_neck_from_keys({keys["neck_pitch_up"]})
+    teleop_total = (t._neck_positions["neck_pitch1"] - t._neutral) + MotionEngine.NECK_PITCH2_SIGN * (
+        t._neck_positions["neck_pitch2"] - t._neutral
+    )
+
+    engine = MotionEngine()
+    engine.neck_rest_pitch_deg = 0.0  # the teleop has no rest-trim concept; compare on equal footing
+    engine.set_neck(pitch=1.0)
+    for _ in range(400):  # plenty of steps to fully converge
+        engine.step()
+    engine_pos = engine.get_positions()
+    engine_total = (engine_pos["neck_pitch1"] - engine.NEUTRAL) + MotionEngine.NECK_PITCH2_SIGN * (
+        engine_pos["neck_pitch2"] - engine.NEUTRAL
+    )
+
+    assert teleop_total == pytest.approx(engine_total, abs=2)
 
 
 class _FakeKeyboard:
