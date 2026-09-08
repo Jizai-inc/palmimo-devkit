@@ -94,6 +94,7 @@ from .robot import (
     Palmimo,
     RoutineStep,
 )
+from .thermal import NeckThermalState
 
 
 __all__ = [
@@ -122,6 +123,7 @@ __all__ = [
     "NameMatcher",
     "NeckPitchDegrees",
     "NeckPitchNormalized",
+    "NeckThermalState",
     "NeckYawDegrees",
     "NeckYawNormalized",
     "OpenAiEngine",
