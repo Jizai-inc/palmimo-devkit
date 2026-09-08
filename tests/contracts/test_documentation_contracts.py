@@ -126,6 +126,9 @@ COMMAND_PAGES = frozenset(
         # Its own uv workspace, resolved separately from this one, so its
         # install and run commands cannot be stated from here.
         "integrations/lerobot/README.md",
+        # The PyPI project page: a reader lands here already at the point of
+        # installing the published package, not the git clone installation.md covers.
+        "packages/palmimo_sdk/README.md",
         "scripts/README.md",
     }
 )

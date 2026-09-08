@@ -32,6 +32,19 @@ same names at the workspace root (e.g. `uv sync --extra voice` for
 `sounddevice` / `numpy` / `sherpa-onnx`) for anyone using `palmimo_sdk` as a
 standalone library, outside this workspace.
 
+### Using `palmimo_sdk` as a library, outside this clone
+
+Everything above sets up this repository's own workspace. To use
+`palmimo_sdk` in another project instead, add the published package
+directly:
+
+```bash
+uv add palmimo-sdk
+```
+
+See [`packages/palmimo_sdk/README.md`](../../packages/palmimo_sdk/README.md)
+for the extras (`hardware`, `voice`, `agent`, ...) and a minimal example.
+
 ## Voice Output (piper-plus TTS)
 
 Installing the workspace brings in piper-plus, the text-to-speech engine

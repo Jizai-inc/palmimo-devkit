@@ -2,12 +2,14 @@
 # auto-generated notes (shaped by .github/release.yml), for a maintainer to
 # review and publish by hand -- see doc/guides/releasing.md.
 #
-# This release carries no asset. There is nothing on this repository's tag
-# for a device to install: the Palmimo Portal (the thing that used to be
-# built and attached here) now lives, and self-updates, from its own
-# repository. A palmimo-devkit release exists to
+# This release carries no asset of its own. There is nothing on this
+# repository's tag for a device to install: the Palmimo Portal (the thing
+# that used to be built and attached here) now lives, and self-updates, from
+# its own repository. A palmimo-devkit release exists to
 # mark a validated SDK revision with human-readable notes; a user on a
 # cloned devkit updates with plain git (fetch + checkout the tag, or pull).
+# Publishing the draft this workflow creates does trigger a separate
+# workflow, publish.yml, which builds and uploads palmimo-sdk to PyPI.
 #
 # The release is created as a **draft** on purpose: a maintainer reads and
 # edits the auto-generated notes and publishes by hand.

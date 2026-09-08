@@ -2,11 +2,12 @@
 
 How to cut a palmimo-devkit release: a SemVer tag and one GitHub Release.
 
-A release marks a validated SDK revision with human-readable notes — it
-carries no asset, and it does not push anything to any device. If you have
-a clone of this repository, you update by fetching and checking out the
-tag (or by pulling `main`), not by downloading anything from the release
-page.
+A release marks a validated SDK revision with human-readable notes — the
+GitHub release itself carries no asset, and it does not push anything to any
+device. If you have a clone of this repository, you update by fetching and
+checking out the tag (or by pulling `main`), not by downloading anything
+from the release page. Publishing the release is what puts `palmimo-sdk` on
+PyPI — see [Publish](#4-publish) below.
 
 Palmimo Portal is a separate product, maintained in its own
 repository; it self-updates from there, independently of this repository's
@@ -80,6 +81,17 @@ cut a new tag instead.
 3. For a real release (not a pre-release), tick **"Set as the latest
    release"**.
 4. Publish.
+
+Publishing triggers `.github/workflows/publish.yml`: it builds `palmimo-sdk`,
+uploads it to TestPyPI, installs that build and smoke-tests it, and only
+then uploads the same build to PyPI. A pre-release stops after the TestPyPI
+smoke test — it never reaches PyPI. `workflow_dispatch` runs the same
+TestPyPI-and-smoke path on demand, as a rehearsal, without a release.
+
+If `publish.yml` fails, re-run the failed jobs from the Actions page. PyPI
+never accepts a version it already holds, so once the `pypi` upload itself
+has gone through there is nothing to re-run: fix the problem and cut a new
+patch version instead.
 
 ## 5. Labels that drive the notes
 
