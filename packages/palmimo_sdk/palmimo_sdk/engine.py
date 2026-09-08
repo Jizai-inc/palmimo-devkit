@@ -323,6 +323,16 @@ class MotionEngine:
         # only that source may draw on pitch2's wider up_reach band in
         # _apply_neck (see _set_neck_pitch_target).
         self._neck_pitch_look_sourced: bool = False
+        # Set by Palmimo.step() while the neck thermal guard's lock is active
+        # (see thermal.py's NeckThermalGuard.neck_lock_active). While True,
+        # step() glides the neck to center every frame regardless of the
+        # active motion -- overriding look()'s target, a gesture's own
+        # keyframes (NOD/HEAD_SHAKE), and a posture one-shot's neck component
+        # (BOW/STRETCH) alike -- because all of those write the neck directly
+        # and would otherwise slip past a guard that only intercepted look()
+        # itself. The override runs through the SAME step-toward glide
+        # _apply_neck always uses, so the transition is smooth, not a snap.
+        self.neck_hold_center: bool = False
 
         # Dance: roll the body left/right (symmetric, so left/right legs mirror
         # and the load stays balanced — a pure lateral translation instead loads
@@ -450,6 +460,15 @@ class MotionEngine:
                 Keys: ``leg_{1-6}_{yaw,pitch1,pitch2}``, ``neck_yaw``,
                 ``neck_pitch1``, ``neck_pitch2``.
         """
+        if self.neck_hold_center and self._motion in NECK_GESTURES:
+            # A gesture in flight writes self._neck directly every frame (see
+            # _apply_nod/_apply_head_shake), which would otherwise fight the
+            # centering glide below: each frame it re-introduces its own
+            # keyframe deviation for the glide to only partially undo,
+            # leaving the neck pinned well off-center for many frames instead
+            # of converging quickly. Dropping to IDLE stops that write
+            # entirely, so the centering glide has nothing left to fight.
+            self.motion = Motion.IDLE
         if self._motion == Motion.IDLE:
             self._apply_idle()
         elif self._motion == Motion.FORWARD:
@@ -493,8 +512,15 @@ class MotionEngine:
             self._apply_head_shake()
 
         # The neck gestures own the neck servos directly — the smoothing
-        # toward the look target would fight their keyframes.
-        if self._motion not in NECK_GESTURES:
+        # toward the look target would fight their keyframes. neck_hold_center
+        # overrides even that: it re-targets center and re-applies the normal
+        # glide AFTER the motion-specific branch above, so it wins over
+        # whatever any motion (gesture keyframes included) just wrote.
+        if self.neck_hold_center:
+            self._set_neck_pitch_target(0.0, look_sourced=False)
+            self._neck_target_yaw = 0.0
+            self._apply_neck()
+        elif self._motion not in NECK_GESTURES:
             self._apply_neck()
 
         out: dict[str, int] = {}

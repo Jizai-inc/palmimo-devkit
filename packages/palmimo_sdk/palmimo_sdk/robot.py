@@ -59,6 +59,7 @@ are still accepted and coerced to :class:`RoutineStep`.
 from __future__ import annotations
 
 import contextlib
+import logging
 import math
 import signal
 import threading
@@ -70,10 +71,19 @@ from typing import TYPE_CHECKING, ClassVar
 from ._signals import signals_ignored
 from .engine import NECK_GESTURES, Motion, MotionEngine
 from .io import FaceDisplay, HeadCamera, Microphone, MicStream, ServoDriver, Speaker, SpeechHandle
+from .thermal import NECK_MOTORS as _NECK_MOTORS
+from .thermal import NeckThermalGuard, NeckThermalState
 
 
 if TYPE_CHECKING:
     from types import TracebackType
+
+logger = logging.getLogger(__name__)
+
+# How often step() re-logs that the thermal guard is still overriding the neck
+# (HOT, or UNMONITORED with the lock still held -- see NeckThermalGuard.neck_lock_active),
+# so a long stuck-hot period is traceable in the log without spamming it every frame.
+_THERMAL_IGNORE_LOG_INTERVAL_S = 30.0
 
 
 # Neck soft-release: the neck holds the head against gravity, so cutting torque
@@ -88,7 +98,9 @@ if TYPE_CHECKING:
 # *ratios* (each step adds a similar bit of droop) and runs the tail to a near-
 # zero gain — the head is already seated by torque-off, so cutting torque is a
 # non-event rather than a final drop onto the plate.
-_NECK_MOTORS = ("neck_pitch1", "neck_pitch2", "neck_yaw")
+# _NECK_MOTORS is thermal.NECK_MOTORS under this module's historical name --
+# imported, not redefined, so the tracked motor set has one source of truth
+# (see thermal.py).
 _NECK_RELEASE_GAINS = (700, 550, 430, 330, 250, 190, 140, 100, 70, 48, 32, 20, 12, 6)
 _NECK_RELEASE_STEP_S = 0.18
 
@@ -336,6 +348,10 @@ class Palmimo:
             resources open successfully. ``True`` by default. Pass ``False``
             for an immediate connect with no glide — sim, calibration, or
             tests that don't want the extra motion.
+        thermal_clock (callable, optional): Clock injected into the neck thermal guard (see
+            :attr:`neck_thermal_state`) in place of :func:`time.monotonic`. A
+            public escape hatch for tests that need to advance the guard's
+            poll/staleness timers deterministically without real sleeps.
         display (FaceDisplay, optional): Face display resource. When attached, the connection lifecycle bundles
             it alongside the driver — :meth:`connect` opens it and plays the
             boot-wake animation, :meth:`disconnect` returns it to IDLE and closes
@@ -431,6 +447,7 @@ class Palmimo:
         camera: HeadCamera | None = None,
         mic: Microphone | MicStream | None = None,
         auto_wake: bool = True,
+        thermal_clock: Callable[[], float] | None = None,
     ):
         if fps <= 0:
             raise ValueError("fps must be positive.")
@@ -481,6 +498,19 @@ class Palmimo:
         # play_realtime() would otherwise be silently absorbed by that
         # method's own entry snapshot.
         self._armed_snapshot: int | None = None
+        # Neck-only thermal guard (see thermal.py) -- polled once per second
+        # inside step(). Legs have no guard yet (see AGENTS.md Hardware Safety).
+        # *thermal_clock* is a public escape hatch for tests that need to
+        # advance the guard's poll/stale timers without real sleeps -- the
+        # same role NeckThermalGuard's own `now=` constructor argument plays,
+        # exposed here so a caller never has to reach into `robot._thermal`.
+        self._thermal = NeckThermalGuard(now=thermal_clock or time.monotonic)
+        # When the neck guard first started overriding (HOT, or UNMONITORED
+        # with the lock still held) this continuous stretch, and when that was
+        # last logged (see step()'s periodic "still overriding" log) -- both
+        # None while the guard isn't currently locked.
+        self._thermal_locked_since: float | None = None
+        self._last_thermal_lock_log: float | None = None
 
     @property
     def fps(self) -> int:
@@ -600,6 +630,10 @@ class Palmimo:
             # would be skipped as "already tuned".
             self._gesture_tuned = None
             self._neck_gesture_tuned = False
+            # A fresh connect may be to a different driver (or the same one
+            # after a capability probe already latched "unsupported") --
+            # give the thermal guard a fresh chance to read it.
+            self._thermal.reset()
             # Inside the try block so a wake failure rolls back every resource
             # already opened (same as any other connect failure) instead of
             # leaving the robot half-connected.
@@ -702,6 +736,13 @@ class Palmimo:
         # Per-axis tuning tracking is connection-scoped (see connect()).
         self._gesture_tuned = None
         self._neck_gesture_tuned = False
+        # Nothing is left to watch once the driver is gone -- reflect that in
+        # neck_thermal_state immediately rather than leaving the last reading
+        # (possibly HOT) visible until the next step() polls. poll(None) also
+        # releases neck_lock_active (see thermal.py): there is no driver left
+        # to write a centering command to.
+        self._thermal.poll(None)
+        self._engine.neck_hold_center = False
 
     def return_to_neutral(
         self,
@@ -774,6 +815,12 @@ class Palmimo:
 
         Falls back to a plain glide if the driver can't ramp gain, and to a single
         neutral command if it can't sense position.
+
+        Writes the driver directly, without going through :meth:`step` --
+        outside the neck thermal guard's reach (see :attr:`neck_lock_active`).
+        That is safe here: the guard exists to stop the neck being commanded
+        to a held-out pose while hot, and this glide only ever moves the neck
+        toward center.
         """
         driver = self._driver
         if driver is None or not driver.is_connected:
@@ -817,6 +864,17 @@ class Palmimo:
                 driver.set_position_p_gain(None)  # land exactly on the default gain
         self._seed_engine_pose(targets)
 
+    def _sleep_thermal_locked(self, driver: ServoDriver) -> None:
+        """Locked (see :attr:`neck_lock_active`) :meth:`sleep` path: settle the legs, then park the
+        neck immediately instead of waiting out the usual multi-second hold at full gain first --
+        a locked neck needs relief now.
+        """
+        self.return_to_neutral()  # step()'s own thermal handling holds the neck centered meanwhile
+        with contextlib.suppress(Exception):
+            self._park_neck()
+        with contextlib.suppress(Exception):
+            self._settle_neck_goal(driver, self.positions)
+
     def sleep(self, duration: float = 1.5, end_gain: int = _WAKE_START_GAIN) -> None:
         """Settle to neutral and go limp, the inverse of :meth:`wake`.
 
@@ -846,6 +904,11 @@ class Palmimo:
         Degrades rather than skipping the point: a driver that can't sense
         position still gets the gain ramp and the neck release (only the glide
         needs feedback), and one that can't ramp gain still gets the glide.
+
+        While :attr:`neck_lock_active` is ``True``, the multi-second
+        hold-current-pose glide below is skipped entirely: the neck needs
+        relief now, not after another ``duration`` seconds at temperature.
+        See :meth:`_sleep_thermal_locked`.
         """
         driver = self._driver
         if driver is None or not driver.is_connected:
@@ -855,6 +918,9 @@ class Palmimo:
         if not 0 < end_gain <= _WAKE_FULL_GAIN:
             raise ValueError(f"end_gain must be in (0, {_WAKE_FULL_GAIN}]; got {end_gain}.")
         self.stop()
+        if self._thermal.neck_lock_active:
+            self._sleep_thermal_locked(driver)
+            return
         # Motion is now IDLE — release any gesture / neck-gesture tuning before
         # the glide, exactly as return_to_neutral does: this path drives the
         # driver directly and never calls step(), so nothing else would. Left
@@ -961,6 +1027,12 @@ class Palmimo:
         self._engine.set_neck_positions(neck)
 
     def _timed_return_to_neutral(self, duration: float, cancel_snapshot: int | None = None) -> None:
+        """Software glide straight to the driver, bypassing :meth:`step` (see :meth:`return_to_neutral`).
+
+        Outside the neck thermal guard's reach (see :attr:`neck_lock_active`)
+        like :meth:`wake` -- safe for the same reason: this glide only ever
+        moves the neck toward its neutral target, never away from it.
+        """
         if self._driver is None or not self._driver.is_connected:
             raise RuntimeError("Timed return-to-neutral needs a connected driver.")
         targets = self._neutral_targets()
@@ -1056,48 +1128,67 @@ class Palmimo:
     # MOTION COMMANDS
     # ================================================================
 
+    def _request_motion(self, motion: Motion) -> bool:
+        """Set the engine's motion -- the single choke point every command method
+        (and ``set_motion()`` / ``play()``) goes through, so the neck thermal
+        guard only has to intercept here. A NOD/HEAD_SHAKE request is
+        downgraded to IDLE while :attr:`neck_lock_active` is ``True``: those
+        gestures move the neck regardless of what ``look()`` is holding, so
+        the guard's own lockout (which forces the neck to center in
+        :meth:`step`) would otherwise still let the neck move.
+
+        Returns:
+            bool: ``True`` if *motion* was applied as requested; ``False`` if it was
+                downgraded to IDLE by the thermal guard instead.
+        """
+        if motion in NECK_GESTURES and self._thermal.neck_lock_active:
+            self._engine.motion = Motion.IDLE
+            return False
+        self._engine.motion = motion
+        return True
+
     def forward(self) -> None:
         """Start walking forward."""
-        self._engine.motion = Motion.FORWARD
+        self._request_motion(Motion.FORWARD)
 
     def backward(self) -> None:
         """Start walking backward."""
-        self._engine.motion = Motion.BACKWARD
+        self._request_motion(Motion.BACKWARD)
 
     def strafe_left(self) -> None:
         """Start strafing left."""
-        self._engine.motion = Motion.STRAFE_LEFT
+        self._request_motion(Motion.STRAFE_LEFT)
 
     def strafe_right(self) -> None:
         """Start strafing right."""
-        self._engine.motion = Motion.STRAFE_RIGHT
+        self._request_motion(Motion.STRAFE_RIGHT)
 
     def rotate_left(self) -> None:
         """Rotate body counter-clockwise (viewed from above)."""
-        self._engine.motion = Motion.ROTATE_LEFT
+        self._request_motion(Motion.ROTATE_LEFT)
 
     def rotate_right(self) -> None:
         """Rotate body clockwise (viewed from above)."""
-        self._engine.motion = Motion.ROTATE_RIGHT
+        self._request_motion(Motion.ROTATE_RIGHT)
 
     def dance(self) -> None:
         """Start the dance motion (body sway)."""
-        self._engine.motion = Motion.DANCE
+        self._request_motion(Motion.DANCE)
 
     def body_tilt(self) -> None:
         """Tilt the body side to side (curious expression)."""
-        self._engine.motion = Motion.BODY_TILT
+        self._request_motion(Motion.BODY_TILT)
 
     def pushup(self) -> None:
         """Do push-ups (raise and lower the body)."""
-        self._engine.motion = Motion.PUSHUP
+        self._request_motion(Motion.PUSHUP)
 
     def wave(self) -> None:
         """Wave the front-right leg (greeting gesture)."""
         # Pin the leg so a bare wave() is always front-right, even right after a
         # wave_left() / play(("wave_left", …)) left wave_leg on the left.
         self._engine.wave_leg = self._WAVE_LEG_FOR["wave"]
-        self._engine.motion = Motion.WAVE
+        self._request_motion(Motion.WAVE)
 
     def wave_both(self) -> None:
         """Wave BOTH front legs at once (two-handed greeting).
@@ -1108,7 +1199,7 @@ class Palmimo:
         Defaults are the analyzed stable zone; open up via the ``wave_both_*``
         knobs after checking tip margin on hardware.
         """
-        self._engine.motion = Motion.WAVE_BOTH
+        self._request_motion(Motion.WAVE_BOTH)
 
     def clap(self) -> None:
         """Clap the two front feet together (never touching) on the beg stance.
@@ -1119,31 +1210,41 @@ class Palmimo:
         (``wave_both_lean`` / ``wave_both_noseup`` / ``wave_both_mid_forward``)
         with the two-handed wave.
         """
-        self._engine.motion = Motion.CLAP
+        self._request_motion(Motion.CLAP)
 
     def creep(self) -> None:
         """Slow creep gait (one leg at a time, very stable)."""
-        self._engine.motion = Motion.CREEP
+        self._request_motion(Motion.CREEP)
 
     def bow(self) -> None:
         """Bow once (greeting gesture): chest and head dip, hold, slow rise."""
-        self._engine.motion = Motion.BOW
+        self._request_motion(Motion.BOW)
 
     def stretch(self) -> None:
         """Stretch once: wind-up crouch, rise tall on folded femurs, lower."""
-        self._engine.motion = Motion.STRETCH
+        self._request_motion(Motion.STRETCH)
 
-    def nod(self) -> None:
-        """Nod "yes" — the chin dips and returns twice (neck-only one-shot)."""
-        self._engine.motion = Motion.NOD
+    def nod(self) -> bool:
+        """Nod "yes" — the chin dips and returns twice (neck-only one-shot).
 
-    def head_shake(self) -> None:
-        """Shake the head "no" — sideways swings that taper off (neck-only one-shot)."""
-        self._engine.motion = Motion.HEAD_SHAKE
+        Returns:
+            bool: ``True`` if the nod was started; ``False`` if it was rejected because
+                :attr:`neck_lock_active` is ``True``.
+        """
+        return self._request_motion(Motion.NOD)
+
+    def head_shake(self) -> bool:
+        """Shake the head "no" — sideways swings that taper off (neck-only one-shot).
+
+        Returns:
+            bool: ``True`` if the head-shake was started; ``False`` if it was rejected
+                because :attr:`neck_lock_active` is ``True``.
+        """
+        return self._request_motion(Motion.HEAD_SHAKE)
 
     def stop(self) -> None:
         """Stop all motion and smoothly return to neutral."""
-        self._engine.motion = Motion.IDLE
+        self._request_motion(Motion.IDLE)
 
     def cancel(self) -> None:
         """Signal an in-flight :meth:`run` (or :meth:`perform_dance` /
@@ -1268,13 +1369,18 @@ class Palmimo:
                 return
             time.sleep(min(_CANCEL_POLL_INTERVAL_S, remaining))
 
-    def set_motion(self, name: str) -> None:
+    def set_motion(self, name: str) -> bool:
         """Set motion by string name.
 
         Args:
             name (str): A motion name accepted by the facade — see ``_MOTION_MAP`` for the
                 full set (includes aliases like ``"tilt"`` / ``"push_up"`` /
                 ``"stop"``). Case-insensitive; surrounding whitespace is stripped.
+
+        Returns:
+            bool: ``True`` if *name* was applied as requested; ``False`` if it names
+                NOD/HEAD_SHAKE and was rejected because :attr:`neck_lock_active` is
+                ``True`` (see :meth:`nod` / :meth:`head_shake`).
 
         Raises:
             ValueError: If *name* is not a recognized motion. The message lists the
@@ -1286,7 +1392,7 @@ class Palmimo:
             raise ValueError(f"Unknown motion {name!r}. Choose from: {available}")
         if key in self._WAVE_LEG_FOR:
             self._engine.wave_leg = self._WAVE_LEG_FOR[key]
-        self._engine.motion = self._MOTION_MAP[key]
+        return self._request_motion(self._MOTION_MAP[key])
 
     # Wave tuning knobs (all runtime-settable). Descriptions, defaults and the
     # automatic per-axis servo tuning are documented in
@@ -1674,8 +1780,16 @@ class Palmimo:
         self,
         pitch: float | NeckPitchDegrees | NeckPitchNormalized = 0.0,
         yaw: float | NeckYawDegrees | NeckYawNormalized = 0.0,
-    ) -> None:
+    ) -> bool:
         """Set neck target (smoothly interpolated each step).
+
+        Returns ``False`` (without changing the neck target) while
+        :attr:`neck_lock_active` is ``True``: :meth:`step` forces the neck to
+        center every frame in that case, so accepting a new target here would
+        only be silently overridden the next frame -- returning ``False``
+        lets a caller (e.g. :class:`~palmimo_sdk.agent.tools.LookTool`) tell
+        the difference between "moved" and "ignored" instead of misreporting
+        success. ``True`` otherwise.
 
         Each axis accepts three forms:
 
@@ -1712,7 +1826,10 @@ class Palmimo:
             yaw (float | NeckYawDegrees | NeckYawNormalized): Horizontal look target. The sign-to-direction mapping is
                 unspecified.
         """
+        if self._thermal.neck_lock_active:
+            return False
         self._engine.set_neck(pitch=self._pitch_to_normalized(pitch), yaw=self._yaw_to_normalized(yaw))
+        return True
 
     def _pitch_to_normalized(self, value: float | NeckPitchDegrees | NeckPitchNormalized) -> float:
         """Convert a look() pitch argument to the engine's normalized [-1, 1] float."""
@@ -1750,6 +1867,70 @@ class Palmimo:
     def look_center(self) -> None:
         """Return neck to center position."""
         self._engine.set_neck(0.0, 0.0)
+
+    @property
+    def neck_thermal_state(self) -> NeckThermalState:
+        """The neck thermal guard's current state (see :mod:`palmimo_sdk.thermal`).
+
+        ``NORMAL`` / ``WARM`` / ``HOT`` reflect the highest of the three neck
+        motors' last-read temperature; ``UNMONITORED`` means there is nothing
+        to judge from (no driver, the driver doesn't support
+        ``read_telemetry()``, or the last complete sweep is too old -- see
+        :attr:`neck_telemetry_age_s`). While ``HOT``, :meth:`step` forces the
+        neck to center every frame and NOD/HEAD_SHAKE are downgraded to IDLE
+        (see :meth:`_request_motion`), holding until the neck cools to
+        ``NECK_COOL_C``. See :attr:`neck_lock_active` for whether that lockout
+        is currently in force -- it can outlast ``HOT`` reporting if telemetry
+        then goes stale, so check it rather than comparing this state to
+        ``HOT`` directly.
+
+        This guard only covers the neck (a standing-load joint); the legs are
+        not monitored -- see AGENTS.md "Hardware Safety". It also only
+        applies to callers that go through :meth:`step` (``run``/``play``, the
+        MCP server, the agent tool layer); the LeRobot teleop integration
+        drives the engine directly and is NOT covered.
+        """
+        return self._thermal.state
+
+    @property
+    def neck_lock_active(self) -> bool:
+        """Whether the neck's HOT lockout (center-lock, NOD/HEAD_SHAKE rejection) is in force.
+
+        Unlike comparing :attr:`neck_thermal_state` to ``HOT``, this stays
+        ``True`` through a stale/incomplete telemetry sweep that follows a
+        HOT judgement (see :mod:`palmimo_sdk.thermal`'s
+        ``NeckThermalGuard.neck_lock_active``) -- an unmonitored, possibly
+        still-hot neck must not quietly regain look()/gesture access just
+        because a motor stopped answering. It clears once the driver
+        disconnects (nothing left to hold centered) or a COMPLETE sweep
+        reads at or below ``NECK_COOL_C``.
+        """
+        return self._thermal.neck_lock_active
+
+    @property
+    def neck_temperature_c(self) -> float | None:
+        """Highest neck motor temperature from the last successful telemetry sweep, in °C.
+
+        ``None`` when :attr:`neck_thermal_state` is ``UNMONITORED`` (nothing
+        has been read yet, or the driver can't be read from at all).
+        """
+        return self._thermal.temperature_c
+
+    @property
+    def neck_telemetry_age_s(self) -> float | None:
+        """Seconds since the last COMPLETE neck telemetry sweep, or ``None`` if none has ever completed.
+
+        A sweep is complete when every tracked neck motor answered; one
+        missing motor keeps the guard's last judgement rather than
+        downgrading it, right up until this age passes
+        ``palmimo_sdk.thermal.NECK_STALE_S`` -- at which point
+        :attr:`neck_thermal_state` falls back to ``UNMONITORED`` on its own.
+        Exposed so a caller can see staleness building up before that happens.
+        """
+        last = self._thermal.last_complete_read_at
+        if last is None:
+            return None
+        return self._thermal._now() - last
 
     # ================================================================
     # FACE DISPLAY
@@ -1802,17 +1983,65 @@ class Palmimo:
         If a driver is connected, the positions are streamed to it. If an
         ``on_step`` callback was provided, it is called afterwards.
 
+        Before computing the frame, polls the neck thermal guard (see
+        :attr:`neck_thermal_state`) -- throttled to once a second inside the
+        guard itself, so calling this every frame does not add bus time.
+        While :attr:`neck_lock_active` is ``True``, the engine glides the neck
+        to center every frame (:attr:`~palmimo_sdk.engine.MotionEngine.neck_hold_center`),
+        overriding whatever :meth:`look` last set OR any motion's own neck
+        keyframes (NOD/HEAD_SHAKE, BOW/STRETCH) -- unlike forcing the look
+        target alone, this reaches every path that writes the neck, not just
+        ``look()``'s. The lockout holds for as long as :attr:`neck_lock_active`
+        reads ``True``, not just at the moment it was entered, and reverts
+        (normal glide resumed) once the neck cools to ``NECK_COOL_C``.
+
         Returns:
             dict[str, int]: Motor name -> Dynamixel tick value.
         """
+        driver = self._driver
+        connected_driver = driver if driver is not None and driver.is_connected else None
+        self._thermal.poll(connected_driver)
+        self._engine.neck_hold_center = self._thermal.neck_lock_active
         pos = self._engine.step()
-        if self._driver is not None and self._driver.is_connected:
+        self._log_thermal_lockout()
+        if connected_driver is not None:
             self._sync_gesture_tuning()
             self._sync_neck_gesture_tuning()
-            self._driver.write_positions(pos)
+            connected_driver.write_positions(pos)
         if self._on_step is not None:
             self._on_step(pos)
         return pos
+
+    def _log_thermal_lockout(self) -> None:
+        """Re-log every :data:`_THERMAL_IGNORE_LOG_INTERVAL_S` while the guard keeps overriding the neck.
+
+        ``NeckThermalGuard`` itself only logs on a state TRANSITION (see
+        thermal.py's ``_advance_state``); a neck stuck HOT for minutes would
+        otherwise log once and then go silent, leaving no record of how long
+        look()/gestures have actually been ignored for.
+        """
+        if not self._thermal.neck_lock_active:
+            self._thermal_locked_since = None
+            self._last_thermal_lock_log = None
+            return
+        now = self._thermal._now()
+        if self._thermal_locked_since is None:
+            self._thermal_locked_since = now
+        if (
+            self._last_thermal_lock_log is not None
+            and now - self._last_thermal_lock_log < _THERMAL_IGNORE_LOG_INTERVAL_S
+        ):
+            return
+        self._last_thermal_lock_log = now
+        logger.info(
+            "neck thermal guard: lock still engaged (reporting %s) at %s -- look()/NOD/HEAD_SHAKE "
+            "ignored for %.0fs so far.",
+            self._thermal.state.value,
+            f"{self._thermal.temperature_c:.1f}°C"
+            if self._thermal.temperature_c is not None
+            else "an unknown temperature",
+            now - self._thermal_locked_since,
+        )
 
     def _sync_gesture_tuning(self) -> None:
         """Apply/restore per-gesture servo tuning (WAVE / WAVE_BOTH / CLAP / STRETCH).
@@ -2198,6 +2427,11 @@ class Palmimo:
         ``neck_sweep=True`` sinusoidally pans/tilts the neck while the legs
         keep running its *motion*, then recenters the neck when the cue ends.
 
+        A NOD/HEAD_SHAKE cue is downgraded to IDLE (same as calling
+        :meth:`nod`/:meth:`head_shake` directly) while :attr:`neck_lock_active`
+        is ``True`` -- see :meth:`_request_motion`, which every cue goes
+        through.
+
         Args:
             routine (sequence of RoutineStep or (str, float)): The cues to play, in order.
             fps (int, optional): Frames per second. Defaults to the facade's :attr:`fps`.
@@ -2219,7 +2453,7 @@ class Palmimo:
                 steps = self._duration_to_steps(cue.seconds, fps)
                 if cue.wave_leg is not None:
                     self._engine.wave_leg = cue.wave_leg
-                self._engine.motion = cue.motion
+                self._request_motion(cue.motion)
 
                 if cue.neck_sweep:
                     for i in range(steps):

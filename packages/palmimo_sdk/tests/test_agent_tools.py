@@ -42,6 +42,7 @@ from palmimo_sdk.agent.tools import (
     _run_motion,
 )
 from palmimo_sdk.robot import NeckPitchDegrees, NeckYawDegrees
+from palmimo_sdk.thermal import NeckThermalState
 
 
 try:
@@ -124,6 +125,9 @@ class FakeRobot:
         speaker: FakeSpeaker | None = None,
         camera: FakeCamera | None = None,
         run_raises: BaseException | None = None,
+        neck_thermal_state: NeckThermalState = NeckThermalState.NORMAL,
+        neck_lock_active: bool = False,
+        neck_temperature_c: float | None = None,
     ) -> None:
         self.calls: list[tuple[Any, ...]] = []
         self.display = display
@@ -132,6 +136,12 @@ class FakeRobot:
         # When set, run() records the call, then raises this instead of
         # returning -- for exercising the try/finally stop() guarantee.
         self._run_raises = run_raises
+        # Mirrors Palmimo.neck_thermal_state / .neck_lock_active / .neck_temperature_c --
+        # the neck tools (look/nod/head_shake) read neck_lock_active to report a
+        # thermal-guard rejection instead of claiming success.
+        self.neck_thermal_state = neck_thermal_state
+        self.neck_lock_active = neck_lock_active
+        self.neck_temperature_c = neck_temperature_c
 
     def _record(self, *entry: Any) -> None:
         self.calls.append(entry)
@@ -707,6 +717,31 @@ def test_look_default_is_center() -> None:
     robot = FakeRobot()
     LookTool().execute(cast(PalmimoLike, robot))
     assert robot.calls == [("look", NeckPitchDegrees(0.0), NeckYawDegrees(0.0)), ("run", 0.6)]
+
+
+@pytest.mark.parametrize("state", [NeckThermalState.HOT, NeckThermalState.UNMONITORED])
+def test_look_reports_the_neck_thermal_guard_ignored_it(state: NeckThermalState) -> None:
+    """An LLM told "looking at X deg" when the guard actually dropped the request would keep
+    re-issuing look() calls it believes are landing -- the tool must surface the rejection instead
+    of reporting the same success text it uses when the neck genuinely moved. UNMONITORED is
+    included because the lock can outlast HOT reporting (stale telemetry after a HOT reading, see
+    Palmimo.neck_lock_active) -- the tool must key off the lock, not the state label."""
+    robot = FakeRobot(neck_thermal_state=state, neck_lock_active=True, neck_temperature_c=63.0)
+    result = LookTool(pitch=15.0).execute(cast(PalmimoLike, robot))
+    assert "ignored" in result.text
+    assert "63" in result.text
+
+
+def test_nod_reports_the_neck_thermal_guard_ignored_it() -> None:
+    robot = FakeRobot(neck_thermal_state=NeckThermalState.HOT, neck_lock_active=True, neck_temperature_c=63.0)
+    result = NodTool().execute(cast(PalmimoLike, robot))
+    assert "ignored" in result.text
+
+
+def test_head_shake_reports_the_neck_thermal_guard_ignored_it() -> None:
+    robot = FakeRobot(neck_thermal_state=NeckThermalState.HOT, neck_lock_active=True, neck_temperature_c=70.0)
+    result = HeadShakeTool().execute(cast(PalmimoLike, robot))
+    assert "ignored" in result.text
 
 
 def test_look_center_calls_facade_look_center_then_settles() -> None:

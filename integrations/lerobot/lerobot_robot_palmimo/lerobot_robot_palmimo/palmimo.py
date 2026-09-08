@@ -27,6 +27,11 @@ class Palmimo(Robot):
     way the SDK does. ``lerobot.robots.Robot`` requires ten members and a motor
     bus is not among them; the cameras are the only hardware this class opens
     itself, because a LeRobot observation carries LeRobot camera frames.
+
+    ``get_observation``/``send_action`` read and write the driver directly
+    (``self._driver.read_positions()``/``write_positions()``), never
+    ``Palmimo.step()`` -- so ``palmimo_sdk``'s neck thermal guard, which only
+    intercepts calls that go through ``step()``, does NOT cover this class.
     """
 
     config_class = PalmimoConfig

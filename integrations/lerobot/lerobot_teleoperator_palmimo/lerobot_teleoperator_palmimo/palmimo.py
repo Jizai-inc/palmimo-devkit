@@ -17,6 +17,11 @@ class PalmimoTeleop(Teleoperator):
     no pygame/display window). Leg motion is delegated to ``palmimo_sdk``'s
     ``MotionEngine``; this teleop maps held keys to a motion and to neck control.
 
+    Drives ``MotionEngine`` directly, with no ``Palmimo`` facade in between --
+    so ``palmimo_sdk``'s neck thermal guard (``Palmimo.step()``-only) does NOT
+    cover this teleop. Watch neck temperature by hand during an extended
+    session.
+
     Controls (character keys; see ``config.teleop_keys``):
     - W/S: Forward / Backward    A/D: Strafe Left / Right
     - Q/Z: Rotate Left / Right   E: Dance

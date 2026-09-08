@@ -2,7 +2,7 @@
 
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, cast
 
 import pytest
@@ -15,13 +15,16 @@ from palmimo_sdk import (
     Microphone,
     Motion,
     MotionCancelled,
+    NeckThermalState,
     Palmimo,
     RoutineStep,
     ServoDriver,
     Speaker,
 )
 from palmimo_sdk.engine import MotionEngine
+from palmimo_sdk.io.base import ServoTelemetry
 from palmimo_sdk.robot import NeckPitchDegrees, NeckPitchNormalized, NeckYawDegrees, NeckYawNormalized
+from palmimo_sdk.thermal import NECK_COOL_C, NECK_HOT_C, NECK_MOTORS, NECK_STALE_S, NECK_WARM_C
 
 
 def test_motion_commands_set_engine_motion() -> None:
@@ -1809,3 +1812,432 @@ def test_mic_stream_connect_and_close_drive_open_and_close() -> None:
         # Safety net: don't leak the registry entry into other tests if an
         # assertion above fails mid-test.
         _mic_registry.unregister("robot-test-mic", mic_stream)
+
+
+# ================================================================
+# NECK THERMAL GUARD WIRING (thermal.py's NeckThermalGuard, wired into step())
+# ================================================================
+
+
+class _FakeClock:
+    """A manually-advanced clock, injected via Palmimo(thermal_clock=...) in the tests below."""
+
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
+
+
+class _NeckTelemetryDriver(ServoDriver):
+    """An in-memory driver whose read_telemetry() reports injected neck temperatures."""
+
+    def __init__(self, temperatures: dict[str, int]) -> None:
+        self.temperatures = temperatures
+        self.writes: list[dict[str, int]] = []
+        self._is_connected = True
+
+    @property
+    def is_connected(self) -> bool:
+        return self._is_connected
+
+    def connect(self) -> None:
+        self._is_connected = True
+
+    def disconnect(self) -> None:
+        self._is_connected = False
+
+    def _write_positions(self, positions: dict[str, int]) -> None:
+        self.writes.append(dict(positions))
+
+    def read_telemetry(self, motors: Sequence[str] | None = None) -> ServoTelemetry:
+        wanted = motors if motors is not None else NECK_MOTORS
+        return ServoTelemetry(temperature={m: self.temperatures[m] for m in wanted if m in self.temperatures})
+
+
+def _neck_temps(temp: int) -> dict[str, int]:
+    return dict.fromkeys(NECK_MOTORS, temp)
+
+
+def test_look_reaches_the_neck_target_below_the_warm_threshold() -> None:
+    """Below WARM, look() must behave exactly as it always has -- the guard must not
+    interfere with an unremarkable, cool-running neck."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_WARM_C - 1))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.step()  # establishes NORMAL
+    assert robot.neck_thermal_state is NeckThermalState.NORMAL
+    center = robot.engine.neck_pitch_center()
+    robot.look(pitch=0.5, yaw=-0.25)
+    for _ in range(30):
+        robot.step()
+    assert robot.positions["neck_pitch1"] != center
+    assert robot.positions["neck_yaw"] != MotionEngine.NEUTRAL
+
+
+def test_look_still_reaches_the_neck_target_while_warm() -> None:
+    """WARM is an early warning, not a lockout -- look() must still take effect at 60C,
+    or a WARM neck would lose responsiveness well before the HOT lockout is warranted."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_WARM_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.WARM
+    center = robot.engine.neck_pitch_center()
+    robot.look(pitch=0.5, yaw=-0.25)
+    for _ in range(30):
+        robot.step()
+    assert robot.positions["neck_pitch1"] != center
+    assert robot.positions["neck_yaw"] != MotionEngine.NEUTRAL
+
+
+def test_hot_forces_the_look_target_back_to_center() -> None:
+    """At HOT, a look() issued afterwards must not reach the engine -- otherwise an agent or
+    teleop caller could keep driving the overheated neck straight through the lockout."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+    center = robot.engine.neck_pitch_center()
+    robot.look(pitch=0.5, yaw=-0.25)
+    for _ in range(30):
+        robot.step()
+    assert robot.positions["neck_pitch1"] == center
+    assert robot.positions["neck_yaw"] == MotionEngine.NEUTRAL
+
+
+def test_hot_lockout_holds_through_a_partial_cooldown_and_clears_at_the_cool_threshold() -> None:
+    """Without hysteresis, a neck sitting just under HOT would flap the lockout on and off every
+    poll; HOT must hold through a reading below HOT but above COOL and only release at/below COOL,
+    after which look() works again."""
+    clock = _FakeClock()
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver), thermal_clock=clock)
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+    center = robot.engine.neck_pitch_center()
+
+    clock.advance(1.0)
+    driver.temperatures = _neck_temps(NECK_COOL_C + 1)  # below HOT, still above COOL
+    robot.look(pitch=0.5)
+    for _ in range(30):
+        clock.advance(1.0)
+        robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+    assert robot.positions["neck_pitch1"] == center
+
+    clock.advance(1.0)
+    driver.temperatures = _neck_temps(NECK_COOL_C)
+    robot.step()
+    # NECK_COOL_C == NECK_WARM_C by design (see thermal.py) -- HOT releases straight to WARM,
+    # not NORMAL.
+    assert robot.neck_thermal_state is NeckThermalState.WARM
+    robot.look(pitch=0.5)
+    for _ in range(30):
+        robot.step()
+    assert robot.positions["neck_pitch1"] != center
+
+
+@pytest.mark.parametrize("select_gesture", [Palmimo.nod, Palmimo.head_shake])
+def test_neck_gesture_selection_is_rejected_while_hot(select_gesture: Callable[[Palmimo], object]) -> None:
+    """NOD/HEAD_SHAKE move the neck regardless of the look target, so the HOT lockout must also
+    reject selecting them directly -- otherwise a caller could route around the look()-forced-
+    center guard just by calling nod() instead."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+    select_gesture(robot)
+    assert robot.motion == "idle"
+
+
+def test_set_motion_nod_is_rejected_while_hot() -> None:
+    """The string-based set_motion() entry point must apply the same HOT rejection as nod()."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.step()
+    robot.set_motion("nod")
+    assert robot.motion == "idle"
+
+
+def test_telemetry_is_read_at_most_once_per_poll_interval() -> None:
+    """A 60fps control loop calling step() every frame must not turn into 60 telemetry sweeps a
+    second -- the sweep shares bus time with the position write every frame already needs."""
+    clock = _FakeClock()
+    driver = _NeckTelemetryDriver(_neck_temps(30))
+    robot = Palmimo(driver=cast(ServoDriver, driver), thermal_clock=clock)
+
+    read_calls = 0
+    original_read_telemetry = driver.read_telemetry
+
+    def counting_read_telemetry(motors: Sequence[str] | None = None) -> ServoTelemetry:
+        nonlocal read_calls
+        read_calls += 1
+        return original_read_telemetry(motors)
+
+    driver.read_telemetry = counting_read_telemetry  # type: ignore[method-assign]
+    for _ in range(60):
+        robot.step()
+        clock.advance(1.0 / 60)
+    assert read_calls == 1
+
+
+def test_neck_thermal_state_is_unmonitored_when_driver_lacks_telemetry() -> None:
+    """A driver with no telemetry support (the ABC default raises NotImplementedError) must report
+    UNMONITORED, not a silently-assumed-healthy NORMAL."""
+    driver = RecordingDriver()  # defined above: no read_telemetry override
+    robot = Palmimo(driver=cast(ServoDriver, driver), auto_wake=False)
+    robot.connect()
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.UNMONITORED
+    assert robot.neck_temperature_c is None
+
+
+def test_neck_thermal_state_is_unmonitored_compute_only() -> None:
+    """Compute-only mode (driver=None) is a normal, expected mode -- the guard must go quietly
+    UNMONITORED rather than erroring or defaulting to NORMAL."""
+    robot = Palmimo()
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.UNMONITORED
+    assert robot.neck_temperature_c is None
+
+
+# ================================================================
+# NECK THERMAL GUARD -- HOT REACHING EVERY NECK-WRITING PATH
+# (not just look()'s target -- gesture keyframes and posture one-shots too)
+# ================================================================
+
+
+def test_hot_holds_the_neck_center_while_legs_keep_walking() -> None:
+    """The HOT lockout must only hold the NECK -- a gait's own leg motion must keep running, and a
+    look() issued while walking must still be overridden."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.forward()
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+    robot.look(pitch=0.5)
+    for _ in range(30):
+        robot.step()
+    center = robot.engine.neck_pitch_center()
+    assert abs(robot.positions["neck_pitch1"] - center) <= 5
+    assert robot.positions["leg_1_yaw"] != MotionEngine.NEUTRAL  # the gait is still moving the legs
+
+
+@pytest.mark.parametrize("motion_name", ["stretch", "bow"])
+def test_hot_holds_the_neck_center_during_a_posture_one_shot(motion_name: str) -> None:
+    """STRETCH/BOW drive the neck through their own keyframes directly (not through look()) -- the
+    HOT lockout must override those too, or a stretch/bow started while HOT would still swing the
+    head through its chin-up/chin-down pose, while the legs keep moving through the posture."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+    robot.set_motion(motion_name)
+    center = robot.engine.neck_pitch_center()
+    leg_poses_seen = set()
+    for _ in range(90):
+        robot.step()
+        leg_poses_seen.add(tuple(sorted((k, v) for k, v in robot.positions.items() if k not in NECK_MOTORS)))
+    assert abs(robot.positions["neck_pitch1"] - center) <= 5
+    assert abs(robot.positions["neck_yaw"] - MotionEngine.NEUTRAL) <= 5
+    assert len(leg_poses_seen) > 1  # the legs kept moving through the posture one-shot
+
+
+def test_hot_reached_mid_nod_still_centers_the_neck() -> None:
+    """_request_motion only intercepts a NEW nod() call -- a nod already in flight when the neck
+    crosses into HOT must be overridden too, or an in-progress nod would keep swinging the neck
+    through the lockout."""
+    clock = _FakeClock()
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_WARM_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver), thermal_clock=clock)
+    assert robot.nod() is True
+    robot.step()
+    assert robot.motion == "nod"
+
+    clock.advance(1.0)
+    driver.temperatures = _neck_temps(NECK_HOT_C)
+    center = robot.engine.neck_pitch_center()
+    for _ in range(90):
+        clock.advance(1.0)
+        robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+    assert abs(robot.positions["neck_pitch1"] - center) <= 5
+
+
+def test_hot_reached_mid_nod_deviation_shrinks_monotonically_within_ten_frames() -> None:
+    """Regression: MotionEngine.step() drops an in-flight NOD/HEAD_SHAKE to IDLE the instant the
+    neck lock engages, precisely because leaving the motion as NOD let _apply_nod() keep
+    re-writing its own keyframe on top of the centering glide every frame -- the two fought, and
+    the pitch deviation from center stayed large (measured ~276 ticks on hardware) for many frames
+    instead of shrinking. Checking only the final, settled position 90 frames later (as the test
+    above does) would still pass with that bug, since the gesture ends on its own eventually --
+    this checks that the deviation shrinks EVERY frame across just the first 10 frames of HOT, long
+    before a nod would naturally finish, which only holds once the gesture has actually stopped
+    fighting the glide."""
+    clock = _FakeClock()
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_WARM_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver), thermal_clock=clock)
+    assert robot.nod() is True
+    for _ in range(20):  # deep into the (scaled-up) first dip, well before it turns around
+        clock.advance(1.0)
+        robot.step()
+
+    center = robot.engine.neck_pitch_center()
+    driver.temperatures = _neck_temps(NECK_HOT_C)
+    deviations = []
+    for _ in range(10):
+        clock.advance(1.0)
+        robot.step()
+        deviations.append(abs(robot.positions["neck_pitch1"] - center))
+
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+    assert robot.motion == "idle"  # dropped out of NOD instead of left fighting the centering glide
+    assert deviations == sorted(deviations, reverse=True)  # never grows back frame-over-frame
+    assert deviations[-1] < deviations[0]  # and it actually shrank, not just held flat
+
+
+def test_hot_holds_the_neck_center_through_a_play_neck_sweep_cue() -> None:
+    """play()'s neck_sweep cue calls look() every single frame -- the HOT lockout must still win
+    over a target that keeps being re-set, while the cue's own leg motion keeps running."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+    center = robot.engine.neck_pitch_center()
+    frames = list(robot.play([RoutineStep(motion=Motion.FORWARD, seconds=1.0, neck_sweep=True)]))
+    assert abs(frames[-1]["neck_pitch1"] - center) <= 5
+    assert abs(frames[-1]["neck_yaw"] - MotionEngine.NEUTRAL) <= 5
+    assert frames[-1]["leg_1_yaw"] != MotionEngine.NEUTRAL  # the gait kept moving the legs
+
+
+# ================================================================
+# NECK THERMAL GUARD -- CALLER-VISIBLE REJECTION (bool returns)
+# ================================================================
+
+
+def test_look_returns_true_below_the_hot_lockout() -> None:
+    """Below the lockout, look() must report success, not just silently work."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_WARM_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.step()
+    assert robot.look(pitch=0.5) is True
+
+
+def test_look_returns_false_while_locked() -> None:
+    """A caller (an agent, teleop) must be able to tell "moved" from "ignored" -- returning None/True
+    either way would let a caller believe a look() landed when the guard silently dropped it."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.step()
+    assert robot.look(pitch=0.5) is False
+
+
+def test_nod_returns_true_when_accepted() -> None:
+    """Below the lockout, nod() must report success, mirroring look()'s True."""
+    robot = Palmimo()
+    assert robot.nod() is True
+
+
+def test_set_motion_nod_returns_false_while_hot() -> None:
+    """The string-based set_motion() entry point must surface the same rejection nod() does."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.step()
+    assert robot.set_motion("nod") is False
+
+
+# ================================================================
+# NECK THERMAL GUARD -- TELEMETRY STALENESS AND sleep()
+# ================================================================
+
+
+def test_neck_telemetry_age_s_tracks_time_since_the_last_complete_sweep() -> None:
+    clock = _FakeClock()
+    driver = _NeckTelemetryDriver(_neck_temps(30))
+    robot = Palmimo(driver=cast(ServoDriver, driver), thermal_clock=clock)
+    assert robot.neck_telemetry_age_s is None  # no sweep has completed yet
+    robot.step()
+    clock.advance(2.5)
+    assert robot.neck_telemetry_age_s == pytest.approx(2.5)
+
+
+def test_stale_after_hot_keeps_the_lock_until_a_cool_complete_sweep() -> None:
+    """A neck that was HOT and then loses telemetry (one motor stops answering) must stay LOCKED
+    even once neck_thermal_state falls back to UNMONITORED -- reporting "unmonitored" while quietly
+    dropping the lockout would let a caller drive an unobserved, possibly still-hot neck. The lock
+    must only release once a COMPLETE sweep actually shows the neck has cooled."""
+    clock = _FakeClock()
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver), thermal_clock=clock)
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+
+    driver.temperatures = {m: NECK_HOT_C for m in NECK_MOTORS if m != "neck_yaw"}  # one motor drops out
+    clock.advance(NECK_STALE_S)
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.UNMONITORED
+    assert robot.neck_lock_active is True
+    assert robot.look(pitch=0.5) is False
+
+    clock.advance(1.0)
+    driver.temperatures = _neck_temps(50)  # a complete sweep, well below NECK_COOL_C
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.NORMAL
+    assert robot.neck_lock_active is False
+    assert robot.look(pitch=0.5) is True
+
+
+class _NeckTelemetryGainDriver(_NeckTelemetryDriver):
+    """_NeckTelemetryDriver that also tracks Position_P_Gain writes -- for the HOT sleep() path,
+    which needs those to confirm _park_neck's release ladder ran.
+    """
+
+    def __init__(self, temperatures: dict[str, int]) -> None:
+        super().__init__(temperatures)
+        self.gain_calls: list[tuple[int | None, tuple[str, ...] | None]] = []
+
+    def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
+        self.gain_calls.append((value, tuple(motors) if motors is not None else None))
+
+    def read_positions(self) -> dict[str, int]:
+        return dict(self.writes[-1]) if self.writes else {}
+
+
+def test_sleep_skips_the_timed_hold_and_parks_directly_while_hot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """HOT means the neck needs relief now, not after another `duration` seconds held at full gain
+    -- sleep() must settle the legs and run _park_neck's release immediately instead."""
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    driver = _NeckTelemetryGainDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver), auto_wake=False)
+    robot.connect()
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+    calls_before = len(driver.gain_calls)
+
+    robot.sleep(duration=5.0)  # would be a long timed hold at full gain if not skipped
+
+    assert len(driver.gain_calls) > calls_before  # _park_neck's ladder ran
+    assert driver.gain_calls[-1][0] == robot_module._NECK_RELEASE_GAINS[-1]
+
+
+def test_disconnect_then_reconnect_re_judges_the_neck_immediately() -> None:
+    """A disconnect must drop straight to UNMONITORED (nothing left to watch), and a reconnect must
+    give the guard a fresh, IMMEDIATE read rather than waiting out the poll interval -- a stale HOT
+    judgement surviving a power cycle (or a fresh judgement being throttled away right after
+    reconnect) would both be wrong."""
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver), auto_wake=False)
+    robot.connect()
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+
+    robot.disconnect(park=False)
+    assert robot.neck_thermal_state is NeckThermalState.UNMONITORED
+    assert robot.neck_lock_active is False
+
+    driver.temperatures = _neck_temps(30)
+    robot.connect()
+    robot.step()  # the very first poll after reconnect must not be throttled away
+    assert robot.neck_thermal_state is NeckThermalState.NORMAL
