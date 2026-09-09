@@ -39,6 +39,21 @@ async def test_tick_advertises_only_the_idle_toolset(
     assert names == IDLE_TOOL_NAMES
 
 
+async def test_tick_allows_parallel_tool_calls_so_the_provider_accepts_the_call(
+    toolset: AgentToolSet, fake_llm_provider: type, tool_call_turn: Callable
+) -> None:
+    """Gemini rejects parallel_tool_calls=False whenever more than one tool is
+    offered, and the idle toolset always is. Allowing them costs nothing here:
+    tick() executes message.tool_calls[0] and drops the rest."""
+    llm = fake_llm_provider([tool_call_turn("nod", {"seconds": 1.0, "reason": "why not"})])
+    turn = IdleTurn(History(), _idle_view(toolset), llm, Bus())
+
+    await turn.tick()
+
+    [call] = llm.calls
+    assert call["parallel_tool_calls"] is True
+
+
 async def test_tick_asks_the_llm_for_a_single_tool_call_continuation(
     toolset: AgentToolSet, fake_llm_provider: type, tool_call_turn: Callable
 ) -> None:

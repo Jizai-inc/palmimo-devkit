@@ -48,7 +48,9 @@ class IdleTurn:
         """Run one idle tick: a single chat() call, then at most one tool call."""
         messages = build_messages(self.history, self._system_prompt, continuation_nudge=_CONTINUATION_NUDGE)
         try:
-            response = await self.llm.chat(messages=messages, tools=self.view.to_openai_tools())
+            response = await self.llm.chat(
+                messages=messages, tools=self.view.to_openai_tools(), parallel_tool_calls=True
+            )
         except Exception as exc:
             await dispatch.record_llm_failure(self.history, exc)
             return
