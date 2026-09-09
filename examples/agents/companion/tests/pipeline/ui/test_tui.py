@@ -8,7 +8,7 @@ the conductor, using Textual's own :class:`~textual.pilot.Pilot` test driver.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 
@@ -39,7 +39,9 @@ class _FakeResponse:
 class FakeLlm:
     """Stands in for :class:`~palmimo_companion_agent.pipeline.llm.LlmProvider`: never calls a real model."""
 
-    async def chat(self, messages: list[dict], *, tools: list[dict] | None = None) -> _FakeResponse:
+    async def chat(
+        self, messages: list[dict], *, tools: list[dict] | None = None, **_: Any
+    ) -> _FakeResponse:
         return _FakeResponse()
 
 
