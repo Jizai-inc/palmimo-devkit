@@ -613,6 +613,33 @@ def test_look_pitch_up_converts_via_the_engine_instances_live_reach() -> None:
     assert robot._engine._neck_target_pitch == pytest.approx(-1.0)
 
 
+def test_look_pitch_up_at_reach_converges_to_full_chin_up_at_non_default_trim() -> None:
+    """A look(pitch=NeckPitchDegrees(-reach)) request, where reach is the engine
+    instance's own neck_pitch_up_reach_deg, converges to the engine's actual
+    full chin-up head-pitch offset even at a non-default rest trim -- not short
+    of it. A property that overstated the real reach would silently saturate
+    this request instead of reaching the angle the caller asked for.
+
+    trim=20 (the max allowed rest trim) keeps the instance's live reach under
+    NeckPitchDegrees' own class-level validation bound (NECK_PITCH_UP_TRAVEL_DEG,
+    the shipped-default reach) -- the value object can only check against that
+    class-level bound (see its docstring), so a trim producing a live reach
+    beyond it would fail at construction before ever reaching the engine.
+    """
+    robot = Palmimo()
+    robot._engine.neck_rest_pitch_deg = 20.0
+    reach = robot._engine.neck_pitch_up_reach_deg
+    robot.look(pitch=NeckPitchDegrees(-reach))
+    robot.step_n(400)  # plenty of steps to fully converge
+
+    engine = robot._engine
+    pos = robot.positions
+    head_total = (pos["neck_pitch1"] - engine.neck_pitch_center()) + engine.neck_pitch2_sign * (
+        pos["neck_pitch2"] - engine.NEUTRAL
+    )
+    assert head_total == pytest.approx(-reach * engine.TICK_PER_DEG, abs=1)
+
+
 def test_look_rejects_yaw_value_object_passed_as_pitch() -> None:
     """A value object for the wrong axis (a yaw value passed as pitch) is clearly rejected with TypeError."""
     robot = Palmimo()

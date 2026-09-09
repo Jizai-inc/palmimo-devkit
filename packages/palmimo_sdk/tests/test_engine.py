@@ -172,62 +172,28 @@ def _head_total(pos: dict[str, int], engine: MotionEngine) -> int:
     )
 
 
-def _expected_head_total_when_split(engine: MotionEngine, x: float) -> int:
-    """Expected combined head-pitch offset for a converged set_neck(pitch=x),
-    share > 0, mirroring _apply_neck's split.
+@pytest.mark.parametrize("trim", [0.0, -20.0])
+@pytest.mark.parametrize("share", [0.5, 1.0])
+def test_neck_pitch_up_reach_deg_matches_converged_full_chin_up_head_total(share: float, trim: float) -> None:
+    """neck_pitch_up_reach_deg (converted to ticks) matches the combined head-pitch
+    offset a full chin-up set_neck(pitch=-1) actually converges to, at non-default
+    trim/share.
 
-    pitch1's own target is always computed from the symmetric ``total`` (``x *
-    amplitude``, clamped to +-amplitude) -- unaffected by the chin-up
-    extension below, so pitch1 never swings harder than the pre-pitch2 split
-    already asked of it (see _apply_neck). pitch2's remainder is computed
-    against that same ``total`` on the chin-down side (x >= 0), but against
-    the larger ``up_reach`` on the chin-up side (x < 0): pitch1's own spare
-    room above ``center`` up to its raw band ceiling, plus the full raw band
-    pitch2 can then cover on its own.
-    """
-    center = engine.neck_pitch_center()
-    amp = engine._neck_amplitude
-    share = max(0.0, min(1.0, engine.neck_pitch2_share))
-    sign = 1 if engine.neck_pitch2_sign >= 0 else -1
-    n = engine.NEUTRAL
-
-    total = max(-amp, min(amp, int(x * amp)))
-    p1_target = max(n - amp, min(n + amp, center + int((1.0 - share) * total)))
-    p1_contribution = p1_target - center
-
-    up_reach = (center - (n - amp)) + amp
-    remainder_total = max(-up_reach, min(amp, int(x * up_reach))) if x < 0.0 else total
-    p2_target = max(n - amp, min(n + amp, n + int(sign * (remainder_total - p1_contribution))))
-    p2_contribution = p2_target - n
-
-    return p1_contribution + sign * p2_contribution
-
-
-@pytest.mark.parametrize("trim", [0.0, 15.0, -20.0])
-@pytest.mark.parametrize("x", [-1.0, -0.5, 0.0, 0.5, 1.0])
-@pytest.mark.parametrize("share", [0.5, 0.75, 1.0])
-def test_neck_pitch2_share_reaches_extended_head_total_when_split(share: float, x: float, trim: float) -> None:
-    """With pitch2 actually taking part in the split (share > 0), set_neck(pitch=x)'s
-    combined head-pitch offset (pitch1 + sign*pitch2) matches the split formula
-    (see _expected_head_total_when_split / _apply_neck) for any share -- pitch2
-    absorbs whatever pitch1's own NEUTRAL+-amplitude band can't carry once the
-    rest trim shifts pitch1's center off NEUTRAL, on both the chin-down side
-    (the historical symmetric range) and, further still, the chin-up side
-    (pitch2's own full raw band beyond that).
+    Palmimo._pitch_to_normalized divides a NeckPitchDegrees(-X) request by this
+    property to get the engine's normalized target; if the property overstated the
+    real reach, that division would understate the normalized target and the look
+    request would silently fall short of -X instead of reaching it.
     """
     engine = MotionEngine()
     engine.neck_rest_pitch_deg = trim
     engine.neck_pitch2_share = share
-    engine.set_neck(pitch=x)
+    engine.set_neck(pitch=-1.0)
     for _ in range(400):  # plenty of steps to fully converge
         engine.step()
     pos = engine.get_positions()
-    amp = engine._neck_amplitude
-    n = engine.NEUTRAL
 
-    assert _head_total(pos, engine) == pytest.approx(_expected_head_total_when_split(engine, x), abs=2)
-    assert n - amp <= pos["neck_pitch1"] <= n + amp
-    assert n - amp <= pos["neck_pitch2"] <= n + amp
+    reach_ticks = engine.neck_pitch_up_reach_deg * engine.TICK_PER_DEG
+    assert _head_total(pos, engine) == pytest.approx(-reach_ticks, abs=1)
 
 
 @pytest.mark.parametrize("trim", [0.0, 15.0, -20.0])

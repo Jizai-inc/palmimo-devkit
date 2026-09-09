@@ -1567,30 +1567,44 @@ class MotionEngine:
         trim = max(-lim, min(lim, float(self.neck_rest_pitch_deg)))
         return self.NEUTRAL - round(trim * self.TICK_PER_DEG)
 
+    def _neck_pitch_up_reach_ticks(self) -> int:
+        """Tick ceiling a full chin-up ``set_neck(pitch=-1)`` actually converges to.
+
+        Single definition shared by ``neck_pitch_up_reach_deg`` and
+        ``_apply_neck``'s pitch2-remainder scale, so the two can't drift
+        apart. At ``neck_pitch2_share`` > 0, pitch1 carries
+        ``(1-share)*amp`` of the total swing (clamped to its own raw
+        ``NEUTRAL+-amp`` band, i.e. to ``pitch1_spare`` -- the room above
+        ``neck_pitch_center()`` up to that ceiling) and pitch2 then covers a
+        further full ``amp`` on top of whichever of those two pitch1
+        actually reached: pitch1 never swings harder than the symmetric
+        split already asks of it (see ``_apply_neck``), so once it saturates
+        at ``pitch1_spare`` short of ``(1-share)*amp``, the reach saturates
+        with it rather than reaching the larger ``pitch1_spare + amp``.
+        With ``neck_pitch2_share`` at the "pitch1 only" sentinel (0.0),
+        pitch2 stays untouched and pitch1's own spare room (capped at
+        ``amp``) IS the reach.
+        """
+        share = max(0.0, min(1.0, self.neck_pitch2_share))
+        amp = self._neck_amplitude
+        pitch1_spare = self.neck_pitch_center() - (self.NEUTRAL - amp)
+        if share <= 0.0:
+            return min(amp, pitch1_spare)
+        return min(int((1.0 - share) * amp), pitch1_spare) + amp
+
     @property
     def neck_pitch_up_reach_deg(self) -> float:
         """Chin-up mechanical travel (deg) at this instance's CURRENT config.
 
         ``NECK_PITCH_UP_TRAVEL_DEG`` is only exact at the shipped defaults
         (``_NECK_REST_PITCH_DEG``, ``NECK_PITCH2_SHARE``); this property
-        mirrors ``_apply_neck``'s own reach computation, evaluated against
-        the LIVE ``neck_rest_pitch_deg``/``neck_pitch2_share``, so a caller
-        who overrides either (e.g. the facade's degree->normalized
-        conversion for :class:`~palmimo_sdk.robot.NeckPitchDegrees`) converts
-        against the reach this instance actually has, not the class default.
-
-        With ``neck_pitch2_share`` at the "pitch1 only" sentinel (0.0),
-        pitch1's own spare room above ``neck_pitch_center()`` (up to its raw
-        band ceiling) IS the reach -- capped at ``amp``, since nothing
-        beyond pitch1's own symmetric ``total`` clamp is ever asked of it
-        (see ``_apply_neck``). With ``neck_pitch2_share`` > 0, pitch2 then
-        covers a further full ``amp`` on top of that spare room.
+        converts :meth:`_neck_pitch_up_reach_ticks` -- the LIVE reach
+        ``_apply_neck`` itself converges to -- so a caller who overrides
+        either knob (e.g. the facade's degree->normalized conversion for
+        :class:`~palmimo_sdk.robot.NeckPitchDegrees`) converts against the
+        reach this instance actually has, not the class default.
         """
-        share = max(0.0, min(1.0, self.neck_pitch2_share))
-        amp = self._neck_amplitude
-        pitch1_spare = self.neck_pitch_center() - (self.NEUTRAL - amp)
-        up_reach_ticks = pitch1_spare + amp if share > 0.0 else min(amp, pitch1_spare)
-        return up_reach_ticks / self.TICK_PER_DEG
+        return self._neck_pitch_up_reach_ticks() / self.TICK_PER_DEG
 
     def gesture_seconds(self, motion: Motion) -> float | None:
         """Choreography length (s) of a one-shot neck gesture, else ``None``.
@@ -1768,16 +1782,15 @@ class MotionEngine:
             # pitch2's own remainder is computed against `total` (the
             # symmetric ±amp demand) on the chin-down side, same as always.
             # On the chin-up side (x < 0) it is computed against `up_reach`
-            # instead: pitch1's own spare room above `center` up to its raw
-            # band ceiling, PLUS the full raw band pitch2 can then cover on
-            # its own. Hardware observation (2026-09, real-robot look-up
-            # test): with share > 0, pitch1 alone reaches its ceiling well
-            # before pitch2 reaches ITS raw band edge, leaving chin-up travel
-            # on the table even though pitch2 has room to keep going --
-            # amp-only clamping on the up side wastes that room. Only
-            # pitch2's OWN remainder is widened; pitch1's contribution above
-            # is untouched, so this never asks pitch1 for more than the
-            # symmetric split already did (see that comment).
+            # instead -- see `_neck_pitch_up_reach_ticks` for the derivation.
+            # Hardware observation (2026-09, real-robot look-up test): with
+            # share > 0, pitch1 alone reaches its ceiling well before pitch2
+            # reaches ITS raw band edge, leaving chin-up travel on the table
+            # even though pitch2 has room to keep going -- amp-only clamping
+            # on the up side wastes that room. Only pitch2's OWN remainder is
+            # widened; pitch1's contribution above is untouched, so this
+            # never asks pitch1 for more than the symmetric split already did
+            # (see that comment).
             #
             # Gated on `_neck_pitch_look_sourced`: this extension exists for
             # look()/set_neck()'s own reach. A choreography one-shot (e.g.
@@ -1786,7 +1799,7 @@ class MotionEngine:
             # `total` -- widening it there would silently give the gesture
             # far more chin-up travel than the knob it's tuned against asks
             # for (see _set_neck_pitch_target).
-            up_reach = (center - (self.NEUTRAL - amp)) + amp
+            up_reach = self._neck_pitch_up_reach_ticks()
             remainder_total = (
                 max(-up_reach, min(amp, int(self._neck_target_pitch * up_reach)))
                 if self._neck_target_pitch < 0.0 and self._neck_pitch_look_sourced
