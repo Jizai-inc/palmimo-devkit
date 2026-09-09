@@ -120,13 +120,16 @@ class VideoStream:
     def start(self) -> None:
         """Open the camera and start the background capture thread.
 
-        A no-op if already running. With no camera attached, or if `open()`
-        raises (device busy, not present, `vision` extra missing), logs a
-        warning and returns without starting a thread -- `has_camera` stays
-        `False` rather than the exception propagating out of the server
-        lifespan.
+        A no-op if already running -- including a thread `stop()` failed to
+        join within `stop_timeout`: that thread's handle is kept (not
+        cleared) precisely so this check still sees it and refuses to start
+        a second capture thread alongside it. With no camera attached, or if
+        `open()` raises (device busy, not present, `vision` extra missing),
+        logs a warning and returns without starting a thread -- `has_camera`
+        stays `False` rather than the exception propagating out of the
+        server lifespan.
         """
-        if self._camera is None or self._thread is not None:
+        if self._camera is None or (self._thread is not None and self._thread.is_alive()):
             return
         try:
             self._camera.open()
@@ -145,7 +148,12 @@ class VideoStream:
         If the thread does not stop within `stop_timeout`, `camera.close()`
         is skipped and an error is logged instead of closing it anyway --
         closing the device out from under a still-running capture thread
-        would race the close against whatever read is in flight.
+        would race the close against whatever read is in flight. The thread
+        handle is kept (not cleared) in this case, both so `start()` can
+        refuse to start a second capture thread and so a still-alive thread
+        never leaves the camera looking usable: `has_camera` still flips to
+        `False`, since nothing is refreshing `latest_jpeg()`'s buffer any
+        more even though the device itself stays open.
         """
         self._stop_event.set()
         if self._thread is not None:
@@ -156,7 +164,7 @@ class VideoStream:
                     "open rather than closing it while capture may still be running",
                     self._stop_timeout,
                 )
-                self._thread = None
+                self._available = False
                 return
             self._thread = None
         if self._camera is not None and self._available:

@@ -329,6 +329,31 @@ async def test_pilot_slot_is_released_when_the_grant_send_fails() -> None:
     assert session.acquire_pilot(2) is True
 
 
+class _CancellingRegistry:
+    """A registry double whose `remove` raises `CancelledError`, as `await
+    registry.remove(...)` does when the task is cancelled (e.g. server
+    shutdown) while that await is in flight."""
+
+    async def add(self, websocket: object) -> None:
+        pass
+
+    async def remove(self, websocket: object) -> None:
+        raise asyncio.CancelledError()
+
+
+async def test_pilot_slot_is_released_even_when_cancelled_during_deregistration() -> None:
+    # Without this, cancellation landing on the `await registry.remove(...)`
+    # in `finally` -- before the synchronous `session.release_pilot` that
+    # used to run after it -- would propagate straight out, skipping the
+    # release and leaving the pilot slot held forever.
+    session = PilotSession()
+    registry = _CancellingRegistry()
+    ws = _FakeWebSocket([{"role": "pilot"}])
+    with pytest.raises(asyncio.CancelledError):
+        await _control_connection(ws, session, registry, client_id=1)
+    assert session.pilot_present is False
+
+
 @pytest.mark.parametrize("bad_first", ["hi", [1, 2]])
 def test_non_dict_first_message_closes_the_connection(client: TestClient, bad_first: object) -> None:
     # Without this, a non-dict first message would reach `.get("role")` and
@@ -336,6 +361,17 @@ def test_non_dict_first_message_closes_the_connection(client: TestClient, bad_fi
     # the same way an unrecognized role string already is.
     with pytest.raises(WebSocketDisconnect), client.websocket_connect("/api/control") as ws:
         ws.send_json(bad_first)
+        ws.receive_json()
+
+
+def test_non_json_first_message_closes_the_connection(client: TestClient) -> None:
+    # Without this, a non-JSON first frame (unlike a malformed-but-valid-JSON
+    # frame later in the read loop, which the loop's own JSONDecodeError
+    # guard already drops) would raise out of the first `receive_json()`,
+    # which sits outside that guard, and crash the handler instead of
+    # closing with 1008 like every other malformed first frame.
+    with pytest.raises(WebSocketDisconnect), client.websocket_connect("/api/control") as ws:
+        ws.send_text("not json")
         ws.receive_json()
 
 
@@ -394,6 +430,59 @@ async def test_broadcast_delivers_to_other_sockets_despite_one_failing_or_stalli
     await registry.add(hanging)
     await asyncio.wait_for(registry.broadcast({"pilot_present": False, "motion": None}), timeout=1.0)
     assert healthy.sent == [{"pilot_present": False, "motion": None}]
+
+
+class _FakeRobot:
+    """Just enough of `Palmimo`'s surface for the lifespan: a connectable
+    resource whose `disconnect()` calls are counted."""
+
+    def __init__(self) -> None:
+        self.driver = None
+        self.disconnect_calls = 0
+
+    @property
+    def has_connectable_resource(self) -> bool:
+        return True
+
+    def connect(self) -> None:
+        pass
+
+    def disconnect(self) -> None:
+        self.disconnect_calls += 1
+
+
+class _StuckRobotLoop:
+    """A `RobotLoop` double whose `shutdown()` reports the thread never settled,
+    as the real one does when the control thread outlives `settle_timeout`."""
+
+    def start(self) -> None:
+        pass
+
+    def shutdown(self) -> bool:
+        return False
+
+    @property
+    def loop_fps(self) -> float:
+        return 0.0
+
+    @property
+    def robot_ok(self) -> bool:
+        return True
+
+
+def test_lifespan_skips_disconnect_when_the_loop_thread_did_not_settle() -> None:
+    # Without this, a servo bus hang that outlives RobotLoop.shutdown()'s
+    # settle_timeout would still get `robot.disconnect()` called on it from
+    # the lifespan, closing the servo port out from under the loop thread
+    # that is still driving it.
+    robot = _FakeRobot()
+    session = PilotSession()
+    robot_loop = _StuckRobotLoop()
+    video = VideoStream(None)
+    app = create_app(robot, session, robot_loop, video)
+    with TestClient(app):
+        pass
+    assert robot.disconnect_calls == 0
 
 
 def test_play_message_from_a_viewer_is_dropped(

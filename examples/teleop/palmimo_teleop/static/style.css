@@ -247,6 +247,10 @@ body[data-role="pilot"] #video-layer {
   pointer-events: none;
 }
 
+#controls[hidden] {
+  display: none;
+}
+
 #controls > * {
   pointer-events: auto;
   flex: 0 0 auto;

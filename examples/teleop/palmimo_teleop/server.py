@@ -220,7 +220,15 @@ async def _control_connection(
     """
     role: str | None = None
     try:
-        first = await websocket.receive_json()
+        try:
+            first = await websocket.receive_json()
+        except (json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError):
+            # Same malformed-frame set the read loop below tolerates, but the
+            # first frame has no established role yet to fall back on -- treat
+            # it like any other unrecognized first message and close 1008
+            # instead of letting the decode error escape this function.
+            await websocket.close(code=1008)
+            return
         role, payload = _resolve_role(session, client_id, first)
         if role is None:
             await websocket.close(code=1008)
@@ -261,9 +269,15 @@ async def _control_connection(
         # propagating out of this function -- so the pilot slot and
         # registry membership are never left dangling on an unexpected
         # error from `send_json`/`receive_json`.
-        await registry.remove(websocket)
+        #
+        # The synchronous release runs before the awaited deregistration:
+        # if this task is cancelled (e.g. server shutdown) while `await
+        # registry.remove(...)` is in flight, `CancelledError` re-raises
+        # out of that await and skips whatever follows it -- releasing
+        # first means the pilot slot is freed either way.
         if role == "pilot":
             session.release_pilot(client_id)
+        await registry.remove(websocket)
 
 
 def create_app(
@@ -307,9 +321,16 @@ def create_app(
                 _LOG.exception("status broadcast task ended with an unexpected error")
             finally:
                 video.stop()
-                robot_loop.shutdown()
-                if robot.has_connectable_resource:
-                    robot.disconnect()
+                if robot_loop.shutdown():
+                    if robot.has_connectable_resource:
+                        robot.disconnect()
+                else:
+                    # `shutdown()` left the control thread still running
+                    # (past its settle_timeout) rather than block the
+                    # lifespan on it -- that thread is the only one allowed
+                    # to touch `robot`, so disconnecting here would close
+                    # the servo port out from under it.
+                    _LOG.error("loop thread still running; leaving the servo port open")
 
     app = FastAPI(lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

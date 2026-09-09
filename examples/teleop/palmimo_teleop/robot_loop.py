@@ -166,14 +166,21 @@ class RobotLoop:
             self._window_frames = 0
 
     def start(self) -> None:
-        """Start the background thread. A no-op if already running."""
-        if self._thread is not None:
+        """Start the background thread. A no-op if already running.
+
+        "Already running" includes a thread `shutdown()` failed to join
+        within `settle_timeout`: that thread's handle is kept (not cleared)
+        precisely so this check still sees it and refuses to start a second
+        one alongside it.
+        """
+        if self._thread is not None and self._thread.is_alive():
+            _LOG.warning("robot loop thread is still running -- refusing to start a second one")
             return
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run, name="palmimo-teleop-robot-loop", daemon=True)
         self._thread.start()
 
-    def shutdown(self) -> None:
+    def shutdown(self) -> bool:
         """Stop the background thread, then settle the robot to idle before returning.
 
         Safe to call whether or not `start()` was ever called (a `--dry-run`
@@ -183,7 +190,16 @@ class RobotLoop:
         skipped and an error is logged instead of running it anyway: `_run()`
         is the only thread allowed to call into `robot` once connected, and
         running `_settle()` concurrently with a still-alive `_run()` would
-        break that invariant.
+        break that invariant. The thread handle is kept (not cleared) in this
+        case, both so `start()` can refuse to start a second thread and so
+        the caller knows -- via the `False` return -- that `robot` is still
+        being driven by the stuck thread and must not be touched (e.g.
+        disconnected) from anywhere else.
+
+        Returns:
+            bool: `True` if the loop stopped and settled; `False` if the
+                thread was still alive after `settle_timeout` and settling
+                was skipped.
         """
         self._stop_event.set()
         if self._thread is not None:
@@ -194,10 +210,10 @@ class RobotLoop:
                     "to avoid a second thread driving the robot concurrently",
                     self._settle_timeout,
                 )
-                self._thread = None
-                return
+                return False
             self._thread = None
         self._settle()
+        return True
 
     def _settle(self) -> None:
         """Stop the robot and step it for `SETTLE_SECONDS`, paced at `fps`.

@@ -164,7 +164,7 @@ def test_shutdown_stops_and_settles_the_robot() -> None:
     robot = FakeRobot()
     session = PilotSession(now=FakeClock())
     loop = _loop(robot, session, fps=10)
-    loop.shutdown()
+    assert loop.shutdown() is True
     assert robot.calls[0] == ("stop", None)
     step_calls = [call for call in robot.calls if call[0] == "step"]
     assert len(step_calls) == 10  # fps=10 * SETTLE_SECONDS=1.0
@@ -189,8 +189,29 @@ def test_shutdown_skips_settle_when_the_thread_does_not_stop_in_time() -> None:
     loop = RobotLoop(robot, session, now=FakeClock(), sleep=_no_sleep, settle_timeout=0.05)
     loop._thread = threading.Thread(target=lambda: time.sleep(1.0), daemon=True)
     loop._thread.start()
-    loop.shutdown()
+    assert loop.shutdown() is False
     assert robot.calls == []
+
+
+def test_start_refuses_a_second_thread_after_a_timed_out_shutdown() -> None:
+    # Without this, a servo bus hang that outlives shutdown()'s settle_timeout
+    # would let the next start() spin up a second thread driving the same
+    # robot concurrently -- the shutdown-timeout branch used to clear the
+    # thread handle, leaving `start()` no way to tell the old thread was
+    # still alive.
+    robot = FakeRobot()
+    session = PilotSession(now=FakeClock())
+    loop = RobotLoop(robot, session, now=FakeClock(), sleep=_no_sleep, settle_timeout=0.05)
+    stuck_thread = threading.Thread(target=lambda: time.sleep(1.0), name="palmimo-teleop-robot-loop", daemon=True)
+    loop._thread = stuck_thread
+    stuck_thread.start()
+    assert loop.shutdown() is False
+
+    loop.start()
+
+    running = [t for t in threading.enumerate() if t.name == "palmimo-teleop-robot-loop"]
+    assert running == [stuck_thread]
+    stuck_thread.join(timeout=2.0)
 
 
 def test_tick_failure_sets_robot_ok_false() -> None:

@@ -134,6 +134,40 @@ def test_stop_skips_closing_the_camera_when_the_thread_does_not_stop_in_time() -
     assert camera.closed is False
 
 
+def test_stop_marks_the_camera_unavailable_when_the_thread_does_not_stop_in_time() -> None:
+    # Without this, `/video.mjpeg` would keep 200ing off the last-captured
+    # buffer (via `has_camera`) after a stuck stop(), even though nothing is
+    # refreshing that buffer any more and the camera was never actually closed.
+    camera = FakeCamera()
+    video = VideoStream(camera, encode=_fake_encode, sleep=_no_sleep, stop_timeout=0.05)
+    video.start()
+    assert video.has_camera is True
+    video._thread = threading.Thread(target=lambda: time.sleep(1.0), daemon=True)
+    video._thread.start()
+    video.stop()
+    assert video.has_camera is False
+
+
+def test_start_refuses_a_second_thread_after_a_timed_out_stop() -> None:
+    # Without this, a capture thread wedged past stop_timeout would let the
+    # next start() spin up a second capture thread on the same camera --
+    # the stop-timeout branch used to clear the thread handle, leaving
+    # start() no way to tell the old thread was still alive.
+    camera = FakeCamera()
+    video = VideoStream(camera, stop_timeout=0.05)
+    stuck_thread = threading.Thread(target=lambda: time.sleep(1.0), name="palmimo-teleop-video", daemon=True)
+    video._thread = stuck_thread
+    video._available = True
+    stuck_thread.start()
+    video.stop()
+
+    video.start()
+
+    running = [t for t in threading.enumerate() if t.name == "palmimo-teleop-video"]
+    assert running == [stuck_thread]
+    stuck_thread.join(timeout=2.0)
+
+
 def test_capture_failure_logging_is_throttled(caplog: pytest.LogCaptureFixture) -> None:
     # Without this, a persistently failing camera would log one line per
     # capture attempt (up to 15/s) instead of roughly once per FAILURE_LOG_INTERVAL_S.
