@@ -49,7 +49,7 @@ const PYODIDE_DIST_DIR = path.join(DOCS_SITE_DIR, 'node_modules', 'pyodide');
 const PUBLIC_PYODIDE_DIR = path.join(PUBLIC_DIR, 'pyodide');
 const PYODIDE_RUNTIME_FILES = [
   'pyodide.mjs',
-  'pyodide.asm.js',
+  'pyodide.asm.mjs',
   'pyodide.asm.wasm',
   'python_stdlib.zip',
   'pyodide-lock.json',
