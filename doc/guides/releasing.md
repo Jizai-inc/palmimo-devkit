@@ -86,7 +86,9 @@ Publishing triggers `.github/workflows/publish.yml`: it builds `palmimo-sdk`,
 uploads it to TestPyPI, installs that build and smoke-tests it, and only
 then uploads the same build to PyPI. A pre-release stops after the TestPyPI
 smoke test — it never reaches PyPI. `workflow_dispatch` runs the same
-TestPyPI-and-smoke path on demand, as a rehearsal, without a release.
+TestPyPI-and-smoke path on demand, as a rehearsal, without a release; it
+uploads `X.Y.Z.dev<run id>` rather than `X.Y.Z`, so a rehearsal never
+occupies the version a later release will need on TestPyPI.
 
 If `publish.yml` fails, re-run the failed jobs from the Actions page. PyPI
 never accepts a version it already holds, so once the `pypi` upload itself
