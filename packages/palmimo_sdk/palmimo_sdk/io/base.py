@@ -11,6 +11,7 @@ this contract.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -49,6 +50,44 @@ class ServoTelemetry:
     unreached: tuple[str, ...] = ()
 
 
+logger = logging.getLogger(__name__)
+
+
+# Safe servo tick range (AGENTS.md "Hardware Safety"): stays clear of the
+# mechanical limits at 0/4095 so a bad goal can't stall a joint against them.
+# This is a coarse, last-gate guard -- a servo's own Min/Max_Position_Limit is
+# usually tighter and wins where it is set.
+SAFE_MIN_TICK = 200
+SAFE_MAX_TICK = 3900
+
+
+def clamp_goal_tick(motor: str, tick: int) -> int:
+    """Clamp a goal tick into the safe range, warning on each out-of-range write.
+
+    The warning keeps the clamp from silently masking a caller bug; a goal
+    already in range logs nothing.
+
+    Args:
+        motor (str): Motor name, used only in the warning message.
+        tick (int): Raw Dynamixel goal tick to clamp.
+
+    Returns:
+        int: *tick*, clamped into ``[SAFE_MIN_TICK, SAFE_MAX_TICK]``.
+    """
+    clamped = max(SAFE_MIN_TICK, min(SAFE_MAX_TICK, tick))
+    if clamped != tick:
+        logger.warning(
+            "goal %d for %r out of safe range [%d, %d]; clamped to %d",
+            tick,
+            motor,
+            SAFE_MIN_TICK,
+            SAFE_MAX_TICK,
+            clamped,
+        )
+    # Compared before the cast: a float already in range is not out of range.
+    return int(clamped)
+
+
 class ServoDriver(ABC):
     """Abstract servo backend.
 
@@ -69,12 +108,25 @@ class ServoDriver(ABC):
     def disconnect(self) -> None:
         """Release the connection."""
 
-    @abstractmethod
     def write_positions(self, positions: dict[str, int]) -> None:
         """Command servo goal positions.
 
+        Every goal is clamped into ``[SAFE_MIN_TICK, SAFE_MAX_TICK]`` here,
+        before it reaches :meth:`_write_positions` — a backend never has to
+        remember to apply the safe range itself.
+
         Args:
             positions (dict[str, int]): Motor name -> raw Dynamixel tick.
+        """
+        self._write_positions({motor: clamp_goal_tick(motor, tick) for motor, tick in positions.items()})
+
+    @abstractmethod
+    def _write_positions(self, positions: dict[str, int]) -> None:
+        """Send already-clamped servo goal positions to the backend.
+
+        Args:
+            positions (dict[str, int]): Motor name -> raw Dynamixel tick,
+                already clamped into the safe range by :meth:`write_positions`.
         """
 
     def read_positions(self) -> dict[str, int]:

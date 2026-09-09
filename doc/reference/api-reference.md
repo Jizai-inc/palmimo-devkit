@@ -810,6 +810,27 @@ crossing), then closes with two stages tuned on hardware:
 > production 60 fps (`perform_dance`) holds the intended wall-clock speed
 > instead of running faster.
 
+## ServoDriver
+
+`ServoDriver` (`palmimo_sdk.io.base.ServoDriver`) is the abstract I/O boundary
+that `DynamixelDriver` implements and that a third-party backend (simulator,
+other serial bus) implements in its place — `robot.driver` above holds
+whichever one is attached.
+
+`SAFE_MIN_TICK` (200) and `SAFE_MAX_TICK` (3900) are the safe servo tick
+range — clear of the mechanical limits at 0/4095 — and are part of the SDK's
+public surface:
+
+```python
+from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK
+```
+
+`ServoDriver.write_positions` is a concrete method: it clamps every goal into
+`[SAFE_MIN_TICK, SAFE_MAX_TICK]` and logs a warning on each out-of-range goal,
+then hands the clamped positions to `_write_positions`, the abstract method a
+backend (`DynamixelDriver` included) implements to reach the hardware. A
+backend never has to apply the clamp itself.
+
 ## Port Auto-Detection
 
 ### `find_servo_port() -> str`

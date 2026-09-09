@@ -41,10 +41,6 @@ _DXL_VELOCITY_UNIT_RPM = 0.229
 # Profile_Acceleration = velocity / this → ~constant ~0.5s decel ramp, so a glide
 # eases to a stop instead of snapping (rectangular profile, acceleration 0).
 _ACCEL_RAMP_DIVISOR = 8
-# Goal clamp (AGENTS.md "safe servo range"): coarse last-gate guard so a bad goal
-# can't stall a joint at 0/4095. Per-joint mechanical limits are tighter.
-SAFE_MIN_TICK = 200
-SAFE_MAX_TICK = 3900
 # The servo's Position_P_Gain power-on default. Re-applied at connect so a prior
 # neck soft-release (which lowers the gain in RAM) can't linger on a soft reconnect.
 _DEFAULT_POSITION_P_GAIN = 900
@@ -205,6 +201,9 @@ def _open_dynamixel_bus(
                 for motor in bus.motors:
                     tick = pres.get(motor)
                     if tick is not None:
+                        # A position read back from hardware, not a caller-chosen
+                        # goal -- write it verbatim so the goal equals the joint's
+                        # real position and torque-on holds rather than moves it.
                         bus.write("Goal_Position", motor, tick, normalize=False)
         except Exception as exc:
             logger.warning("could not seed hold pose before torque-on: %s", exc)
@@ -343,21 +342,18 @@ class DynamixelDriver(ServoDriver):
         finally:
             self._bus = None
 
-    def write_positions(self, positions: dict[str, int]) -> None:
+    def _write_positions(self, positions: dict[str, int]) -> None:
         """Command goal positions, filling un-named motors with neutral.
 
         The engine emits every motor each frame, but we defensively backfill
         any missing key with ``NEUTRAL`` so a partial dict can never leave a
-        joint at a stale goal. Every goal is clamped to the safe tick range as a
-        last-gate guard against a bad caller stalling a servo at a hard limit.
+        joint at a stale goal. *positions* is already clamped to the safe tick
+        range by :meth:`ServoDriver.write_positions`.
         """
         if self._bus is None:
             raise RuntimeError("Driver is not connected. Call connect() before write_positions().")
-        # Backfill missing/None with NEUTRAL (no stray None reaches int()), then clamp.
-        goal = {
-            name: NEUTRAL if (tick := positions.get(name)) is None else self._clamp_goal(name, int(tick))
-            for name in self._bus.motors
-        }
+        # None here only means a missing key: an explicit None already raised in clamp_goal_tick.
+        goal = {name: NEUTRAL if (tick := positions.get(name)) is None else int(tick) for name in self._bus.motors}
         if self._iir_enabled:
             goal = self._apply_iir(goal)
         self._bus.sync_write("Goal_Position", goal, normalize=False)
@@ -456,25 +452,6 @@ class DynamixelDriver(ServoDriver):
     @property
     def iir_alpha(self) -> float:
         return self._iir_alpha
-
-    @staticmethod
-    def _clamp_goal(name: str, tick: int) -> int:
-        """Clamp a goal tick into the safe range, warning on each out-of-range write.
-
-        The warning keeps the clamp from silently masking a caller bug; the engine
-        stays in range, so normal use logs nothing.
-        """
-        clamped = max(SAFE_MIN_TICK, min(SAFE_MAX_TICK, tick))
-        if clamped != tick:
-            logger.warning(
-                "goal %d for %r out of safe range [%d, %d]; clamped to %d",
-                tick,
-                name,
-                SAFE_MIN_TICK,
-                SAFE_MAX_TICK,
-                clamped,
-            )
-        return clamped
 
     def read_positions(self) -> dict[str, int]:
         if self._bus is None:

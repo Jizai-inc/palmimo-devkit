@@ -4,11 +4,8 @@ import itertools
 
 import pytest
 
-from palmimo_sdk import Motion, MotionEngine
+from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, Motion, MotionEngine
 
-
-# Servo safe range (AGENTS.md): keep every commanded tick well inside this.
-SAFE_LO, SAFE_HI = 200, 3900
 
 ALL_MOTIONS = [
     Motion.FORWARD,
@@ -55,7 +52,7 @@ def test_every_motion_stays_in_safe_range(motion: Motion) -> None:
     for _ in range(120):
         pos = engine.step()
         for name, tick in pos.items():
-            assert SAFE_LO <= tick <= SAFE_HI, f"{motion.name}/{name}={tick} out of range"
+            assert SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK, f"{motion.name}/{name}={tick} out of range"
 
 
 def test_step_is_deterministic() -> None:
@@ -213,7 +210,7 @@ def test_bow_stays_in_safe_range_full_length() -> None:
     for _ in range(round((_bow_total_s(engine) + 1.0) * 60)):
         pos = engine.step()
         for name, tick in pos.items():
-            assert SAFE_LO <= tick <= SAFE_HI, f"BOW/{name}={tick} out of range"
+            assert SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK, f"BOW/{name}={tick} out of range"
 
 
 def test_bow_completes_and_holds_neutral() -> None:
@@ -314,7 +311,7 @@ def test_stretch_stays_in_safe_range_full_length() -> None:
     for _ in range(round((_stretch_total_s(engine) + 1.0) * 60)):
         pos = engine.step()
         for name, tick in pos.items():
-            assert SAFE_LO <= tick <= SAFE_HI, f"STRETCH/{name}={tick} out of range"
+            assert SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK, f"STRETCH/{name}={tick} out of range"
 
 
 def test_stretch_completes_and_holds_neutral() -> None:
@@ -767,7 +764,7 @@ def test_wave_completes_safely_and_holds_neutral(leg: int) -> None:
     assert any(any(frame[key] != engine.NEUTRAL for key in arm_keys) for frame in frames)
     for frame in frames:
         for name, tick in frame.items():
-            assert SAFE_LO <= tick <= SAFE_HI, f"{name}={tick} out of range"
+            assert SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK, f"{name}={tick} out of range"
     assert all(tick == engine.NEUTRAL for key, tick in frames[-1].items() if key.startswith("leg_"))
     assert frames[-1] == frames[-2]
 
@@ -816,7 +813,7 @@ def test_wave_shape_knob_extremes_stay_safe_and_finish(
     engine.wave_decay = decay
     frames = _play_wave(engine, 3)
     for frame in frames:
-        assert all(SAFE_LO <= tick <= SAFE_HI for tick in frame.values())
+        assert all(SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK for tick in frame.values())
     assert all(tick == engine.NEUTRAL for key, tick in frames[-1].items() if key.startswith("leg_"))
 
 
@@ -938,7 +935,7 @@ def test_wave_both_knob_extremes_stay_in_safe_range(
     for _ in range(500):
         pos = engine.step()
         for name, tick in pos.items():
-            assert SAFE_LO <= tick <= SAFE_HI, f"{name}={tick} out of range"
+            assert SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK, f"{name}={tick} out of range"
 
 
 def test_wave_both_yaw_extremes_respect_hand_separation_floor() -> None:
@@ -1162,4 +1159,4 @@ def test_clap_knob_extremes_stay_in_safe_range(
     for _ in range(600):
         pos = engine.step()
         for name, tick in pos.items():
-            assert SAFE_LO <= tick <= SAFE_HI, f"{name}={tick} out of range"
+            assert SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK, f"{name}={tick} out of range"
