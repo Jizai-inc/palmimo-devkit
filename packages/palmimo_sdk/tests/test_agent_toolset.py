@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+import time
 from typing import Any, ClassVar, cast
 
 import pytest
@@ -503,6 +504,43 @@ async def test_call_second_cancellation_while_awaiting_shielded_worker_does_not_
 
     assert finished.is_set()  # the worker ran to completion before call_task unwound
     assert robot.cancel_calls == 1  # robot.cancel() is issued once, on the first CancelledError
+
+
+async def test_call_worker_ending_in_motion_cancelled_still_raises_cancelled_error() -> None:
+    """The worker ends in MotionCancelled because call() itself asked it to
+    (robot.cancel() on the first CancelledError) -- so awaiting the shield
+    re-raises MotionCancelled where the wait loop expected only
+    CancelledError. It must not surface here in place of the CancelledError:
+    callers catch Exception around a tool call and would swallow it, leaving
+    the cancellation unfinished and the event loop running."""
+    entered = threading.Event()
+
+    class CancellableMotionTool(Tool):
+        name: ClassVar[str] = "cancellable_motion"
+        description: ClassVar[str] = "Raises MotionCancelled once cancelled, the way a real motion does."
+
+        def execute(self, robot: PalmimoLike) -> ToolResult:
+            entered.set()
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                if cast(Any, robot).cancel_calls:
+                    raise MotionCancelled("Palmimo.cancel() was called; motion aborted mid-run().")
+                time.sleep(0.005)
+            return ToolResult(text="ran")  # pragma: no cover - only on a hung cancel
+
+    robot = FakeRobot()
+    tools = AgentToolSet(cast(PalmimoLike, robot), include=["stop"])
+    tools.register(CancellableMotionTool)
+
+    call_task = asyncio.ensure_future(tools.call("cancellable_motion", {}))
+    await asyncio.get_event_loop().run_in_executor(None, entered.wait, 2.0)
+
+    call_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await call_task
+
+    assert robot.cancel_calls == 1
+    assert tools.is_busy() is False
 
 
 # ----------------------------------------------------------------------
