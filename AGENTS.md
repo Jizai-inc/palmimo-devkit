@@ -129,10 +129,22 @@ in `toolset.py` saying so).
 
 ## Hardware Safety
 
-- **There is no thermal protection yet.** The driver can now read
-  `Present_Temperature` (`ServoDriver.read_telemetry()`), but nothing acts on
-  it — no warning, no stop, on an overheating servo. Do NOT assume the robot
-  self-protects, and watch temperature by hand during long or stalled runs.
+- **The neck has thermal protection; the legs do not.** `Palmimo.step()` polls
+  neck temperature once a second (`palmimo_sdk/thermal.py`'s
+  `NeckThermalGuard`) and, at >= 62°C (`HOT`), forces the neck to center and
+  downgrades NOD/HEAD_SHAKE to IDLE. This holds until the neck cools to
+  <= 55°C — see
+  [doc/reference/api-reference.md](doc/reference/api-reference.md#neck-thermal-guard)
+  for the full state table, including `neck_lock_active`, which can stay
+  engaged past a HOT reading if telemetry then goes stale. Legs only expose
+  the reading (`ServoDriver.read_telemetry()`); nothing acts on it — do NOT
+  assume a leg self-protects, and watch leg temperature by hand during long or
+  stalled runs.
+- **The guard only covers callers that go through `Palmimo.step()`** — `run()`
+  / `play()`, the MCP server, and the agent tool layer (`palmimo_sdk/agent/`).
+  **The LeRobot teleop integration (`integrations/lerobot/`) drives the engine
+  directly and is NOT covered** — see that package's `palmimo.py` module
+  docstring.
 - Always smooth transitions — abrupt jumps damage gears
 - `stop()` returns to neutral gradually; NEVER skip it
 - Safe servo range: 200-3900 (avoid mechanical limits at 0 and 4095)

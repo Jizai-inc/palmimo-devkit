@@ -86,9 +86,29 @@ class MotionEngine:
     # without an API break -- today both read the same ``_neck_amplitude`` in
     # ``_apply_neck``/``_apply_neck_gesture``, so the two constants happen to
     # be equal, but nothing here assumes that stays true.
+    #
+    # NECK_PITCH_TRAVEL_DEG covers the chin-DOWN side (and yaw, both ways) --
+    # unaffected by the pitch2 split below. The chin-UP side is asymmetric
+    # (see NECK_PITCH_UP_TRAVEL_DEG further down, once the rest-trim knob it
+    # depends on is defined).
     NECK_AMPLITUDE_TICKS: ClassVar[int] = 300
     NECK_PITCH_TRAVEL_DEG: ClassVar[float] = NECK_AMPLITUDE_TICKS / TICK_PER_DEG  # ~26.37 deg
     NECK_YAW_TRAVEL_DEG: ClassVar[float] = NECK_AMPLITUDE_TICKS / TICK_PER_DEG  # ~26.37 deg
+
+    # The neck is body -> pitch1 -> pitch2 -> yaw. pitch1 alone stalled lifting
+    # the head near the top of its travel and overheated on real hardware, so
+    # `_apply_neck` splits the look-pitch offset across both joints instead of
+    # loading it all on pitch1; any share > 0 lets the head reach its full
+    # symmetric travel by having pitch2 absorb what pitch1's own band can't
+    # carry (see `_apply_neck`). 0.0 keeps every look motion on pitch1 only
+    # (the pre-pitch2 behavior, asymmetry included). Instance-overridable,
+    # same as ``gait_speed``.
+    NECK_PITCH2_SHARE: ClassVar[float] = 0.5
+    # pitch2 tick direction relative to pitch1 -- hardware-confirmed (2026-09,
+    # by driving the split live): a tick increase tips the chin DOWN on both
+    # joints, so they share the same sign. -1 would make them fight each other
+    # (the head barely moves) rather than add up.
+    NECK_PITCH2_SIGN: ClassVar[int] = 1
     L1: float = kinematics.L1
     L2: float = kinematics.L2
     L3: float = kinematics.L3
@@ -266,7 +286,7 @@ class MotionEngine:
         # and the neck pose captured at that moment so an off-center head can
         # be blended home instead of snapping (see _apply_neck_gesture).
         self._gesture_phase: float = 0.0
-        self._gesture_neck_start: tuple[int, int] = (0, 0)
+        self._gesture_neck_start: tuple[int, int, int] = (0, 0, 0)
 
         # Servo positions (raw ticks)
         self._leg: dict[str, int] = {}
@@ -279,11 +299,16 @@ class MotionEngine:
         self._neck: dict[str, int] = {
             "neck_yaw": self.NEUTRAL,
             "neck_pitch1": self.NEUTRAL,
+            "neck_pitch2": self.NEUTRAL,
         }
 
         # Neck limits
         self._neck_amplitude: int = self.NECK_AMPLITUDE_TICKS
         self._neck_step: int = 15
+
+        # pitch1/pitch2 look-offset split -- see NECK_PITCH2_SHARE/NECK_PITCH2_SIGN.
+        self.neck_pitch2_share: float = self.NECK_PITCH2_SHARE
+        self.neck_pitch2_sign: int = self.NECK_PITCH2_SIGN
 
         # Resting pitch trim (deg; positive raises the gaze). Defines the
         # neck-pitch that counts as "front": idle look targets settle around
@@ -294,6 +319,20 @@ class MotionEngine:
         # Neck target (normalized -1..1)
         self._neck_target_pitch: float = 0.0
         self._neck_target_yaw: float = 0.0
+        # Whether _neck_target_pitch came from a caller's look()/set_neck() --
+        # only that source may draw on pitch2's wider up_reach band in
+        # _apply_neck (see _set_neck_pitch_target).
+        self._neck_pitch_look_sourced: bool = False
+        # Set by Palmimo.step() while the neck thermal guard's lock is active
+        # (see thermal.py's NeckThermalGuard.neck_lock_active). While True,
+        # step() glides the neck to center every frame regardless of the
+        # active motion -- overriding look()'s target, a gesture's own
+        # keyframes (NOD/HEAD_SHAKE), and a posture one-shot's neck component
+        # (BOW/STRETCH) alike -- because all of those write the neck directly
+        # and would otherwise slip past a guard that only intercepted look()
+        # itself. The override runs through the SAME step-toward glide
+        # _apply_neck always uses, so the transition is smooth, not a snap.
+        self.neck_hold_center: bool = False
 
         # Dance: roll the body left/right (symmetric, so left/right legs mirror
         # and the load stays balanced — a pure lateral translation instead loads
@@ -356,7 +395,7 @@ class MotionEngine:
         # recenter the neck target so IDLE brings the head back up along with
         # the legs, instead of freezing it at the interrupted dip.
         if self._motion in self._POSTURE_ONE_SHOTS and value != self._motion:
-            self._neck_target_pitch = 0.0
+            self._set_neck_pitch_target(0.0, look_sourced=False)
             self._neck_target_yaw = 0.0
         # Restart a neck gesture from its first stroke every time it's
         # (re)selected, and remember where the head is so the gesture can blend
@@ -365,6 +404,7 @@ class MotionEngine:
             self._gesture_phase = 0.0
             self._gesture_neck_start = (
                 self._neck["neck_pitch1"] - self.neck_pitch_center(),
+                self._neck["neck_pitch2"] - self.NEUTRAL,
                 self._neck["neck_yaw"] - self.NEUTRAL,
             )
         self._motion = value
@@ -395,8 +435,22 @@ class MotionEngine:
             yaw (float): Normalized yaw in [-1, 1]. The sign-to-direction mapping is
                 unspecified.
         """
-        self._neck_target_pitch = max(-1.0, min(1.0, pitch))
+        self._set_neck_pitch_target(max(-1.0, min(1.0, pitch)), look_sourced=True)
         self._neck_target_yaw = max(-1.0, min(1.0, yaw))
+
+    def _set_neck_pitch_target(self, x: float, *, look_sourced: bool) -> None:
+        """Set the normalized neck-pitch target consumed by ``_apply_neck``.
+
+        ``look_sourced`` marks whether *x* came from a caller's look()/
+        set_neck() (True) or from a choreography one-shot driving the neck
+        itself, e.g. ``_apply_stretch``/``_apply_bow`` (False). Only a
+        look-sourced chin-up target may draw on pitch2's wider up_reach band
+        in ``_apply_neck`` -- a choreography pose must stay within the
+        ordinary symmetric amplitude, or it would silently inherit an
+        extension meant for look()'s own reach.
+        """
+        self._neck_target_pitch = x
+        self._neck_pitch_look_sourced = look_sourced
 
     def step(self) -> dict[str, int]:
         """Advance one control cycle and return servo positions.
@@ -404,8 +458,17 @@ class MotionEngine:
         Returns:
             dict[str, int]: Mapping of motor name to raw Dynamixel tick value.
                 Keys: ``leg_{1-6}_{yaw,pitch1,pitch2}``, ``neck_yaw``,
-                ``neck_pitch1``.
+                ``neck_pitch1``, ``neck_pitch2``.
         """
+        if self.neck_hold_center and self._motion in NECK_GESTURES:
+            # A gesture in flight writes self._neck directly every frame (see
+            # _apply_nod/_apply_head_shake), which would otherwise fight the
+            # centering glide below: each frame it re-introduces its own
+            # keyframe deviation for the glide to only partially undo,
+            # leaving the neck pinned well off-center for many frames instead
+            # of converging quickly. Dropping to IDLE stops that write
+            # entirely, so the centering glide has nothing left to fight.
+            self.motion = Motion.IDLE
         if self._motion == Motion.IDLE:
             self._apply_idle()
         elif self._motion == Motion.FORWARD:
@@ -449,8 +512,15 @@ class MotionEngine:
             self._apply_head_shake()
 
         # The neck gestures own the neck servos directly — the smoothing
-        # toward the look target would fight their keyframes.
-        if self._motion not in NECK_GESTURES:
+        # toward the look target would fight their keyframes. neck_hold_center
+        # overrides even that: it re-targets center and re-applies the normal
+        # glide AFTER the motion-specific branch above, so it wins over
+        # whatever any motion (gesture keyframes included) just wrote.
+        if self.neck_hold_center:
+            self._set_neck_pitch_target(0.0, look_sourced=False)
+            self._neck_target_yaw = 0.0
+            self._apply_neck()
+        elif self._motion not in NECK_GESTURES:
             self._apply_neck()
 
         out: dict[str, int] = {}
@@ -488,7 +558,8 @@ class MotionEngine:
         another controller (e.g. the facade's timed neutral glide) has moved
         the neck directly, so the next gesture blends from the real pose
         instead of a stale internal one. Only keys the engine owns
-        (``neck_yaw`` / ``neck_pitch1``) are applied; others are ignored.
+        (``neck_yaw`` / ``neck_pitch1`` / ``neck_pitch2``) are applied; others
+        are ignored.
 
         Args:
             positions (dict[str, int]): Motor name -> raw Dynamixel tick.
@@ -505,7 +576,7 @@ class MotionEngine:
             self._leg[key] = self.NEUTRAL
         for key in self._neck:
             self._neck[key] = self.NEUTRAL
-        self._neck_target_pitch = 0.0
+        self._set_neck_pitch_target(0.0, look_sourced=False)
         self._neck_target_yaw = 0.0
 
     # ================================================================
@@ -937,7 +1008,7 @@ class MotionEngine:
 
         # Neck stays at its (re-zeroed) default during the wave — the old
         # "look up" tilt was removed now that the neck's rest pose was retuned.
-        self._neck_target_pitch = 0.0
+        self._set_neck_pitch_target(0.0, look_sourced=False)
 
         wave_is_right = wave_leg in self.RIGHT_LEGS
         dy_reach = (-self._WAVE_REACH if wave_is_right else self._WAVE_REACH) * env
@@ -1088,7 +1159,7 @@ class MotionEngine:
             env = 0.0
         env = 0.5 - 0.5 * math.cos(math.pi * max(0.0, min(1.0, env)))
 
-        self._neck_target_pitch = 0.0
+        self._set_neck_pitch_target(0.0, look_sourced=False)
 
         n = self.NEUTRAL
         for i, leg_id in enumerate(self._WAVE_BOTH_LEGS):
@@ -1198,7 +1269,7 @@ class MotionEngine:
         lift_lvl = self._interp_keyframes([(lead, 0.0), (raise_end, 1.0), (strokes_end, 1.0), (lower_end, 0.0)], t_now)
         closure = self._interp_keyframes(keys, t_now)
 
-        self._neck_target_pitch = 0.0
+        self._set_neck_pitch_target(0.0, look_sourced=False)
 
         # Hand separation -> foot targets on the horizontal arc. The arc keeps
         # the neutral horizontal reach rho (so lift is pure dz for the IK) and
@@ -1367,7 +1438,7 @@ class MotionEngine:
         # look() targets belong to the caller again (a completed one-shot used
         # to keep zeroing them every tick, silently eating look()).
         if t < self.bow_duration_s:
-            self._neck_target_pitch = env * self.bow_neck_down
+            self._set_neck_pitch_target(env * self.bow_neck_down, look_sourced=False)
             self._neck_target_yaw = 0.0
 
     # Stretch (tall rise: wind-up crouch, push the body up by folding every
@@ -1452,7 +1523,7 @@ class MotionEngine:
         # on the real robot; see the sign note in _apply_bow). Only while the
         # gesture plays — afterwards look() owns the neck again.
         if t < self.stretch_duration_s:
-            self._neck_target_pitch = -rise_env * self.stretch_neck_up
+            self._set_neck_pitch_target(-rise_env * self.stretch_neck_up, look_sourced=False)
             self._neck_target_yaw = 0.0
 
     # ================================================================
@@ -1494,6 +1565,23 @@ class MotionEngine:
     # relocate the neck's working center outside a sane mechanical window.
     _NECK_REST_LIMIT_DEG: ClassVar[float] = 20.0
 
+    # Chin-up mechanical travel (deg), PUBLIC alongside NECK_PITCH_TRAVEL_DEG
+    # for the same reason (see that constant's comment) and used the same way
+    # by NeckPitchDegrees/look() for negative (chin-up) values. Unlike the
+    # down side, the up-side ceiling `_apply_neck` actually reaches
+    # (`up_reach`) depends on two per-instance knobs -- neck_rest_pitch_deg
+    # and neck_pitch2_share -- so this class-level constant is only exact at
+    # their shipped defaults (_NECK_REST_PITCH_DEG, NECK_PITCH2_SHARE); a
+    # caller who changes either no longer has a precise class-level bound.
+    # Formula mirrors `_apply_neck`'s `up_reach`: pitch1's own spare room
+    # above the rest-trimmed center (amp - trim ticks) plus the full raw
+    # band pitch2 then covers on its own (+ amp).
+    NECK_PITCH_UP_TRAVEL_DEG: ClassVar[float] = (
+        (2 * NECK_AMPLITUDE_TICKS - round(_NECK_REST_PITCH_DEG * TICK_PER_DEG)) / TICK_PER_DEG
+        if NECK_PITCH2_SHARE > 0.0
+        else NECK_PITCH_TRAVEL_DEG
+    )
+
     def neck_pitch_center(self) -> int:
         """Neck-pitch tick that counts as "front" (rest trim applied).
 
@@ -1504,6 +1592,45 @@ class MotionEngine:
         lim = self._NECK_REST_LIMIT_DEG
         trim = max(-lim, min(lim, float(self.neck_rest_pitch_deg)))
         return self.NEUTRAL - round(trim * self.TICK_PER_DEG)
+
+    def _neck_pitch_up_reach_ticks(self) -> int:
+        """Tick ceiling a full chin-up ``set_neck(pitch=-1)`` actually converges to.
+
+        Single definition shared by ``neck_pitch_up_reach_deg`` and
+        ``_apply_neck``'s pitch2-remainder scale, so the two can't drift
+        apart. At ``neck_pitch2_share`` > 0, pitch1 carries
+        ``(1-share)*amp`` of the total swing (clamped to its own raw
+        ``NEUTRAL+-amp`` band, i.e. to ``pitch1_spare`` -- the room above
+        ``neck_pitch_center()`` up to that ceiling) and pitch2 then covers a
+        further full ``amp`` on top of whichever of those two pitch1
+        actually reached: pitch1 never swings harder than the symmetric
+        split already asks of it (see ``_apply_neck``), so once it saturates
+        at ``pitch1_spare`` short of ``(1-share)*amp``, the reach saturates
+        with it rather than reaching the larger ``pitch1_spare + amp``.
+        With ``neck_pitch2_share`` at the "pitch1 only" sentinel (0.0),
+        pitch2 stays untouched and pitch1's own spare room (capped at
+        ``amp``) IS the reach.
+        """
+        share = max(0.0, min(1.0, self.neck_pitch2_share))
+        amp = self._neck_amplitude
+        pitch1_spare = self.neck_pitch_center() - (self.NEUTRAL - amp)
+        if share <= 0.0:
+            return min(amp, pitch1_spare)
+        return min(int((1.0 - share) * amp), pitch1_spare) + amp
+
+    @property
+    def neck_pitch_up_reach_deg(self) -> float:
+        """Chin-up mechanical travel (deg) at this instance's CURRENT config.
+
+        ``NECK_PITCH_UP_TRAVEL_DEG`` is only exact at the shipped defaults
+        (``_NECK_REST_PITCH_DEG``, ``NECK_PITCH2_SHARE``); this property
+        converts :meth:`_neck_pitch_up_reach_ticks` -- the LIVE reach
+        ``_apply_neck`` itself converges to -- so a caller who overrides
+        either knob (e.g. the facade's degree->normalized conversion for
+        :class:`~palmimo_sdk.robot.NeckPitchDegrees`) converts against the
+        reach this instance actually has, not the class default.
+        """
+        return self._neck_pitch_up_reach_ticks() / self.TICK_PER_DEG
 
     def gesture_seconds(self, motion: Motion) -> float | None:
         """Choreography length (s) of a one-shot neck gesture, else ``None``.
@@ -1579,7 +1706,12 @@ class MotionEngine:
         the keyframe offsets (raised-cosine interpolated); whatever off-center
         pose the head started with is blended out over the first
         ``_GESTURE_BLEND_S`` so the gesture can fire from any look direction
-        without a snap and always ends facing front.
+        without a snap and always ends facing front. pitch2 is never a
+        keyframe axis itself (the gesture keyframes are authored on pitch1/
+        yaw) but is blended home by the same window, so a gesture fired from a
+        split look position doesn't leave pitch2 stranded off-center while
+        pitch1 plays the stroke -- that would exceed the old single-joint
+        gesture's combined head angle and skip the front-facing end pose.
         """
         self._gesture_phase += self._WAVE_DT
         t = self._gesture_phase
@@ -1588,9 +1720,10 @@ class MotionEngine:
         # when the knobs make the first stroke shorter than the blend window.
         blend_s = min(self._GESTURE_BLEND_S, keys[1][0])
         w = 0.5 * (1.0 + math.cos(math.pi * t / blend_s)) if t < blend_s else 0.0
-        start_pitch, start_yaw = self._gesture_neck_start
+        start_pitch, start_pitch2, start_yaw = self._gesture_neck_start
         offset = {"neck_pitch1": start_pitch * w, "neck_yaw": start_yaw * w}
         offset[axis] += self._interp_keyframes(keys, t)
+        pitch2_offset = start_pitch2 * w
         # Clamp the COMBINED offset: when the gesture fires from a deflected
         # head, the fading blend residual and the keyframe stroke can point the
         # same way on the driven axis and their sum would exceed the neck's
@@ -1600,10 +1733,11 @@ class MotionEngine:
         # ...and clamp the absolute pitch to the servo-neutral safety band too:
         # the rest trim shifts the working center, not the mechanical limits.
         self._neck["neck_pitch1"] = max(self.NEUTRAL - lim, min(self.NEUTRAL + lim, pitch))
+        self._neck["neck_pitch2"] = self.NEUTRAL + round(max(-lim, min(lim, pitch2_offset)))
         self._neck["neck_yaw"] = self.NEUTRAL + round(max(-lim, min(lim, offset["neck_yaw"])))
         # Zero the look target so IDLE after the gesture holds the front-facing
         # pose instead of pulling back toward a stale look() direction.
-        self._neck_target_pitch = 0.0
+        self._set_neck_pitch_target(0.0, look_sourced=False)
         self._neck_target_yaw = 0.0
 
     def _apply_nod(self) -> None:
@@ -1618,35 +1752,91 @@ class MotionEngine:
     # NECK
     # ================================================================
 
+    @staticmethod
+    def _step_toward(current: int, target: int, step: int) -> int:
+        """Move *current* one *step* closer to *target*, snapping when within reach."""
+        if abs(current - target) <= step:
+            return target
+        return current + step if current < target else current - step
+
     def _apply_neck(self) -> None:
         """Smoothly move neck toward target position."""
-        center = self.NEUTRAL
+        center = self.neck_pitch_center()
         amp = self._neck_amplitude
         # Scale the per-cycle step by dt so the neck's approach speed is
         # wall-clock-true at any control rate (identical to the historical
         # 15 ticks/frame at the 60 fps default).
         step = max(1, round(self._neck_step * self.dt * 60.0))
+        share = max(0.0, min(1.0, self.neck_pitch2_share))
+        sign = 1 if self.neck_pitch2_sign >= 0 else -1
 
-        # Pitch — look targets ride on the resting trim (the trimmed center is
-        # what "front" means for the head), but never leave the servo-neutral
-        # safety band: the trim shifts the working center, not the mechanical
-        # limits, so trim + full deflection must not stack past NEUTRAL±amp.
-        target_p = self.neck_pitch_center() + int(self._neck_target_pitch * amp)
-        target_p = max(center - amp, min(center + amp, target_p))
-        current_p = self._neck["neck_pitch1"]
-        if abs(current_p - target_p) <= step:
-            self._neck["neck_pitch1"] = target_p
-        elif current_p < target_p:
-            self._neck["neck_pitch1"] += step
+        # The combined head-pitch offset ("total") is decided FIRST, clamped
+        # symmetrically about `center` (the rest-trimmed front) rather than
+        # against the raw NEUTRAL+-amp band. Clamping against NEUTRAL+-amp
+        # instead would make the trim eat into one side's travel: a positive
+        # trim shifts `center` below NEUTRAL, so the NEUTRAL+amp ceiling is
+        # reached sooner on the chin-up side than the chin-down side, giving
+        # the head an asymmetric range around its own front.
+        #
+        # pitch1 carries (1-share) of `total`, clamped to the raw NEUTRAL+-amp
+        # servo band (its own mechanical/rest-trim limit) -- UNCHANGED by the
+        # chin-up extension below, on purpose: pitch1's own target must never
+        # depend on how far pitch2 can still reach, or a caller with little
+        # rest-trim headroom (e.g. a negative trim, chin-down rest) would make
+        # pitch1 swing harder than this single `total`-based split already
+        # asks of it, re-introducing the overheating risk pitch2 exists to
+        # relieve (see NECK_PITCH2_SHARE). This only applies when share > 0:
+        # share == 0.0 is the documented "look motion on pitch1 only" sentinel,
+        # so it must reproduce the old single-joint asymmetry exactly rather
+        # than fix it -- pitch2 stays at NEUTRAL, untouched, in that case.
+        offset = self._neck_target_pitch * amp
+        total = max(-amp, min(amp, int(offset)))
+
+        # Each joint's own per-frame step is scaled by its share of the total
+        # swing, so the combined head-pitch speed matches the old single-joint
+        # rate (step ticks/frame) instead of both joints moving a full step at
+        # once and doubling it.
+        step_p1 = max(1, round(step * (1.0 - share)))
+        step_p2 = max(1, round(step * share))
+
+        target_p1 = center + int((1.0 - share) * total)
+        target_p1 = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, target_p1))
+        self._neck["neck_pitch1"] = self._step_toward(self._neck["neck_pitch1"], target_p1, step_p1)
+
+        if share > 0.0:
+            p1_contribution = target_p1 - center
+            # pitch2's own remainder is computed against `total` (the
+            # symmetric ±amp demand) on the chin-down side, same as always.
+            # On the chin-up side (x < 0) it is computed against `up_reach`
+            # instead -- see `_neck_pitch_up_reach_ticks` for the derivation.
+            # Hardware observation (2026-09, real-robot look-up test): with
+            # share > 0, pitch1 alone reaches its ceiling well before pitch2
+            # reaches ITS raw band edge, leaving chin-up travel on the table
+            # even though pitch2 has room to keep going -- amp-only clamping
+            # on the up side wastes that room. Only pitch2's OWN remainder is
+            # widened; pitch1's contribution above is untouched, so this
+            # never asks pitch1 for more than the symmetric split already did
+            # (see that comment).
+            #
+            # Gated on `_neck_pitch_look_sourced`: this extension exists for
+            # look()/set_neck()'s own reach. A choreography one-shot (e.g.
+            # STRETCH's head raise) also drives `_neck_target_pitch` negative
+            # to lift the chin, but must stay within the ordinary symmetric
+            # `total` -- widening it there would silently give the gesture
+            # far more chin-up travel than the knob it's tuned against asks
+            # for (see _set_neck_pitch_target).
+            up_reach = self._neck_pitch_up_reach_ticks()
+            remainder_total = (
+                max(-up_reach, min(amp, int(self._neck_target_pitch * up_reach)))
+                if self._neck_target_pitch < 0.0 and self._neck_pitch_look_sourced
+                else total
+            )
+            target_p2 = self.NEUTRAL + int(sign * (remainder_total - p1_contribution))
+            target_p2 = max(self.NEUTRAL - amp, min(self.NEUTRAL + amp, target_p2))
         else:
-            self._neck["neck_pitch1"] -= step
+            target_p2 = self.NEUTRAL
+        self._neck["neck_pitch2"] = self._step_toward(self._neck["neck_pitch2"], target_p2, step_p2)
 
         # Yaw
-        target_y = center + int(self._neck_target_yaw * amp)
-        current_y = self._neck["neck_yaw"]
-        if abs(current_y - target_y) <= step:
-            self._neck["neck_yaw"] = target_y
-        elif current_y < target_y:
-            self._neck["neck_yaw"] += step
-        else:
-            self._neck["neck_yaw"] -= step
+        target_y = self.NEUTRAL + int(self._neck_target_yaw * amp)
+        self._neck["neck_yaw"] = self._step_toward(self._neck["neck_yaw"], target_y, step)

@@ -74,6 +74,8 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     # difflib / unicodedata name folding; no third-party package involved.
     "palmimo_sdk.name_match": _NO_EXTRA,
     "palmimo_sdk.robot": _NO_EXTRA,
+    # A pure state machine over ServoTelemetry (stdlib logging/enum/time only).
+    "palmimo_sdk.thermal": _NO_EXTRA,
 }
 
 #: `module:Name` -> the extras that name needs, overriding its module's entry.
@@ -128,6 +130,7 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:MotionEngine": _NO_EXTRA,
     "palmimo_sdk:NeckPitchDegrees": _NO_EXTRA,
     "palmimo_sdk:NeckPitchNormalized": _NO_EXTRA,
+    "palmimo_sdk:NeckThermalState": _NO_EXTRA,
     "palmimo_sdk:NeckYawDegrees": _NO_EXTRA,
     "palmimo_sdk:NeckYawNormalized": _NO_EXTRA,
     "palmimo_sdk:Palmimo": _NO_EXTRA,

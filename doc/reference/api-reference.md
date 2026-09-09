@@ -78,8 +78,10 @@ Advance one frame. Returns servo positions as `{name: tick_value}`.
 ### `robot.step_n(n: int) -> list[Dict[str, int]]`
 Advance N frames. Returns list of position dicts.
 
-### `robot.set_motion(name: str) -> None`
-Set motion by string name (uses `_MOTION_MAP` lookup).
+### `robot.set_motion(name: str) -> bool`
+Set motion by string name (uses `_MOTION_MAP` lookup). Returns `False` (without
+changing motion) if `name` is `"nod"`/`"head_shake"` and `robot.neck_lock_active`
+is `True` (see [Neck Thermal Guard](#neck-thermal-guard)); `True` otherwise.
 
 ### `robot.run(*, seconds: float | None = None, steps: int | None = None) -> Dict[str, int]`
 Run the current motion for a fixed duration, blocking and real-time paced at
@@ -174,8 +176,10 @@ method's own entry does.
 Raise `MotionCancelled` if `cancel()` ran since *checkpoint* (from
 `cancel_checkpoint()`).
 
-### `robot.look(pitch: float | NeckPitchDegrees | NeckPitchNormalized = 0.0, yaw: float | NeckYawDegrees | NeckYawNormalized = 0.0) -> None`
-Control neck. Can be called during any leg motion. Positive pitch tips the chin
+### `robot.look(pitch: float | NeckPitchDegrees | NeckPitchNormalized = 0.0, yaw: float | NeckYawDegrees | NeckYawNormalized = 0.0) -> bool`
+Control neck. Returns `False` (without changing the neck target) while
+`robot.neck_lock_active` is `True` (see [Neck Thermal Guard](#neck-thermal-guard));
+`True` otherwise. Can be called during any leg motion. Positive pitch tips the chin
 DOWN (verified on hardware 2026-07); for yaw, which sign turns which way is not
 yet verified on hardware. Each axis accepts three forms, and pitch/yaw each have
 their own dedicated value-object types (so passing a yaw value as `pitch=`
@@ -190,16 +194,38 @@ raises `TypeError` instead of being silently accepted):
   [-1, 1].
 - `NeckPitchDegrees(value)` / `NeckYawDegrees(value)` — a real neck angle for
   that axis. Converted internally by dividing by the axis's actual mechanical
-  travel (`MotionEngine.NECK_PITCH_TRAVEL_DEG` / `MotionEngine.NECK_YAW_TRAVEL_DEG`,
-  ~26.4° today on both axes). Self-validating: construction raises `ValueError`
-  past that travel — no facade-side clamping, since a value object can only
-  exist in-range once built.
+  travel. Yaw is symmetric (`MotionEngine.NECK_YAW_TRAVEL_DEG`, ~26.4° either
+  way). Pitch is now **asymmetric**: chin-down uses
+  `MotionEngine.NECK_PITCH_TRAVEL_DEG` (~26.4°), chin-up (negative values)
+  uses the larger `MotionEngine.NECK_PITCH_UP_TRAVEL_DEG` (~37.7° at the
+  shipped `neck_rest_pitch_deg`/`NECK_PITCH2_SHARE` defaults) — see the
+  `neck_pitch2` paragraph below for why. Self-validating: construction raises
+  `ValueError` past the travel for that side — no facade-side clamping, since
+  a value object can only exist in-range once built.
 
 `NeckPitchDegrees` / `NeckYawDegrees` / `NeckPitchNormalized` / `NeckYawNormalized`
 are exported from `palmimo_sdk` (`from palmimo_sdk import NeckPitchDegrees,
 NeckYawDegrees, NeckPitchNormalized, NeckYawNormalized`). The conversion happens
 entirely inside `Palmimo.look()`; `MotionEngine.set_neck()` still only ever
 receives a normalized float.
+
+The neck is body -> `neck_pitch1` -> `neck_pitch2` -> `neck_yaw`. `look()`'s
+pitch target is split across both pitch joints (`MotionEngine.NECK_PITCH2_SHARE`,
+0.5 by default) rather than loaded entirely onto `neck_pitch1` — the head's total
+pitch angle is unchanged on the chin-down side, but each joint's own swing
+shrinks, which is what fixed an overheating `neck_pitch1` on hardware. On the
+chin-up side, splitting the pitch target across both joints lets the head reach
+FARTHER than `neck_pitch1` alone: once `neck_pitch1` hits its own raw travel
+ceiling, `neck_pitch2` keeps going on its own full raw band, so the combined
+chin-up reach is `neck_pitch1`'s remaining room plus `neck_pitch2`'s whole
+travel (hardware observation 2026-09: `neck_pitch1` alone stalled well short of
+`neck_pitch2`'s own available room). `neck_pitch2` shares `neck_pitch1`'s tick
+direction (`MotionEngine.NECK_PITCH2_SIGN = 1`, hardware-confirmed 2026-09).
+`nod()` drives `neck_pitch1` and `head_shake()` drives `neck_yaw`; either way
+`neck_pitch2` is blended back to its raw-neutral rest point over the same
+window that eases a pre-gesture look position home, so the gesture always
+ends facing front on both pitch joints instead of stranding `neck_pitch2` at
+its pre-gesture offset.
 
 ### `robot.look_center() -> None`
 Return neck to its front/rest position (the `neck_rest_pitch_deg` trimmed
@@ -654,6 +680,66 @@ with stream.stream() as chunks:
 | `robot.mic` | `Microphone \| MicStream \| None` | Attached microphone (one-shot or streaming); `None` when no mic is wired |
 | `robot.is_connected` | `bool` | Whether a driver is attached and currently connected |
 | `robot.has_connectable_resource` | `bool` | Whether any of driver / display / speaker / camera / mic is attached (what `connect()` requires) |
+| `robot.neck_thermal_state` | `NeckThermalState` | Neck thermal guard state: `NORMAL` / `WARM` / `HOT` / `UNMONITORED` (see [Neck Thermal Guard](#neck-thermal-guard)) |
+| `robot.neck_lock_active` | `bool` | Whether the HOT lockout is currently in force — see below; check this, not `neck_thermal_state == "hot"` |
+| `robot.neck_temperature_c` | `float \| None` | Highest of the three neck motors' last-read temperature, in °C; `None` while `UNMONITORED` |
+| `robot.neck_telemetry_age_s` | `float \| None` | Seconds since the last COMPLETE neck telemetry sweep; `None` if none has ever completed |
+
+## Neck Thermal Guard
+
+The neck holds the head up continuously, unlike a leg that only bears weight
+during its stance phase, so it has been observed latching an Overheating HW
+error (bit 2) and cutting torque at 71°C after a sustained holding load — one
+degree past the XC330's own Temperature Limit default of 70°C, with no
+software warning beforehand. The legs have no equivalent guard yet (see the
+Hardware Safety section of [AGENTS.md](../../AGENTS.md)).
+
+**Scope**: the guard only reaches callers that go through `Palmimo.step()` —
+`run()` / `play()`, the MCP server, and the agent tool layer
+(`palmimo_sdk/agent/`). **The LeRobot teleop integration
+(`integrations/lerobot/`) drives the engine directly and is NOT covered** —
+see that package's `palmimo.py` module docstring.
+
+`Palmimo.step()` polls `ServoDriver.read_telemetry()` for the three neck
+motors at most once a second (a full sweep every frame would cost bus time
+the position write already needs) and classifies the highest reading:
+
+| State | Trigger | Effect |
+|-------|---------|--------|
+| `NORMAL` | < 55°C | None |
+| `WARM` | >= 55°C | Logged once on entry; motion is unaffected |
+| `HOT` | >= 62°C | The neck is glided to center every frame, overriding `look()`'s target AND any motion's own neck keyframes (NOD/HEAD_SHAKE, BOW/STRETCH); `look()`, `nod()`, `head_shake()`, and `set_motion("nod"/"head_shake")` return `False` instead of taking effect, until the neck cools to <= 55°C |
+| `UNMONITORED` | No driver, the driver doesn't implement `read_telemetry()`, or the last COMPLETE sweep is older than `NECK_STALE_S` (10s) | `neck_temperature_c` is `None`. `neck_lock_active` stays `True` if the guard was HOT when it lost telemetry (see below) |
+
+`HOT` is latched (hysteresis: released only at <= 55°C, not just below its
+own 62°C entry threshold) — without it, a neck hovering near the boundary
+would flap the lockout every poll.
+
+A neck motor missing from a sweep (bus didn't answer) is unknown, not
+healthy — the guard keeps its last judgement rather than guessing, whether
+one motor or all three are missing, until that judgement is older than
+`NECK_STALE_S`, at which point `neck_thermal_state` falls back to
+`UNMONITORED` rather than trust a reading that may no longer reflect reality
+(`neck_telemetry_age_s` exposes how stale the current judgement is before
+that happens). The one case that reports `UNMONITORED` from a missing
+reading immediately, with no staleness wait, is the bootstrap one: no
+judgement has ever succeeded yet.
+
+**`neck_lock_active` can stay `True` after `neck_thermal_state` falls to
+`UNMONITORED`.** A neck that was HOT and then loses telemetry (one motor
+stops answering, then all of them go stale) is still locked in place —
+reporting the state as merely "unmonitored" while quietly dropping the
+lockout would let a caller drive an unobserved, possibly still-hot neck.
+The lock only clears when the driver disconnects (nothing left to hold
+centered) or a COMPLETE sweep reads at or below 55°C. Every call site that
+decides whether to force the neck to center or reject a gesture checks
+`neck_lock_active`, not `neck_thermal_state == "hot"`.
+
+While the lock is active, `step()` re-logs (at `INFO`, every 30s) how long
+look()/NOD/HEAD_SHAKE have been ignored, so a long stuck-hot period is
+traceable in the log. `LookTool`/`NodTool`/`HeadShakeTool` (the agent tool
+layer) report the rejection in their result text (e.g. "neck is cooling down
+(63°C), look ignored") instead of claiming the gesture happened.
 
 ## Kinematics Helpers
 

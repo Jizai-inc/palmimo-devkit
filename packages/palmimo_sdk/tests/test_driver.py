@@ -74,7 +74,7 @@ def test_payload_uses_pos_suffix() -> None:
         robot.forward()
         robot.step()
     payload = driver.writes[0]
-    assert len(payload) == 20
+    assert len(payload) == 21
     assert all(key.endswith(".pos") for key in payload)
 
 
@@ -130,7 +130,7 @@ def test_compute_only_step_returns_positions_without_driver() -> None:
     robot = Palmimo()
     robot.forward()
     pos = robot.step()
-    assert len(pos) == 20
+    assert len(pos) == 21
     assert not robot.is_connected
 
 
