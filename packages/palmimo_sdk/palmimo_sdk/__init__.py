@@ -55,6 +55,8 @@ from . import kinematics
 from .audio import AudioProcessor, ClipDenoiser, Denoiser, EchoCanceller
 from .engine import Motion, MotionEngine
 from .io import (
+    SAFE_MAX_TICK,
+    SAFE_MIN_TICK,
     SUPPORTED_MOTOR_MODELS,
     DynamixelConnectTimeoutError,
     DynamixelDriver,
@@ -96,6 +98,8 @@ from .robot import (
 
 __all__ = [
     "PALMIMO_NAMES",
+    "SAFE_MAX_TICK",
+    "SAFE_MIN_TICK",
     "SUPPORTED_MOTOR_MODELS",
     "AudioProcessor",
     "ClipDenoiser",

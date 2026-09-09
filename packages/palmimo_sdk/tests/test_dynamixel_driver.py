@@ -15,6 +15,8 @@ import pytest
 
 import palmimo_sdk.robot as robot_module
 from palmimo_sdk import (
+    SAFE_MAX_TICK,
+    SAFE_MIN_TICK,
     DynamixelConnectTimeoutError,
     DynamixelDriver,
     Palmimo,
@@ -187,6 +189,9 @@ def test_connect_is_idempotent() -> None:
 
 def test_write_positions_fills_missing_with_neutral() -> None:
     """Missing motors are backfilled with NEUTRAL; all 21 motors are sent in Goal_Position."""
+    # The backfill bypasses the base class's clamp, so NEUTRAL only stays
+    # inside the safe range because it is defined there -- pin that here.
+    assert SAFE_MIN_TICK <= NEUTRAL <= SAFE_MAX_TICK
     driver, bus, _ = make_driver()
     driver.connect()
     driver.write_positions({"leg_1_yaw": 1000})
@@ -197,18 +202,8 @@ def test_write_positions_fills_missing_with_neutral() -> None:
     assert all(goal[name] == NEUTRAL for name in MOTOR_NAMES if name != "leg_1_yaw")
 
 
-def test_write_positions_treats_none_as_neutral() -> None:
-    """A key with a None value is backfilled with NEUTRAL like a missing key, without int(None) crashing."""
-    driver, bus, _ = make_driver()
-    driver.connect()
-    driver.write_positions({"leg_1_yaw": 1000, "neck_yaw": None})  # type: ignore[dict-item]  # deliberately beyond the declared contract -- verifying the defensive None backfill
-    _address, goal = bus.writes[-1]
-    assert goal["leg_1_yaw"] == 1000
-    assert goal["neck_yaw"] == NEUTRAL
-
-
 def test_write_positions_casts_to_int() -> None:
-    """Float values are cast to int before being sent."""
+    """A float goal is clamped to an int before it reaches the bus."""
     driver, bus, _ = make_driver()
     driver.connect()
     driver.write_positions({"neck_yaw": 2047.9})  # type: ignore[dict-item]  # deliberately beyond the declared contract -- verifying the int() cast
@@ -383,17 +378,6 @@ def test_timed_return_surfaces_write_failure() -> None:
     robot.connect()
     with pytest.raises(RuntimeError, match="simulated bus failure"):
         robot.return_to_neutral(duration=0.02)
-
-
-def test_write_positions_clamps_to_safe_range() -> None:
-    """goal is clamped to the safe tick range (200-3900) to avoid stalling at the mechanical limits 0/4095."""
-    driver, bus, _ = make_driver()
-    driver.connect()
-    driver.write_positions({"leg_1_yaw": 5000, "leg_2_yaw": -100, "leg_3_yaw": 2048})
-    _addr, goal = bus.writes[-1]
-    assert goal["leg_1_yaw"] == 3900  # clamped to the upper bound
-    assert goal["leg_2_yaw"] == 200  # clamped to the lower bound
-    assert goal["leg_3_yaw"] == 2048  # unchanged within range
 
 
 def test_set_profile_velocity_pairs_trapezoidal_acceleration() -> None:

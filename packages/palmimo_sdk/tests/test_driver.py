@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from palmimo_sdk import Palmimo, ServoDriver
+from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, Palmimo, ServoDriver
 
 
 class RecordingDriver(ServoDriver):
@@ -32,7 +32,7 @@ class RecordingDriver(ServoDriver):
         self._connected = False
         self.events.append("disconnect")
 
-    def write_positions(self, positions: dict[str, int]) -> None:
+    def _write_positions(self, positions: dict[str, int]) -> None:
         # Mirror the {motor}.pos payload shape a serial driver sends to the bus.
         action = {f"{motor}.pos": int(tick) for motor, tick in positions.items()}
         self.writes.append(action)
@@ -76,6 +76,16 @@ def test_payload_uses_pos_suffix() -> None:
     payload = driver.writes[0]
     assert len(payload) == 20
     assert all(key.endswith(".pos") for key in payload)
+
+
+def test_base_class_clamps_before_backend_sees_the_goal() -> None:
+    """ServoDriver.write_positions clamps every goal into the safe range before _write_positions ever sees it."""
+    driver = RecordingDriver()
+    driver.write_positions({"leg_1_yaw": 5000, "leg_2_yaw": -100, "leg_3_yaw": 2048})
+    goal = driver.writes[-1]
+    assert goal["leg_1_yaw.pos"] == SAFE_MAX_TICK
+    assert goal["leg_2_yaw.pos"] == SAFE_MIN_TICK
+    assert goal["leg_3_yaw.pos"] == 2048
 
 
 def test_exit_eases_servos_back_to_neutral() -> None:

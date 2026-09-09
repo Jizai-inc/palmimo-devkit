@@ -132,6 +132,8 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:NeckYawNormalized": _NO_EXTRA,
     "palmimo_sdk:Palmimo": _NO_EXTRA,
     "palmimo_sdk:RoutineStep": _NO_EXTRA,
+    "palmimo_sdk:SAFE_MAX_TICK": _NO_EXTRA,
+    "palmimo_sdk:SAFE_MIN_TICK": _NO_EXTRA,
     "palmimo_sdk:ServoDriver": _NO_EXTRA,
     "palmimo_sdk:ServoTelemetry": _NO_EXTRA,
     "palmimo_sdk:kinematics": _NO_EXTRA,

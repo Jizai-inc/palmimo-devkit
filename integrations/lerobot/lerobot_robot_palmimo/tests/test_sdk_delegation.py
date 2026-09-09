@@ -53,7 +53,7 @@ class _StandInDriver(ServoDriver):
         self._connected = False
         self.disconnects += 1
 
-    def write_positions(self, positions: dict[str, int]) -> None:
+    def _write_positions(self, positions: dict[str, int]) -> None:
         self.goals.append(dict(positions))
         self._positions.update(positions)
 
