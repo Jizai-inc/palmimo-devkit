@@ -24,6 +24,7 @@ const SIDEBAR_ORDER = {
   'reference/motions.md': 2,
   'explanation/architecture.md': 1,
   'explanation/motion-system.md': 2,
+  'explanation/shutdown.md': 3,
 };
 
 const DOCS_SITE_DIR = path.dirname(fileURLToPath(import.meta.url));

@@ -652,45 +652,67 @@ class Palmimo:
         in its own ``suppress(Exception)`` so a flaky one never blocks the
         rest, but that does NOT catch :class:`KeyboardInterrupt`, so a Ctrl+C
         landing anywhere in the sequence — including mid-``camera.close()``'s
-        frame drain — would otherwise escape and skip the torque-off. The
-        inner ``suppress(Exception, KeyboardInterrupt)`` around the leg return
-        is the fallback for when :func:`_deferred_interrupts` is a no-op (off
-        the main thread, or on an interpreter that refuses handler
-        installation): in that case the leg return must still fall through to
-        the neck release on its own.
+        frame drain — would otherwise escape and skip the torque-off. Every
+        step additionally goes through ``_step``, which is the fallback for
+        when :func:`_deferred_interrupts` is a no-op (off the main thread, or
+        on an interpreter that refuses handler installation): it covers the
+        whole sequence rather than the leg return alone, and it remembers the
+        interrupt instead of dropping it — see below.
 
         On a connected robot this takes ~2.5s+ (the 14-step neck release ramp
         alone is ~2.5s at :data:`_NECK_RELEASE_STEP_S`; ``park=True`` adds the
         leg return on top) — callers on a tight shutdown budget (signal
         handlers, service stop timeouts) must allow for it, since a hard kill
         mid-ramp cuts torque at a low gain.
+
+        A ``BaseException`` raised by any step — a ``KeyboardInterrupt`` from a
+        mashed Ctrl+C landing in a peripheral close — does not end the teardown
+        early: the remaining steps still run, the driver disconnect still cuts
+        torque, and only then is it re-raised. This mirrors :meth:`connect`'s
+        ``BaseException`` rollback, and for the same reason: an interrupt is not
+        an ``Exception``, so guarding the steps against ``Exception`` alone let
+        it escape with the peripherals half-closed and the servos still
+        energised — the inverted outcome.
+
+        Raises:
+            BaseException: Whatever a teardown step raised that was not an
+                ``Exception`` (in practice ``KeyboardInterrupt``), re-raised
+                after the torque-off. The first one wins if several arrive.
         """
+        interrupt: BaseException | None = None
+
+        def _step(action: Callable[[], object]) -> None:
+            """Run one teardown step: drop an ``Exception``, remember a ``BaseException``."""
+            nonlocal interrupt
+            try:
+                action()
+            except Exception:
+                pass
+            except BaseException as exc:
+                if interrupt is None:
+                    interrupt = exc
+
         with _deferred_interrupts():
             if self.is_connected:
                 if park:
-                    with contextlib.suppress(Exception, KeyboardInterrupt):
-                        self.return_to_neutral()
-                with contextlib.suppress(Exception):
-                    self._park_neck()
+                    _step(self.return_to_neutral)
+                _step(self._park_neck)
             if self._mic is not None:
-                with contextlib.suppress(Exception):
-                    self._mic.close()
+                _step(self._mic.close)
             if self._camera is not None:
-                with contextlib.suppress(Exception):
-                    self._camera.close()
+                _step(self._camera.close)
             if self._speaker is not None:
-                with contextlib.suppress(Exception):
-                    self._speaker.close()
+                _step(self._speaker.close)
             if self._display is not None:
-                with contextlib.suppress(Exception):
-                    self._display.idle()
-                with contextlib.suppress(Exception):
-                    self._display.disconnect()
+                _step(self._display.idle)
+                _step(self._display.disconnect)
             if self._driver is not None:
                 self._driver.disconnect()
         # Per-axis tuning tracking is connection-scoped (see connect()).
         self._gesture_tuned = None
         self._neck_gesture_tuned = False
+        if interrupt is not None:
+            raise interrupt
 
     def return_to_neutral(
         self,
@@ -1038,8 +1060,21 @@ class Palmimo:
         # more motion commands after an exception could mask it / be unsafe).
         # Best-effort: a disconnect error must never replace the original
         # exception propagating out of the with-block.
-        with contextlib.suppress(Exception):
-            self.disconnect(park=exc_type is None)
+        #
+        # An interrupt during the teardown reaches the caller only on a clean
+        # exit. disconnect() re-raises it after the torque-off either way, so
+        # the servos are released regardless; what differs is who gets told.
+        # On a clean exit, telling them is right -- the user pressed Ctrl+C and
+        # a stop that says nothing trains people to press it again. When the
+        # block was already raising, it is not: replacing that exception would
+        # silently skip a caller's `except SomeError:` recovery path, and the
+        # fault they were handling would survive only as __context__.
+        if exc_type is None:
+            with contextlib.suppress(Exception):
+                self.disconnect(park=True)
+            return
+        with contextlib.suppress(BaseException):
+            self.disconnect(park=False)
 
     # ================================================================
     # MOTION COMMANDS

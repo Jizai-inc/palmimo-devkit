@@ -51,7 +51,7 @@ USB-to-servo bridge) without hard-coding platform-specific paths;
 ``port=None`` (the default).
 """
 
-from . import kinematics
+from . import kinematics, shutdown
 from .audio import AudioProcessor, ClipDenoiser, Denoiser, EchoCanceller
 from .engine import Motion, MotionEngine
 from .io import (
@@ -143,4 +143,5 @@ __all__ = [
     "name_skeleton",
     "palmimo_motor_ids",
     "resolve_alsa_device",
+    "shutdown",
 ]
