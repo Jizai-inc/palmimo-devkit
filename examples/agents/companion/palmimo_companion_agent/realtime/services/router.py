@@ -130,11 +130,11 @@ class EventRouter:
                     self._usage.add(event.response.usage)
                 await self._bridge.handle(event.response)
             case protocol.TranscriptCompleted():
-                print(f"you  > {event.transcript}", flush=True)
+                print(f"you     > {event.transcript}", flush=True)
                 self._log.write("transcript", speaker="you", text=event.transcript)
             case protocol.TranscriptDone():
-                print(f"mimo > {event.transcript}", flush=True)
-                self._log.write("transcript", speaker="mimo", text=event.transcript)
+                print(f"palmimo > {event.transcript}", flush=True)
+                self._log.write("transcript", speaker="palmimo", text=event.transcript)
             case protocol.ErrorEvent():
                 print(f"!! {event.error}", file=sys.stderr, flush=True)
                 self._log.write("server_error", error=event.error)
