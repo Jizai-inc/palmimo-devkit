@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import signal
 import threading
+import time
 from typing import Any, cast
 
 import pytest
@@ -54,6 +55,14 @@ class FakeDriver:
     def disconnect(self) -> None:
         self.is_connected = False
         self.disconnected = True
+
+
+class _SlowDriver(FakeDriver):
+    """A driver whose torque-off takes long enough to outlive the loop's teardown."""
+
+    def disconnect(self) -> None:
+        time.sleep(0.2)
+        super().disconnect()
 
 
 class InterruptingPeripheral:
@@ -339,6 +348,11 @@ def test_park_does_not_re_raise_the_interrupt_that_asked_for_it(capsys: pytest.C
     park(robot)
 
     assert driver.disconnected
+    # The park completed. Reporting it as a failure would tell an operator to
+    # unplug a robot whose torque is already off.
+    report = capsys.readouterr().err
+    assert "PARK FAILED" not in report
+    assert "park complete" in report
 
 
 def test_park_does_not_raise_a_driver_failure_out_of_a_callers_finally(
@@ -625,6 +639,40 @@ def test_park_async_finishes_the_park_even_when_its_caller_is_cancelled() -> Non
     asyncio.run(scenario())
 
     assert driver.disconnected, "the park was abandoned when its caller was cancelled"
+
+
+def test_park_async_does_not_return_while_the_park_thread_is_still_running() -> None:
+    """The cancellation that matters is asyncio.run's, and it lands on the park, not the caller.
+
+    `asyncio.run` cancels every task in `all_tasks()` when its main coroutine
+    returns. Awaiting a Task -- what `asyncio.to_thread` gives back -- puts the
+    park itself in that set, so it is cancelled directly, and `shield` does not
+    stop it: shield protects the awaiting coroutine, not the awaited task. The
+    wait then ends with the worker thread still in the neck ramp, `signals_ignored`
+    is lifted, and a signal in that window kills the process with torque on.
+
+    Judged at the moment `park_async` finishes rather than after `asyncio.run`
+    returns: `asyncio.run` joins the executor thread on its way out either way,
+    so the disconnect has happened by then whether or not the wait was honoured.
+    """
+    driver = _SlowDriver()
+    robot = _robot(driver)
+    robot.connect()
+    disconnected_when_the_wait_ended: list[bool] = []
+    # Held only to keep the task alive; it is deliberately never awaited, so it
+    # is still pending when the loop's teardown starts.
+    pending: list[asyncio.Task[None]] = []
+
+    async def scenario() -> None:
+        task = asyncio.ensure_future(park_async(robot))
+        task.add_done_callback(lambda _: disconnected_when_the_wait_ended.append(driver.disconnected))
+        pending.append(task)
+        await asyncio.sleep(0)
+
+    asyncio.run(scenario())
+
+    assert not pending[0].cancelled(), "the loop's teardown cancelled the park itself"
+    assert disconnected_when_the_wait_ended == [True], "park_async returned before torque was cut"
 
 
 def test_with_block_keeps_the_error_it_was_raising_when_the_teardown_is_interrupted() -> None:

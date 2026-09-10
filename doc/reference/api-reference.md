@@ -413,30 +413,6 @@ then is it re-raised (the first one, if several arrive). This mirrors
 so guarding each step against `Exception` alone let it escape with the
 peripherals half-closed and the servos still energised.
 
-## `palmimo_sdk.shutdown`
-
-Where every stop path ends, and the three ways a signal reaches it. Import as
-`from palmimo_sdk import shutdown`.
-
-| Name | Purpose |
-|------|---------|
-| `shutdown.park(robot, *, legs=True, out=None)` | Release servo torque, uninterruptibly, reporting both ends of the park on stderr. Safe to call more than once and on a robot that was never connected, so it belongs in a `finally` without a guard. |
-| `shutdown.park_async(robot, ...)` | The same, for a caller that must not block its event loop: the park runs in a worker thread while the loop's own thread holds the signal protection. |
-| `shutdown.StopRequest` | "A stop was asked for", and how long ago. The one piece of shutdown state; delivery is the caller's. |
-| `shutdown.signals_ignored(*signums)` | Discard signals for a block — what makes the park the one stretch a repeat signal cannot cut short. |
-| `shutdown.interrupt_on_signals(stop, ...)` | Delivery for a program with no loop of its own: convert the signal to `KeyboardInterrupt` so its own `finally` runs. |
-| `shutdown.stop_flag_on_signals(stop, ...)` | Delivery for a loop that blocks synchronously: set a flag it polls, and hand the disposition back on a second signal. |
-| `shutdown.loop_stop_on_signals(stop, on_stop, ...)` | Delivery for a loop that awaits while idle: run `on_stop` as an ordinary callback inside the event loop. |
-| `shutdown.STOP_SIGNALS` / `shutdown.TERMINATING_SIGNALS` | SIGINT + SIGTERM + SIGHUP, and the two whose default disposition kills without unwinding. SIGHUP is included because a dropped ssh session delivers it. |
-
-Which delivery to use is decided by one question — *does this loop await while
-idle?* — set out in [explanation/shutdown.md](../explanation/shutdown.md).
-
-Nothing here promises the servos end up released: SIGKILL and power loss run no
-code, and `park()` takes seconds, so anything that stops waiting mid-park kills
-the process with torque on. What it removes is the case where the code that
-would have released torque never ran at all.
-
 ### `robot.set_expression(name: str, hold_ms: int = 0) -> str | None`
 Show a face expression. `name` is case-insensitive; firmware aliases resolve
 on-device. `hold_ms > 0` auto-returns the face to IDLE after that many ms; `0`
@@ -510,6 +486,30 @@ when no speaker is attached (same shape as `say`) or nothing is speaking.
 Unlike `cancel()` (motion only), this reaches speech directly — a
 background utterance started by `say()` has no running tool for a plain
 `cancel()` to interrupt.
+
+## `palmimo_sdk.shutdown`
+
+Where every stop path ends, and the three ways a signal reaches it. Import as
+`from palmimo_sdk import shutdown`.
+
+| Name | Purpose |
+|------|---------|
+| `shutdown.park(robot, *, legs=True, out=None)` | Release servo torque, uninterruptibly, reporting both ends of the park on stderr. Safe to call more than once and on a robot that was never connected, so it belongs in a `finally` without a guard. |
+| `shutdown.park_async(robot, ...)` | The same, for a caller that must not block its event loop: the park runs in a worker thread while the loop's own thread holds the signal protection. |
+| `shutdown.StopRequest` | "A stop was asked for", and how long ago. The one piece of shutdown state; delivery is the caller's. |
+| `shutdown.signals_ignored(*signums)` | Discard signals for a block — what makes the park the one stretch a repeat signal cannot cut short. |
+| `shutdown.interrupt_on_signals(stop, ...)` | Delivery for a program with no loop of its own: convert the signal to `KeyboardInterrupt` so its own `finally` runs. |
+| `shutdown.stop_flag_on_signals(stop, ...)` | Delivery for a loop that blocks synchronously: set a flag it polls, and hand the disposition back on a second signal. |
+| `shutdown.loop_stop_on_signals(stop, on_stop, ...)` | Delivery for a loop that awaits while idle: run `on_stop` as an ordinary callback inside the event loop. |
+| `shutdown.STOP_SIGNALS` / `shutdown.TERMINATING_SIGNALS` | SIGINT + SIGTERM + SIGHUP, and the two whose default disposition kills without unwinding. SIGHUP is included because a dropped ssh session delivers it. |
+
+Which delivery to use is decided by one question — *does this loop await while
+idle?* — set out in [explanation/shutdown.md](../explanation/shutdown.md).
+
+Nothing here promises the servos end up released: SIGKILL and power loss run no
+code, and `park()` takes seconds, so anything that stops waiting mid-park kills
+the process with torque on. What it removes is the case where the code that
+would have released torque never ran at all.
 
 ## MicStream
 

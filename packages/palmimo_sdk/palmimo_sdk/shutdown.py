@@ -218,12 +218,17 @@ def interrupt_on_signals(stop: StopRequest, *signums: signal.Signals) -> Iterato
         )
         yield
         return
-    previous = {sig: signal.signal(sig, _raise) for sig in (signums or TERMINATING_SIGNALS)}
+    # Installed one at a time inside the `try`: if a later `signal.signal`
+    # rejects a signum, the `finally` still hands back the ones already
+    # switched, instead of leaving SIGTERM converted for the process's life.
+    previous: dict[int, object] = {}
     try:
+        for sig in signums or TERMINATING_SIGNALS:
+            previous[sig] = signal.signal(sig, _raise)
         yield
     finally:
-        for sig, handler in previous.items():
-            _restore_disposition(sig, handler)
+        for num, handler in previous.items():
+            _restore_disposition(num, handler)
 
 
 @contextlib.contextmanager
@@ -282,9 +287,12 @@ def stop_flag_on_signals(stop: StopRequest, *signums: signal.Signals) -> Iterato
         seen.set()
         stop.request()
 
-    for num in signums or STOP_SIGNALS:
-        previous[num] = signal.signal(num, _handler)
     try:
+        # Inside the `try` for the same reason as `interrupt_on_signals`: a
+        # rejected signum part-way through would otherwise leave a handler
+        # installed that sets a flag nobody is left to read.
+        for num in signums or STOP_SIGNALS:
+            previous[num] = signal.signal(num, _handler)
         yield stop.is_set
     finally:
         _restore()
@@ -402,35 +410,45 @@ def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> Non
     successful park.
     """
     stream = sys.stderr if out is None else out
-    if not robot.has_connectable_resource:
-        return
-    parking = robot.is_connected
-    if parking:
-        print("parking the robot -- easing to neutral and releasing servo torque...", file=stream)
-    # disconnect() re-raises an interrupt that landed mid-teardown, but only
-    # after reaching the torque-off. Nothing above needs to see it: this IS the
-    # shutdown it was asking for.
-    #
-    # An `Exception` is held for a different reason. Every entry point calls
-    # this from a `finally`, so letting one out would replace a clean exit --
-    # or the error that started the shutdown -- with a traceback from the
-    # teardown. But it is never swallowed silently: torque may still be on,
-    # which is the one fact an operator has to be told, so the failure is
-    # reported in place of the line that would otherwise claim success.
-    failure: BaseException | None = None
+    # The ignore covers the whole body, not just the disconnect. This is
+    # normally entered from a `finally` after the first Ctrl+C, so a second one
+    # -- or a SIGTERM under `interrupt_on_signals` -- landing on the checks or
+    # the report line would unwind before the torque-off, which is the case
+    # this module exists to close. A blocked stderr pipe widens that window
+    # arbitrarily.
     with signals_ignored():
+        if not robot.has_connectable_resource:
+            return
+        parking = robot.is_connected
+        if parking:
+            print("parking the robot -- easing to neutral and releasing servo torque...", file=stream)
+        # An `Exception` is held: every entry point calls this from a
+        # `finally`, so letting one out would replace a clean exit -- or the
+        # error that started the shutdown -- with a traceback from the
+        # teardown. But it is never swallowed silently: torque may still be on,
+        # which is the one fact an operator has to be told, so the failure is
+        # reported in place of the line that would otherwise claim success.
+        failure: BaseException | None = None
         try:
             robot.disconnect(park=legs)
         except BaseException as exc:  # reported below, never re-raised out of a caller's finally
             failure = exc
-    if failure is not None:
-        print(
-            f"PARK FAILED -- servo torque may still be on ({type(failure).__name__}: {failure}). "
-            "Unplug the AC adapter before handling the robot.",
-            file=stream,
-        )
-    elif parking:
-        print("park complete -- servo torque released", file=stream)
+        # disconnect() re-raises an interrupt that landed mid-teardown, but only
+        # after reaching the torque-off: that is the shutdown being asked for,
+        # and reporting it would tell an operator to unplug a robot already
+        # released. The test is the robot's own state, not the exception's type
+        # -- a BaseException raised *by* the driver disconnect leaves torque on
+        # and still has to be reported.
+        if failure is not None and not isinstance(failure, Exception) and not robot.is_connected:
+            failure = None
+        if failure is not None:
+            print(
+                f"PARK FAILED -- servo torque may still be on ({type(failure).__name__}: {failure}). "
+                "Unplug the AC adapter before handling the robot.",
+                file=stream,
+            )
+        elif parking:
+            print("park complete -- servo torque released", file=stream)
 
 
 async def park_async(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> None:
@@ -452,12 +470,21 @@ async def park_async(robot: Palmimo, *, legs: bool = True, out: TextIO | None = 
     genuinely finished; anything that must stop it sooner has SIGKILL.
     """
     import asyncio
+    import functools
 
-    task = asyncio.ensure_future(asyncio.to_thread(park, robot, legs=legs, out=out))
+    # run_in_executor returns a plain Future, deliberately: `asyncio.to_thread`
+    # wraps one in a Task, and `asyncio.run`'s teardown cancels every Task in
+    # `all_tasks()` directly. `shield` does not help there -- it protects the
+    # awaiting coroutine, not the awaited Task -- so the wait below would end
+    # while the worker thread was still in the neck ramp, drop the ignore, and
+    # leave the next signal landing on a restored disposition with torque on.
+    # A Future is not in `all_tasks()`, so nothing cancels it; `asyncio.run`
+    # then joins the thread in `shutdown_default_executor()`.
+    future = asyncio.get_running_loop().run_in_executor(None, functools.partial(park, robot, legs=legs, out=out))
     with signals_ignored():
-        while not task.done():
+        while not future.done():
             with contextlib.suppress(asyncio.CancelledError):
-                await asyncio.shield(task)
+                await asyncio.shield(future)
 
 
 __all__ = [
