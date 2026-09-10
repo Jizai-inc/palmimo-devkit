@@ -74,6 +74,8 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     # difflib / unicodedata name folding; no third-party package involved.
     "palmimo_sdk.name_match": _NO_EXTRA,
     "palmimo_sdk.robot": _NO_EXTRA,
+    # signal disposition and the park -- signal, contextlib, threading, time.
+    "palmimo_sdk.shutdown": _NO_EXTRA,
 }
 
 #: `module:Name` -> the extras that name needs, overriding its module's entry.
@@ -137,6 +139,7 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:ServoDriver": _NO_EXTRA,
     "palmimo_sdk:ServoTelemetry": _NO_EXTRA,
     "palmimo_sdk:kinematics": _NO_EXTRA,
+    "palmimo_sdk:shutdown": _NO_EXTRA,
     # -- Name matching and ALSA card resolution: stdlib only (difflib,
     # unicodedata, and a subprocess call to aplay/arecord). Both sit beside
     # a feature that does have an extra -- the wake word is heard through
