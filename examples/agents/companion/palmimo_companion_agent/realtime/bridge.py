@@ -178,9 +178,9 @@ class ToolBridge:
             args = json.loads(call.arguments) if call.arguments else {}
         except ValueError:
             args = {}
-        print(f"tool > {name}({call.arguments})", flush=True)
+        print(f"tool    > {name}({call.arguments})", flush=True)
         result = await self._view.call(name, args)
-        print(f"       -> {result.text[:120]}", flush=True)
+        print(f"          -> {result.text[:120]}", flush=True)
         interrupted = result.text.startswith(_INTERRUPTED_PREFIX)
         self._log.write("tool_call", name=name, call_id=call.call_id, text=result.text[:200], is_error=result.is_error)
         # Only a call that ran to completion changes the sleep mode -- see
