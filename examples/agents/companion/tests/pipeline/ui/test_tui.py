@@ -39,7 +39,14 @@ class _FakeResponse:
 class FakeLlm:
     """Stands in for :class:`~palmimo_companion_agent.pipeline.llm.LlmProvider`: never calls a real model."""
 
-    async def chat(self, messages: list[dict], *, tools: list[dict] | None = None) -> _FakeResponse:
+    async def chat(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        parallel_tool_calls: bool = False,
+        max_tokens: int = 1024,
+    ) -> _FakeResponse:
         return _FakeResponse()
 
 
