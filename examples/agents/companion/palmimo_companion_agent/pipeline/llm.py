@@ -170,16 +170,40 @@ def _same_provider(model_a: str, model_b: str) -> bool:
     return model_a.split("/", 1)[0] == model_b.split("/", 1)[0]
 
 
+#: A minimal tool definition, used only to give the guard's probe the tool
+#: count it is asking about. Never sent to a provider.
+_PROBE_TOOL: dict[str, object] = {
+    "type": "function",
+    "function": {"name": "probe", "description": "probe", "parameters": {"type": "object", "properties": {}}},
+}
+
+
 @cache
-def _accepts_parallel_tool_calls(model: str) -> bool:
-    """Whether *model*'s provider accepts the ``parallel_tool_calls`` parameter.
+def _accepts_parallel_tool_calls(model: str, value: bool, multiple_tools: bool) -> bool:
+    """Whether *model* accepts ``parallel_tool_calls=value`` alongside this many tools.
 
     LiteLLM rejects a parameter the provider does not support
     (``UnsupportedParamsError``) rather than dropping it, so sending
-    ``parallel_tool_calls`` unconditionally fails *every* completion against a
-    provider that lacks it -- Ollama and other self-hosted backends among them.
-    Asking LiteLLM which parameters the provider supports keeps the parameter
-    where it is honoured and omits it only where it would be rejected.
+    ``parallel_tool_calls`` where it is unwelcome fails the completion outright
+    -- Ollama and other self-hosted backends among them, and Gemini for one
+    specific combination. Asking LiteLLM keeps the parameter where it is
+    honoured and omits it only where it would be rejected.
+
+    The question has to include the value and the tool count, not just the
+    parameter name. Gemini's supported-parameter table lists
+    ``parallel_tool_calls``, yet ``value is False`` with more than one tool is
+    rejected: the parameter is honoured only as ``True`` there. Asking whether
+    the provider "supports" the name answers yes and the call then fails. So
+    this runs the same ``get_optional_params`` mapping the request goes
+    through, with the value and arity actually in play, and believes the
+    result. No network, no API key: the mapping is pure, and it is where the
+    rejection comes from.
+
+    Omitting it on Gemini costs nothing, because the parameter never reached
+    Gemini anyway -- ``GenerationConfig`` has no such field, so the request
+    body drops it. It does matter on a provider that honours it: ``False``
+    continues to be sent there, which is what bounds the idle turn to one tool
+    call per turn.
 
     Preferred over ``drop_params``, LiteLLM's own remedy for this error, in
     either its global (``litellm.drop_params = True``) or per-call
@@ -194,21 +218,31 @@ def _accepts_parallel_tool_calls(model: str) -> bool:
     entry, and the tool definitions are discarded on the way out whether or
     not ``drop_params`` is set; the ``parallel_tool_calls`` error is what
     stops the call and makes the wrong route visible. Silence it and the
-    agent starts, talks, and never acts on a single tool call. Querying the
-    supported parameters settles one named parameter instead, and leaves
-    every other mismatch as loud as it was.
+    agent starts, talks, and never acts on a single tool call. Probing one
+    named parameter settles it instead, and leaves every other mismatch as
+    loud as it was.
 
     An unrecognized model string counts as "does not accept": the completion
     call that follows reports the real problem, and a lookup miss here should
-    not become an exception of its own. The answer is fixed for a given model
-    string, so it is cached for the process.
+    not become an exception of its own. The answer is fixed for a given
+    (model, value, arity), so it is cached for the process.
     """
     try:
-        supported = litellm.get_supported_openai_params(model=model)
+        target, provider, _, _ = litellm.get_llm_provider(model=model)
     except Exception as exc:
-        _log.debug("could not determine supported params for %s, omitting parallel_tool_calls: %s", model, exc)
+        _log.debug("could not determine the provider for %s, omitting parallel_tool_calls: %s", model, exc)
         return False
-    return supported is not None and "parallel_tool_calls" in supported
+    try:
+        litellm.utils.get_optional_params(
+            model=target,
+            custom_llm_provider=provider,
+            tools=[_PROBE_TOOL, _PROBE_TOOL] if multiple_tools else [_PROBE_TOOL],
+            parallel_tool_calls=value,
+        )
+    except Exception as exc:
+        _log.debug("%s rejects parallel_tool_calls=%s, omitting it: %s", model, value, exc)
+        return False
+    return True
 
 
 class _ChatKwargs(TypedDict):
@@ -246,12 +280,12 @@ def _chat_kwargs(
 ) -> _ChatKwargs:
     """Assemble one chat ``acompletion`` call's keyword arguments.
 
-    ``parallel_tool_calls`` is included only for a provider that accepts it
-    (see :func:`_accepts_parallel_tool_calls`). Omitting it leaves the
-    provider's own default in force, which is safe here because neither caller
-    relies on the parameter to bound a plan: the idle turn takes at most the
-    first tool call and the respond turn truncates to its own maximum, both in
-    code.
+    ``parallel_tool_calls`` is included only where the provider accepts this
+    value with this many tools (see :func:`_accepts_parallel_tool_calls`).
+    Omitting it leaves the provider's own default in force, which is safe here
+    because neither caller relies on the parameter to bound a plan: the idle
+    turn takes at most the first tool call and the respond turn truncates to
+    its own maximum, both in code.
     """
     kwargs: _ChatKwargs = {
         "model": model,
@@ -262,7 +296,7 @@ def _chat_kwargs(
         "num_retries": num_retries,
         "metadata": {"companion_role": "chat"},
     }
-    if _accepts_parallel_tool_calls(model):
+    if _accepts_parallel_tool_calls(model, parallel_tool_calls, bool(tools and len(tools) > 1)):
         kwargs["parallel_tool_calls"] = parallel_tool_calls
     return kwargs
 

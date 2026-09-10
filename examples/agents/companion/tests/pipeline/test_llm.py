@@ -218,19 +218,52 @@ class TestParallelToolCallsParameter:
         assert fake.calls[0]["messages"] == [{"role": "user", "content": "hi"}]
 
     async def test_accepts_parallel_tool_calls_is_false_for_an_unrecognized_model(self) -> None:
-        assert _accepts_parallel_tool_calls("not-a-provider/not-a-model") is False
+        assert _accepts_parallel_tool_calls("not-a-provider/not-a-model", True, False) is False
 
-    async def test_accepts_parallel_tool_calls_is_false_when_the_lookup_raises(
+    async def test_accepts_parallel_tool_calls_is_false_when_the_probe_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A failed capability lookup must not become an exception of its own."""
+        """A failed probe must not become an exception of its own."""
 
         def boom(**kwargs: Any) -> Any:
-            raise RuntimeError("lookup exploded")
+            raise RuntimeError("probe exploded")
 
-        monkeypatch.setattr("litellm.get_supported_openai_params", boom)
+        monkeypatch.setattr("litellm.utils.get_optional_params", boom)
 
-        assert _accepts_parallel_tool_calls("gemini/gemini-3.5-flash-lite") is False
+        assert _accepts_parallel_tool_calls("gemini/gemini-3.5-flash-lite", True, False) is False
+
+    async def test_accepts_parallel_tool_calls_asks_about_the_value_and_the_tool_count(self) -> None:
+        """Gemini lists the parameter but honours it only as True once more than one
+        tool is offered, so a guard that asks whether the provider "supports" the
+        name sends False and the completion fails. The probe runs the mapping the
+        request goes through, with the value and arity in play."""
+        gemini = "gemini/gemini-3.5-flash-lite"
+        assert _accepts_parallel_tool_calls(gemini, False, True) is False
+        assert _accepts_parallel_tool_calls(gemini, False, False) is True
+        assert _accepts_parallel_tool_calls(gemini, True, True) is True
+
+    async def test_chat_omits_the_value_gemini_rejects_but_keeps_it_for_openai(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The idle turn's default (False) with its 15-tool vocabulary is exactly the
+        combination Gemini rejects. It has to be dropped there and kept on a provider
+        that honours it, which is what bounds that turn to one tool call."""
+        fake = _RecordingAcompletion()
+        monkeypatch.setattr("litellm.acompletion", fake)
+        tools = [
+            {"type": "function", "function": {"name": "look"}},
+            {"type": "function", "function": {"name": "nod"}},
+        ]
+
+        await LlmProvider(chat_model="gemini/gemini-3.5-flash-lite").chat(
+            [{"role": "user", "content": "hi"}], tools=tools, parallel_tool_calls=False
+        )
+        await LlmProvider(chat_model="openai/gpt-4o").chat(
+            [{"role": "user", "content": "hi"}], tools=tools, parallel_tool_calls=False
+        )
+
+        assert "parallel_tool_calls" not in fake.calls[0]
+        assert fake.calls[1]["parallel_tool_calls"] is False
 
 
 class TestDescribeImage:
