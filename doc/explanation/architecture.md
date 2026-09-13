@@ -262,17 +262,55 @@ stops or an SSH session drops.
   read in `io/_dynamixel_bus.py`). One sweep rather than one read per signal is what
   lets a guard sample inside the control loop's frame budget. A motor that does not
   answer is reported as unread, never as a zero — an invented reading would be taken
-  for evidence of health. Readings are surfaced; nothing acts on them
+  for evidence of health
 - **Stopping a motion, not cutting torque** — when a guard does act, the intended
   response is to end the motion (`motion → IDLE`) and leave torque on. Cutting torque
   on a servo makes that joint go limp, and a limp joint on a standing robot drops it —
   worse than the fault being guarded against. The servo's own firmware remains the
-  breaker of last resort
-- **Temperature is reported, not acted on** — a servo that is already hot does
-  not cool at the speed a guard could react, so ending the motion buys little; and
-  over an eight-hour exhibition day these servos measured around 50 °C, well inside
-  their rating. The reading is surfaced and the decision to stop is left to the
-  operator, who can see the room and the schedule; nothing acts on it
+  breaker of last resort. The neck thermal guard follows the same rule: its `HOT`
+  response forces a motion (the neck to center) rather than cutting anything (see
+  below) — this codebase deliberately carries no guard response that reduces
+  holding torque
+- **Leg temperature is reported, not acted on** — a leg servo that is already hot
+  does not cool at the speed a guard could react, so ending the motion buys little;
+  and over an eight-hour exhibition day these servos measured around 50 °C, well
+  inside their rating. The reading is surfaced and the decision to stop is left to
+  the operator, who can see the room and the schedule; nothing acts on it
+- **Neck temperature IS acted on** (`thermal.py`'s `NeckThermalGuard`, polled once a
+  second from `Palmimo.step()`) — unlike a leg, which only bears load during its
+  stance phase, the neck holds the head up continuously and has been observed
+  latching an Overheating HW error (bit 2) and cutting torque at 71 °C after a
+  sustained holding pose (2026-09), which the operator-in-the-loop reasoning above
+  does not cover: nobody is watching a held look angle the way they watch a walking
+  gait. At `HOT` (>= 62 °C) the neck is forced to center (every neck-writing path,
+  not just `look()` — see `MotionEngine.neck_hold_center`) and NOD/HEAD_SHAKE are
+  downgraded to `IDLE` — motion changes, torque stays on. This holds until the neck
+  cools to <= 55 °C (hysteresis, so a neck hovering near the boundary doesn't flap
+  the lockout every poll). A telemetry sweep missing a neck motor keeps the last
+  judgement rather than guessing, until it goes stale (`NECK_STALE_S`), at which
+  point `neck_thermal_state` reports `UNMONITORED` instead of trusting a reading
+  that may no longer reflect reality — but the lockout itself (`neck_lock_active`)
+  stays engaged if it was HOT going into that stale period, since an unobserved
+  neck may still be hot; it only releases on disconnect or a fresh sweep at or
+  below 55 °C. See [the API reference](../reference/api-reference.md#neck-thermal-guard)
+  for the full state table. The legs keep the reported-only behavior above.
+  **Scope**: the guard only reaches callers that go through `Palmimo.step()`
+  (`run()`/`play()`, the MCP server, the agent tool layer) — the LeRobot teleop
+  integration drives the engine directly and is not covered. A software glide that
+  writes the driver directly instead of going through `step()` (`Palmimo.wake()`,
+  `_timed_return_to_neutral()`) is outside the guard's reach too, but only ever
+  moves the neck toward its neutral/center target, never away from it, so that gap
+  carries no hazard the guard exists to close.
+
+  An earlier design also had the guard soft-release the neck (gain ramped down) at
+  a `CRITICAL` threshold above `HOT`. A second adversarial review found it unsafe
+  as specified — any full-gain write elsewhere in the same connection (`wave()`,
+  `dance()`, `perform_dance()`) re-armed every motor's gain and silently undid the
+  release, the release-then-full-gain-restore sequence produced a large single-step
+  jump back to the held pose (up to ~25°) instead of a graceful recovery, and there
+  was no measured data on how fast the neck actually heats to justify the extra
+  state — so it was removed rather than shipped. `HOT`'s stop-the-motion response
+  above is the whole guard.
 - **Losing control is a different case from guarding against a reading** — when the
   bus disconnects, status packets go wrong, or the loop stalls, there is no motion
   left to end, and the fallback is torque-off (limp) or a safe hold depending on
