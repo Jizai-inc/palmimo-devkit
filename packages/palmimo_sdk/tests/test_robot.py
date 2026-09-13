@@ -68,7 +68,7 @@ def test_perform_dance_returns_to_neutral_and_idles() -> None:
     """perform_dance returns to neutral after the routine and ends in IDLE (compute-only)."""
     robot = Palmimo()  # compute-only: no real-time glide needed
     pos = robot.perform_dance(sways=0, end_hold=0.0, settle=0.0)
-    assert len(pos) == 20
+    assert len(pos) == 21
     assert robot.motion == "idle"
     # Eased home. neck_pitch1 settles at the trimmed rest center
     # (neck_rest_pitch_deg, introduced with the nod/head-shake gestures), not
@@ -133,7 +133,7 @@ def test_perform_dance_cancelled_during_settle_glide_leaves_motion_idle() -> Non
 
         def read_positions(self) -> dict[str, int]:
             names = [f"leg_{i}_{s}" for i in range(1, 7) for s in ("yaw", "pitch1", "pitch2")]
-            names += ["neck_yaw", "neck_pitch1"]
+            names += ["neck_yaw", "neck_pitch1", "neck_pitch2"]
             return dict.fromkeys(names, 2048)
 
         def write_positions(self, positions: dict[str, int]) -> None:
@@ -149,11 +149,11 @@ def test_perform_dance_cancelled_during_settle_glide_leaves_motion_idle() -> Non
 
 
 def test_step_returns_positions() -> None:
-    """step() returns a position dict for all 20 motors."""
+    """step() returns a position dict for all 21 motors."""
     robot = Palmimo()
     robot.forward()
     pos = robot.step()
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 def test_on_step_callback_is_invoked() -> None:
@@ -163,7 +163,7 @@ def test_on_step_callback_is_invoked() -> None:
     robot.forward()
     robot.step_n(5)
     assert len(seen) == 5
-    assert all(len(p) == 20 for p in seen)
+    assert all(len(p) == 21 for p in seen)
 
 
 def test_cancel_raises_motion_cancelled_mid_run() -> None:
@@ -189,7 +189,7 @@ def test_cancel_while_idle_does_not_carry_over_to_next_run() -> None:
     robot.cancel()  # nothing running yet
     robot.forward()
     pos = robot.run(steps=5)  # must NOT raise: run()'s entry snapshot postdates the idle cancel
-    assert len(pos) == 20
+    assert len(pos) == 21
     assert robot.motion == "forward"
 
 
@@ -202,7 +202,7 @@ def test_run_snapshot_ignores_cancel_count_bumped_before_it_started() -> None:
     robot._cancel_count += 1  # a stale cancel from a completely separate earlier call
     robot.forward()
     pos = robot.run(steps=3)
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 def test_pace_ignores_cancels_that_predate_its_snapshot() -> None:
@@ -337,7 +337,7 @@ def test_disarm_cancel_scope_prevents_leaking_into_next_run() -> None:
     robot.cancel()  # unarmed at this point -- an ordinary idle cancel
     robot.forward()
     pos = robot.run(steps=5)  # must NOT raise
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 def test_unarmed_run_semantics_are_unchanged() -> None:
@@ -349,7 +349,7 @@ def test_unarmed_run_semantics_are_unchanged() -> None:
     robot.cancel()  # idle cancel, no scope armed
     robot.forward()
     pos = robot.run(steps=5)  # must NOT raise
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 # ----------------------------------------------------------------------
@@ -541,13 +541,19 @@ def test_look_degrees_at_full_travel_reaches_normalized_one() -> None:
 
 
 def test_neck_pitch_degrees_beyond_travel_raises_value_error_at_construction() -> None:
-    """A NeckPitchDegrees value beyond the real range of motion raises ValueError instead of
-    saturating (the value object owns its own validation)."""
-    travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    """A NeckPitchDegrees value beyond the real range of motion for that side raises
+    ValueError instead of saturating (the value object owns its own validation).
+
+    Chin-down (non-negative) and chin-up (negative) validate against different
+    travels (see NeckPitchDegrees' docstring) -- without checking both sides,
+    a regression collapsing them back to one symmetric bound would go unnoticed.
+    """
+    down_travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    up_travel = MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
     with pytest.raises(ValueError, match="pitch"):
-        NeckPitchDegrees(travel + 0.001)
+        NeckPitchDegrees(down_travel + 0.001)
     with pytest.raises(ValueError, match="pitch"):
-        NeckPitchDegrees(-(travel + 0.001))
+        NeckPitchDegrees(-(up_travel + 0.001))
 
 
 def test_neck_yaw_degrees_beyond_travel_raises_value_error_at_construction() -> None:
@@ -561,13 +567,77 @@ def test_neck_yaw_degrees_beyond_travel_raises_value_error_at_construction() -> 
 
 def test_neck_degrees_accepts_boundary_value_exactly_at_travel() -> None:
     """A value exactly at the real range of motion is accepted as a boundary value (not
-    rejected by floating-point rounding)."""
-    pitch_travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    rejected by floating-point rounding) -- pitch's chin-down and chin-up sides each
+    at their own (different) travel."""
+    down_travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    up_travel = MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
     yaw_travel = MotionEngine.NECK_YAW_TRAVEL_DEG
-    assert NeckPitchDegrees(pitch_travel).value == pitch_travel
-    assert NeckPitchDegrees(-pitch_travel).value == -pitch_travel
+    assert NeckPitchDegrees(down_travel).value == down_travel
+    assert NeckPitchDegrees(-up_travel).value == -up_travel
     assert NeckYawDegrees(yaw_travel).value == yaw_travel
     assert NeckYawDegrees(-yaw_travel).value == -yaw_travel
+
+
+def test_look_pitch_up_converts_via_the_larger_up_travel() -> None:
+    """A negative (chin-up) NeckPitchDegrees normalizes by dividing by
+    NECK_PITCH_UP_TRAVEL_DEG, not NECK_PITCH_TRAVEL_DEG -- the two differ because
+    pitch2 extends the chin-up reach past pitch1's own travel (see
+    NeckPitchDegrees' docstring). Using the wrong (smaller) travel would send the
+    engine a normalized value short of what the caller actually asked for.
+    """
+    robot = Palmimo()
+    up_travel = MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
+    robot.look(pitch=NeckPitchDegrees(-up_travel / 2))
+    assert robot._engine._neck_target_pitch == pytest.approx(-0.5)
+    robot.look(pitch=NeckPitchDegrees(-up_travel))
+    assert robot._engine._neck_target_pitch == pytest.approx(-1.0)
+
+
+def test_look_pitch_up_converts_via_the_engine_instances_live_reach() -> None:
+    """The degrees->normalized conversion for a negative NeckPitchDegrees uses
+    the engine INSTANCE's current chin-up reach (neck_pitch_up_reach_deg), not
+    the class-level NECK_PITCH_UP_TRAVEL_DEG -- so overriding neck_pitch2_share
+    (the documented way to retune the split) changes what a given degree value
+    converts to.
+
+    At the shipped default trim (15 deg), share=0.0's actual chin-up reach is
+    ~11.4 deg (pitch1's own asymmetric band, not the ~26.4 deg symmetric
+    NECK_PITCH_TRAVEL_DEG a same-value-as-share>0 fallback would have used) --
+    without reading the live reach, this request would land far short of -1.0.
+    """
+    robot = Palmimo()
+    robot._engine.neck_pitch2_share = 0.0
+    reach = robot._engine.neck_pitch_up_reach_deg
+    assert reach == pytest.approx(11.37, abs=0.1)
+    robot.look(pitch=NeckPitchDegrees(-reach))
+    assert robot._engine._neck_target_pitch == pytest.approx(-1.0)
+
+
+def test_look_pitch_up_at_reach_converges_to_full_chin_up_at_non_default_trim() -> None:
+    """A look(pitch=NeckPitchDegrees(-reach)) request, where reach is the engine
+    instance's own neck_pitch_up_reach_deg, converges to the engine's actual
+    full chin-up head-pitch offset even at a non-default rest trim -- not short
+    of it. A property that overstated the real reach would silently saturate
+    this request instead of reaching the angle the caller asked for.
+
+    trim=20 (the max allowed rest trim) keeps the instance's live reach under
+    NeckPitchDegrees' own class-level validation bound (NECK_PITCH_UP_TRAVEL_DEG,
+    the shipped-default reach) -- the value object can only check against that
+    class-level bound (see its docstring), so a trim producing a live reach
+    beyond it would fail at construction before ever reaching the engine.
+    """
+    robot = Palmimo()
+    robot._engine.neck_rest_pitch_deg = 20.0
+    reach = robot._engine.neck_pitch_up_reach_deg
+    robot.look(pitch=NeckPitchDegrees(-reach))
+    robot.step_n(400)  # plenty of steps to fully converge
+
+    engine = robot._engine
+    pos = robot.positions
+    head_total = (pos["neck_pitch1"] - engine.neck_pitch_center()) + engine.neck_pitch2_sign * (
+        pos["neck_pitch2"] - engine.NEUTRAL
+    )
+    assert head_total == pytest.approx(-reach * engine.TICK_PER_DEG, abs=1)
 
 
 def test_look_rejects_yaw_value_object_passed_as_pitch() -> None:
@@ -613,7 +683,7 @@ def test_play_yields_expected_frame_count() -> None:
     robot = Palmimo()
     frames = list(robot.play([("forward", 0.2), ("look_around", 0.2)], fps=60))
     assert len(frames) == round(0.2 * 60) * 2
-    assert all(len(f) == 20 for f in frames)
+    assert all(len(f) == 21 for f in frames)
 
 
 def test_fps_and_dt_defaults() -> None:
@@ -643,7 +713,7 @@ def test_run_steps_advances_expected_cycles() -> None:
     robot.forward()
     final = robot.run(steps=10)
     assert len(seen) == 10
-    assert len(final) == 20
+    assert len(final) == 21
 
 
 def test_run_seconds_converts_via_fps() -> None:
@@ -679,7 +749,7 @@ def test_run_zero_returns_pose_without_stepping() -> None:
     robot = Palmimo(on_step=seen.append)
     pos = robot.run(steps=0)
     assert seen == []
-    assert len(pos) == 20
+    assert len(pos) == 21
 
 
 def test_run_is_paced_by_control_rate() -> None:
@@ -698,7 +768,7 @@ def test_play_typed_routine_frame_count() -> None:
     routine = [RoutineStep(Motion.FORWARD, 0.2), RoutineStep(Motion.DANCE, 0.1)]
     frames = list(robot.play(routine, fps=60))
     assert len(frames) == round(0.2 * 60) + round(0.1 * 60)
-    assert all(len(f) == 20 for f in frames)
+    assert all(len(f) == 21 for f in frames)
 
 
 def test_run_and_play_agree_on_duration_to_steps() -> None:
@@ -813,19 +883,19 @@ class _PVRecorder:
 
 
 def test_neck_gesture_pv_applied_and_restored() -> None:
-    """During a gesture the two neck axes get PV=0, restored to the default PV on exit (same shape as wave tuning)."""
+    """During a gesture the three neck axes get PV=0, restored to the default PV on exit (same shape as wave tuning)."""
     driver = _PVRecorder()
     robot = Palmimo(driver=cast(ServoDriver, driver))
     robot.step()  # idle — no tuning traffic
     assert driver.calls == []
     robot.nod()
     robot.step()  # gesture enter -> PV=0 on the neck axes
-    assert driver.calls == [(0, ("neck_pitch1", "neck_yaw"))]
+    assert driver.calls == [(0, ("neck_pitch1", "neck_pitch2", "neck_yaw"))]
     robot.step()  # steady state -> no re-write
     assert len(driver.calls) == 1
     robot.stop()
     robot.step()  # gesture exit -> default PV restored
-    assert driver.calls[-1] == (300, ("neck_pitch1", "neck_yaw"))
+    assert driver.calls[-1] == (300, ("neck_pitch1", "neck_pitch2", "neck_yaw"))
 
 
 def test_return_to_neutral_converges_with_rest_trim() -> None:
@@ -839,6 +909,19 @@ def test_return_to_neutral_converges_with_rest_trim() -> None:
     pos = robot.positions
     assert pos["neck_pitch1"] == robot.engine.neck_pitch_center()
     assert all(abs(t - 2048) <= 2 for n, t in pos.items() if n != "neck_pitch1")
+
+
+def test_return_to_neutral_brings_pitch2_back_from_a_look_extreme() -> None:
+    """return_to_neutral brings neck_pitch2 back to NEUTRAL once look() has released
+    the neck -- without this, a joint the facade doesn't name explicitly (unlike
+    neck_pitch1's rest-trim target) could be left stranded off-center."""
+    robot = Palmimo()
+    robot.look(pitch=1.0)
+    robot.step_n(60)
+    assert robot.positions["neck_pitch2"] != robot.engine.NEUTRAL
+    robot.look_center()
+    robot.return_to_neutral()
+    assert robot.positions["neck_pitch2"] == robot.engine.NEUTRAL
 
 
 class _GlideDriver:
@@ -860,7 +943,7 @@ class _GlideDriver:
 
     def read_positions(self) -> dict[str, int]:
         names = [f"leg_{i}_{s}" for i in range(1, 7) for s in ("yaw", "pitch1", "pitch2")]
-        names += ["neck_yaw", "neck_pitch1"]
+        names += ["neck_yaw", "neck_pitch1", "neck_pitch2"]
         return dict.fromkeys(names, self.pose)
 
     def write_positions(self, positions: dict[str, int]) -> None:

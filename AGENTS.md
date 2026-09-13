@@ -133,6 +133,9 @@ in `toolset.py` saying so).
   `Present_Temperature` (`ServoDriver.read_telemetry()`), but nothing acts on
   it — no warning, no stop, on an overheating servo. Do NOT assume the robot
   self-protects, and watch temperature by hand during long or stalled runs.
+  The neck now reaches further via `look()` (up to ~38° chin-up at the
+  shipped defaults) but this guard is still not implemented — a sustained
+  chin-up look is unmonitored the same as any other pose (follow-up).
 - Always smooth transitions — abrupt jumps damage gears
 - `stop()` returns to neutral gradually; NEVER skip it
 - Safe servo range: 200-3900 (avoid mechanical limits at 0 and 4095)

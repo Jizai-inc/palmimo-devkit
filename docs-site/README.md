@@ -197,8 +197,7 @@ The camera is a child of `neck_yaw`. That is the *last* link in the neck chain
 -- the model nests `neck_yaw` under `neck_pitch2` under `neck_pitch1` -- so
 every neck joint the SDK turns has already carried the camera before it is
 drawn. Anchoring anywhere higher would drop a gesture: on `neck_pitch2`, a
-`head_shake()` moves the head and not the view. `neck_pitch2` itself is never
-driven; the engine emits `neck_yaw` and `neck_pitch1` only.
+`head_shake()` moves the head and not the view.
 
 Where the lens sits and which way it points are measured off the asset at rest,
 not written down: forward is whichever direction in the head's own frame the

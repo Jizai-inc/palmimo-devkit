@@ -750,25 +750,58 @@ def test_look_pitch_out_of_range_raises_validation_error() -> None:
         LookTool(pitch=MotionEngine.NECK_PITCH_TRAVEL_DEG + 1.0, yaw=0.0)
 
 
+def test_look_pitch_beyond_chin_up_travel_raises_validation_error() -> None:
+    """The chin-up (negative) side has its own, larger bound
+    (NECK_PITCH_UP_TRAVEL_DEG) -- a request past THAT is still rejected."""
+    with pytest.raises(ValidationError):
+        LookTool(pitch=-(MotionEngine.NECK_PITCH_UP_TRAVEL_DEG + 1.0), yaw=0.0)
+
+
 def test_look_yaw_out_of_range_raises_validation_error() -> None:
     with pytest.raises(ValidationError):
         LookTool(pitch=0.0, yaw=MotionEngine.NECK_YAW_TRAVEL_DEG + 1.0)
 
 
 def test_look_schema_range_matches_engine_neck_travel_for_both_axes() -> None:
-    """pitch/yaw declared ranges now equal the engine's real PER-AXIS neck
-    travel -- previously pitch was capped at a hand-picked 30 deg and yaw at
-    60 deg, more than double the neck's actual ~26.4 deg mechanical travel,
-    so the schema silently overpromised range an LLM could never actually
-    reach.
+    """yaw's declared range equals the engine's real per-axis neck travel, and
+    pitch's declared range is asymmetric to match it: chin-down capped at
+    NECK_PITCH_TRAVEL_DEG, chin-up (negative) at the larger
+    NECK_PITCH_UP_TRAVEL_DEG (pitch2 extends the chin-up reach past pitch1's
+    own travel -- see MotionEngine._apply_neck). Previously pitch was capped
+    at a hand-picked 30 deg (symmetric) and yaw at 60 deg, more than double
+    the neck's actual ~26.4 deg mechanical travel, so the schema silently
+    overpromised range an LLM could never actually reach; an undifferentiated
+    symmetric pitch bound today would instead under-promise the chin-up side.
     """
     schema = LookTool.parameters_schema()
-    pitch_travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    pitch_down_travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    pitch_up_travel = MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
     yaw_travel = MotionEngine.NECK_YAW_TRAVEL_DEG
-    assert schema["properties"]["pitch"]["minimum"] == -pitch_travel
-    assert schema["properties"]["pitch"]["maximum"] == pitch_travel
+    assert schema["properties"]["pitch"]["minimum"] == -pitch_up_travel
+    assert schema["properties"]["pitch"]["maximum"] == pitch_down_travel
     assert schema["properties"]["yaw"]["minimum"] == -yaw_travel
     assert schema["properties"]["yaw"]["maximum"] == yaw_travel
+
+
+@pytest.mark.parametrize(
+    ("pitch", "expect_accepted"),
+    [(-30.0, True), (30.0, False)],
+    ids=["chin_up_30deg_accepted", "chin_down_30deg_rejected"],
+)
+def test_look_pitch_asymmetric_bound_accepts_chin_up_rejects_chin_down(pitch: float, expect_accepted: bool) -> None:
+    """-30 deg is within the chin-up bound (~37.7 deg) and reaches robot.look() as
+    NeckPitchDegrees(-30.0); +30 deg is beyond the chin-down bound (~26.37 deg) and
+    is still rejected -- without this, a single symmetric bound (either too
+    tight, silently refusing a real chin-up angle the hardware can reach, or too
+    loose, accepting a chin-down angle the hardware cannot) would go unnoticed.
+    """
+    if expect_accepted:
+        robot = FakeRobot()
+        LookTool(pitch=pitch, yaw=0.0).execute(cast(PalmimoLike, robot))
+        assert robot.calls == [("look", NeckPitchDegrees(pitch), NeckYawDegrees(0.0)), ("run", 0.6)]
+    else:
+        with pytest.raises(ValidationError):
+            LookTool(pitch=pitch, yaw=0.0)
 
 
 def test_extra_argument_is_rejected() -> None:

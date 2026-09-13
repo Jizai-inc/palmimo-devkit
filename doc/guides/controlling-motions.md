@@ -39,10 +39,10 @@ for _ in range(60):               # return to neutral
 ## Sending to Real Hardware Too
 
 The return value of `step()` (a dict of target ticks for the 18 leg motors plus
-`neck_yaw` and `neck_pitch1`, 20 motors total — the neck's `neck_pitch2`, servo ID 20,
-physically exists but `MotionEngine` holds no state for it and omits it from the
-output) is what `DynamixelDriver.write_positions()` takes, so passing it there drives
-real hardware. For the concrete bus-initialization sequence, see
+`neck_yaw`, `neck_pitch1`, and `neck_pitch2`, 21 motors total — see `robot.look()`
+in [Core Methods](../reference/api-reference.md#core-methods) for how the two
+neck-pitch joints share a look target) is what `DynamixelDriver.write_positions()`
+takes, so passing it there drives real hardware. For the concrete bus-initialization sequence, see
 [DynamixelDriver](../../packages/palmimo_sdk/palmimo_sdk/io/dynamixel.py) and the
 [Peripherals & Connection](../reference/api-reference.md#peripherals--connection)
 section of the API reference.

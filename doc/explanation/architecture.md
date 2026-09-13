@@ -49,9 +49,10 @@ development, a PC connects over SSH etc., but is not involved in control.
 
 - **Computation != Communication**: engine.py never touches serial ports
 - **Neutral Contract**: Every motion starts and ends at neutral stance — raw
-  servo neutral (2048) on every joint except the neck pitch, which settles at
+  servo neutral (2048) on every joint except `neck_pitch1`, which settles at
   the engine's rest-trimmed center (see `neck_rest_pitch_deg` tuning in
-  [api-reference.md](../reference/api-reference.md))
+  [api-reference.md](../reference/api-reference.md)); `neck_pitch2` has no
+  trim of its own and settles at raw neutral
 - **Frame-based**: Each step() produces one frame of servo positions
 - **Deterministic**: Same motion + same phase = same output (testable without hardware)
 - **Lean core**: `pyserial` is the SDK's only base dependency; every heavier import
