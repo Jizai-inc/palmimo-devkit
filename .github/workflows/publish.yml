@@ -1,0 +1,204 @@
+# Publishes palmimo-sdk to PyPI via Trusted Publishing (OIDC -- no stored
+# token) when a maintainer publishes the draft release that release.yml
+# created. The GitHub release carries no asset of its own; this workflow is
+# what turns a published release into a PyPI distribution.
+#
+# A pre-release (a tag with a hyphen, e.g. v1.2.0-rc1) and a manual
+# workflow_dispatch run both stop after the testpypi/smoke jobs -- neither
+# satisfies the `pypi` job's `if:`, so nothing but a published,
+# non-prerelease GitHub Release ever reaches PyPI. workflow_dispatch exists
+# to rehearse the TestPyPI path without a release; it uploads a dev-suffixed
+# version so the rehearsal never occupies a release version on TestPyPI.
+#
+# The workflow file name (`publish.yml`) and the two environment names
+# (`pypi`, `testpypi`) are fixed by the Trusted Publisher registrations on
+# PyPI and TestPyPI -- renaming any of them breaks OIDC trust and requires
+# re-registering there first.
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # A rehearsal (workflow_dispatch) builds a PEP 440 dev release,
+      # `X.Y.Z.dev<run id>`, instead of the version in pyproject.toml: TestPyPI
+      # accepts a version once, so a rehearsal at the plain version would
+      # consume it and a later release at that version would be skipped
+      # silently by `skip-existing` below, leaving the smoke job to validate
+      # the rehearsal build instead of the release build. (A local version,
+      # `+rehearsal`, would be the natural marker but PyPI rejects those.)
+      - name: Read the package version
+        id: version
+        env:
+          REHEARSAL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          set -euo pipefail
+          version="$(grep -m1 '^version = ' packages/palmimo_sdk/pyproject.toml | sed -E 's/version = "(.*)"/\1/')"
+          if [ "$REHEARSAL" = "true" ]; then
+            version="${version}.dev${GITHUB_RUN_ID}"
+            sed -i -E "s/^version = \".*\"/version = \"${version}\"/" packages/palmimo_sdk/pyproject.toml
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # PEP 440 has no hyphen; SemVer's pre-release separator (`-rc1`) is
+      # dropped rather than translated, matching how hatchling/setuptools
+      # normalize a version like "1.2.0-rc1" to "1.2.0rc1".
+      - name: Verify the release tag matches the package version
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          normalized="${TAG#v}"
+          normalized="${normalized//-/}"
+          if [ "$normalized" != "$VERSION" ]; then
+            echo "release tag $TAG (normalized to $normalized) does not match" \
+                 "packages/palmimo_sdk/pyproject.toml version $VERSION" >&2
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - run: uv build --package palmimo-sdk --out-dir dist
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+
+  testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  # Installs the just-published TestPyPI build the same way a user would
+  # (not from the local dist/ dir), so this exercises the actual PyPI
+  # metadata rather than the build job's own artifact. PyPI is the first
+  # index and TestPyPI only a fallback, with `unsafe-first-match` so a
+  # version PyPI lacks is taken from TestPyPI: dependencies resolve from PyPI
+  # and a same-named package on TestPyPI can never shadow one of them.
+  #
+  # No uv cache here: this job has no lockfile for the cache key to follow,
+  # and a restored cache would hold an index listing that predates the
+  # publish (simple-index pages carry a ten-minute max-age), defeating the
+  # retry loop below.
+  smoke:
+    needs: [build, testpypi]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - run: uv venv /tmp/smoke-venv
+
+      # TestPyPI's index can lag behind a publish by tens of seconds.
+      - name: Install from TestPyPI, retrying while the index catches up
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if uv pip install --python /tmp/smoke-venv/bin/python \
+                --refresh-package palmimo-sdk \
+                --index-url https://pypi.org/simple/ \
+                --extra-index-url https://test.pypi.org/simple/ \
+                --index-strategy unsafe-first-match \
+                "palmimo-sdk==${VERSION}"; then
+              exit 0
+            fi
+            echo "install attempt $attempt failed, retrying in 30s" >&2
+            sleep 30
+          done
+          exit 1
+
+      # The version alone does not prove the index served this run's build:
+      # `skip-existing` on the testpypi job keeps a re-run from failing, but
+      # it also means an earlier upload at the same version would be the one
+      # installed above. Comparing digests closes that gap -- hatchling builds
+      # are reproducible, so a same-source rebuild has the same digest and
+      # only a different build fails here.
+      - name: Verify the installed wheel is this run's build
+        run: |
+          /tmp/smoke-venv/bin/python - <<'VERIFY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import sys
+          import urllib.request
+
+          version = os.environ["VERSION"]
+          (wheel,) = pathlib.Path("dist").glob("*.whl")
+          local = hashlib.sha256(wheel.read_bytes()).hexdigest()
+
+          with urllib.request.urlopen(f"https://test.pypi.org/pypi/palmimo-sdk/{version}/json") as response:
+              files = json.load(response)["urls"]
+          published = {f["filename"]: f["digests"]["sha256"] for f in files}
+          remote = published.get(wheel.name)
+          if remote != local:
+              print(f"TestPyPI holds {wheel.name} with sha256 {remote}, this run built {local}", file=sys.stderr)
+              print("the smoke test above did not exercise this run's build; bump the version", file=sys.stderr)
+              sys.exit(1)
+          print(f"{wheel.name} sha256 {local} matches TestPyPI")
+          VERIFY
+
+      - name: Import and step the engine
+        run: |
+          /tmp/smoke-venv/bin/python - <<'SMOKE'
+          import sys
+
+          import palmimo_sdk  # noqa: F401
+          from palmimo_sdk.engine import MotionEngine
+
+          optional = ("cv2", "dynamixel_sdk", "mcp", "numpy", "pydantic", "sounddevice")
+          eager = sorted(name for name in optional if name in sys.modules)
+          assert not eager, f"importing palmimo_sdk pulled in optional dependencies: {eager}"
+
+          ticks = MotionEngine().step()
+          assert ticks, "MotionEngine.step() returned no servo positions"
+          outside = {name: v for name, v in ticks.items() if not 200 <= v <= 3900}
+          assert not outside, f"tick outside the safe range: {outside}"
+          SMOKE
+
+  pypi:
+    needs: smoke
+    if: github.event_name == 'release' && !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

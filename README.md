@@ -154,6 +154,11 @@ for _ in range(100):
 `Palmimo()` with no driver attached is compute-only, so this runs with no robot
 connected.
 
+Using `palmimo_sdk` from another project, without cloning this repository?
+`uv add palmimo-sdk` (extras: `hardware`, `face`, `speech`, `voice`, `agent`,
+`vision`, `mcp` — see
+[`packages/palmimo_sdk/README.md`](packages/palmimo_sdk/README.md)).
+
 <div align="center">
 
 <img src="doc/images/palmimo-dry-run.jpg" alt="Palmimo standing on a desk beside a monitor showing the same robot as a 3D model" width="520">
