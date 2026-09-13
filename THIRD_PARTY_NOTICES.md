@@ -18,6 +18,7 @@ covered by that member's own file:
 - [`packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](packages/palmimo_sdk/THIRD_PARTY_NOTICES.md)
 - [`examples/agents/companion/THIRD_PARTY_NOTICES.md`](examples/agents/companion/THIRD_PARTY_NOTICES.md)
 - [`examples/agents/wakeword/THIRD_PARTY_NOTICES.md`](examples/agents/wakeword/THIRD_PARTY_NOTICES.md)
+- [`examples/teleop/THIRD_PARTY_NOTICES.md`](examples/teleop/THIRD_PARTY_NOTICES.md)
 
 The root also declares `dynamixel-sdk` and `pyserial` directly, and both are
 `palmimo-sdk` dependencies as well, so the attribution text that applies to

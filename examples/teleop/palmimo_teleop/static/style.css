@@ -1,0 +1,442 @@
+/* Shared styling for viewer.html and pilot.html. No CDN/vendor fonts -- this
+   ships on an offline machine, so only system fonts are used. */
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: #111;
+  color: #eee;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* `html` is clamped to the visual viewport on both pages (`dvh`, with the
+   `vh` rule first as a fallback for browsers that don't know `dvh`, tracks
+   it as mobile browser chrome shows/hides, instead of leaving a `vh`-sized
+   gap that admits a scrollbar) with its own scrolling disabled and no
+   overscroll bounce/pull-to-refresh -- a phone browser must never let a
+   swipe on the control surface scroll or bounce the page. The viewer page's
+   #viewer-page content still scrolls normally; it does so on `body`, one
+   level in, which keeps its own overflow-y auto (see below). */
+html {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Pilot is an immersive, full-screen touch-control surface: the video fills
+   the viewport and drag/hold gestures must never trigger page scroll or
+   text selection. */
+body[data-role="pilot"] {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Viewer is a normal, scrollable document: `body` (not `html`, which is
+   clamped above) owns the scroll so a tall status bar or framed video never
+   forces the whole page to jump instead of scrolling in place. */
+body[data-role="viewer"] {
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Pilot layout ("Game Boy"): `#pilot-stage` holds the video and the
+   controls, always showing the video's full 4:3 frame uncropped
+   (`object-fit: contain`) rather than covering the viewport and clipping it.
+
+   Landscape (default): both children are absolutely positioned over the
+   full stage, matching the pre-existing overlay look -- the video letterboxed
+   center, controls pinned to the bottom corners. The corners never sit over
+   the video's center, so this holds even on a narrow phone whose letterbox
+   bars are too thin to hold the controls without some overlap.
+
+   Portrait: `#pilot-stage` switches to a column flow, so the video (top,
+   held to a 4:3 box by its width) and `#controls` (the rest of the height)
+   are normal-flow siblings that can never overlap. */
+body[data-role="pilot"] #pilot-stage {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+body[data-role="pilot"] #pilot-video-frame {
+  position: absolute;
+  inset: 0;
+}
+
+body[data-role="pilot"] #video-layer {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  /* The feed is a backdrop, never a target: no long-press image callout
+     (iOS), and touches fall through to the controls layered above it. */
+  -webkit-touch-callout: none;
+  pointer-events: none;
+}
+
+@media (orientation: portrait) {
+  body[data-role="pilot"] #pilot-stage {
+    flex-direction: column;
+  }
+
+  body[data-role="pilot"] #pilot-video-frame {
+    position: relative;
+    inset: auto;
+    flex: 0 0 auto;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+  }
+
+  body[data-role="pilot"] #controls {
+    position: relative;
+    inset: auto;
+    flex: 1 1 auto;
+    flex-direction: row;
+    align-items: center;
+  }
+}
+
+#status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1em;
+  padding: 0.5em 0.75em;
+  font-size: 0.85em;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+
+#status-bar span {
+  white-space: nowrap;
+}
+
+.status-ok {
+  color: #7ee787;
+}
+
+.status-bad {
+  color: #ff7b72;
+}
+
+#disconnected-banner {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1em;
+  background: rgba(0, 0, 0, 0.85);
+  font-size: 1.2em;
+  text-align: center;
+  padding: 1em;
+}
+
+#disconnected-banner[hidden] {
+  display: none;
+}
+
+#reload-button {
+  padding: 0.6em 1.4em;
+  font-size: 1em;
+  font-weight: bold;
+  border: none;
+  border-radius: 10px;
+  background: #2e7d32;
+  color: #fff;
+}
+
+#home-link {
+  position: fixed;
+  top: 0.5em;
+  right: 0.5em;
+  z-index: 20;
+  padding: 0.9em 1.2em;
+  font-size: 1.1em;
+  font-weight: bold;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  text-decoration: none;
+  /* Leaving /pilot closes this connection's WebSocket, which the server's
+     existing disconnect handling already turns into a stop + slot release
+     (see server.py's `finally` block) -- no separate "go home" logic needed. */
+}
+
+#view-only-banner {
+  position: fixed;
+  top: 2.6em;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  text-align: center;
+  padding: 0.4em;
+  font-size: 0.9em;
+  background: rgba(192, 57, 43, 0.85);
+  color: #fff;
+}
+
+#view-only-banner[hidden] {
+  display: none;
+}
+
+/* Positioned below #home-link (which stays clickable at z-index 20) so a
+   compute-only/fault banner never covers it. */
+#servo-banner,
+#servo-fault-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  text-align: center;
+  padding: 0.5em 0.75em;
+  font-size: 0.9em;
+  font-weight: bold;
+  color: #fff;
+}
+
+#servo-banner {
+  top: 3.9em;
+  background: rgba(192, 57, 43, 0.92);
+}
+
+#servo-fault-banner {
+  top: 6.9em;
+  background: rgba(230, 126, 34, 0.92);
+}
+
+#servo-banner[hidden],
+#servo-fault-banner[hidden] {
+  display: none;
+}
+
+/* Both groups below are sized in vmin (the viewport's shorter side), so the
+   layout fits either orientation without a per-orientation rule: switching
+   orientation swaps which of vw/vh is smaller, and vmin tracks whichever
+   that is. Budget in the worst case (portrait, vmin == vw): padding
+   2*2vmin + dpad-column's 4vmin left margin + dpad-column (3*14vmin cells +
+   2*1.5vmin gaps = 45vmin) + neck-controls (its widest child, the
+   gesture-buttons row at 2*15vmin + 1.2vmin gap = 31.2vmin) = 84.2vmin,
+   comfortably under the 100vw available so `justify-content: space-between`
+   always has room and neither group needs to shrink. */
+#controls {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 2vmin;
+  pointer-events: none;
+}
+
+#controls[hidden] {
+  display: none;
+}
+
+#controls > * {
+  pointer-events: auto;
+  flex: 0 0 auto;
+}
+
+/* Left margin keeps rotate-left's diagonal outward nudge (see
+   `#rotate-left` below) from being clipped by the viewport's left edge. */
+#dpad-column {
+  margin-left: 4vmin;
+}
+
+#dpad {
+  display: grid;
+  grid-template-columns: repeat(3, clamp(48px, 14vmin, 84px));
+  grid-template-rows: repeat(3, clamp(48px, 14vmin, 84px));
+  gap: clamp(4px, 1.5vmin, 10px);
+}
+
+#dpad button {
+  font-size: clamp(18px, 5vmin, 28px);
+  border-radius: 12px;
+  border: none;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+#dpad button:active,
+#dpad button.pressed {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+/* Rotate sits in the grid's top corners for layout purposes, but is nudged
+   diagonally outward and made circular so it doesn't read as a 5th/6th
+   d-pad direction. */
+.rotate-button {
+  border-radius: 50%;
+  background: rgba(120, 170, 255, 0.28);
+}
+
+.rotate-button:active,
+.rotate-button.pressed {
+  background: rgba(120, 170, 255, 0.6);
+}
+
+#rotate-left {
+  transform: translate(-35%, -35%);
+}
+
+#rotate-right {
+  transform: translate(35%, -35%);
+}
+
+#fullscreen-button {
+  position: fixed;
+  bottom: 1em;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 0.5em 0.9em;
+  font-size: 1.2em;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+#fullscreen-button[hidden] {
+  display: none;
+}
+
+/* ---- Viewer page: a normal scrollable document, not an overlay. ---- */
+
+#viewer-page {
+  max-width: 40em;
+  margin: 0 auto;
+  padding: 1.5em 1em 3em;
+  text-align: center;
+}
+
+#viewer-title {
+  font-size: 1.3em;
+  margin: 0.2em 0 1em;
+}
+
+#video-frame {
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  margin: 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  background: #000;
+  overflow: hidden;
+}
+
+#video-frame #video-layer {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* The feed is a backdrop, never a target: no long-press image callout
+     (iOS) on the framed video either. */
+  -webkit-touch-callout: none;
+  pointer-events: none;
+}
+
+#viewer-caption {
+  margin: 1.2em 0 0.8em;
+  font-size: 0.95em;
+  color: #ccc;
+}
+
+#pilot-link {
+  display: inline-block;
+  padding: 0.7em 1.4em;
+  border-radius: 10px;
+  background: #2e7d32;
+  color: #fff;
+  text-decoration: none;
+  font-weight: bold;
+}
+
+#pilot-link[aria-disabled="true"] {
+  background: rgba(255, 255, 255, 0.15);
+  color: #999;
+  pointer-events: none;
+}
+
+#viewer-page #status-bar {
+  justify-content: center;
+  margin: 1.5em auto 0;
+  max-width: fit-content;
+}
+
+#neck-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(4px, 1.2vmin, 8px);
+}
+
+#gesture-buttons {
+  display: flex;
+  gap: clamp(4px, 1.2vmin, 8px);
+}
+
+/* Sized to match the d-pad's cells (see `#dpad`'s clamp above) so the SVG
+   icon occupies most of the button rather than reading as a small
+   secondary control. */
+#gesture-buttons button {
+  width: clamp(48px, 15vmin, 110px);
+  height: clamp(48px, 15vmin, 110px);
+  padding: 10%;
+  border-radius: 10px;
+  border: none;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+#gesture-buttons .icon {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+#gesture-buttons button:active,
+#gesture-buttons button.pressed {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+#neck-stick {
+  position: relative;
+  width: clamp(120px, 30vmin, 220px);
+  height: clamp(120px, 30vmin, 220px);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Sized as a share of #neck-stick, not its own vmin value, so the handle
+   scales with the stick at every viewport instead of the two drifting out
+   of proportion at the clamp() bounds above. */
+#neck-stick-handle {
+  position: absolute;
+  width: 33%;
+  height: 33%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.6);
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
