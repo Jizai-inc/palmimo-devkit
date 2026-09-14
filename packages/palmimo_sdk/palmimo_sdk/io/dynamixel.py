@@ -469,10 +469,10 @@ class DynamixelDriver(ServoDriver):
     def read_positions_span(self, motors: Sequence[str] | None = None) -> ServoPositions:
         if self._bus is None:
             raise RuntimeError("Driver is not connected. Call connect() before read_positions_span().")
-        # No num_retry: the caller's control period bounds how long a read may
-        # take, and a retry would re-ask every motor rather than just the one
-        # that dropped.
-        sweep = self._bus.sync_read_span(["Present_Position"], motors=motors, num_retry=0)
+        # sync_read_span retries only a request that failed to send, which asks
+        # no motor twice, so one retry keeps a transient TX failure from
+        # dropping a whole control frame.
+        sweep = self._bus.sync_read_span(["Present_Position"], motors=motors, num_retry=1)
         return ServoPositions(
             positions={n: v["Present_Position"] for n, v in sweep.values.items()},
             silent=sweep.silent,

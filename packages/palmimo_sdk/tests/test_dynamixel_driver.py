@@ -100,6 +100,7 @@ class FakeBus:
             for name in MOTOR_NAMES
         }
         self.span_reads: list[tuple[tuple[str, ...], tuple[str, ...] | None]] = []
+        self.span_num_retries: list[int] = []
 
     def sync_write(self, address: str, data: Any, normalize: bool = False) -> None:
         if address == self.fail_write_address:
@@ -130,6 +131,7 @@ class FakeBus:
     ) -> SpanRead:
         names = list(MOTOR_NAMES) if motors is None else [n for n in MOTOR_NAMES if n in set(motors)]
         self.span_reads.append((tuple(fields), None if motors is None else tuple(motors)))
+        self.span_num_retries.append(num_retry)
         if self.span_send_fails:
             return SpanRead(unreached=tuple(names))
         values: dict[str, dict[str, int]] = {}
@@ -1159,6 +1161,16 @@ def test_read_positions_span_reports_every_motor_unreached_on_a_send_failure() -
     assert span.positions == {}
     assert span.silent == ()
     assert span.unreached == tuple(MOTOR_NAMES)
+
+
+def test_read_positions_span_retries_a_request_that_failed_to_send() -> None:
+    """A send retry asks no motor twice, so a transient TX failure need not cost the frame."""
+    driver, bus, _ = make_driver()
+    driver.connect()
+
+    driver.read_positions_span()
+
+    assert bus.span_num_retries == [1]
 
 
 def test_read_positions_span_sweeps_only_the_requested_motors() -> None:
