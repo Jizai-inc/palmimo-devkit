@@ -47,7 +47,7 @@ this package stays hardware-free to import.
 """
 
 from .alsa_devices import resolve_alsa_device
-from .base import SAFE_MAX_TICK, SAFE_MIN_TICK, ServoDriver, ServoTelemetry
+from .base import SAFE_MAX_TICK, SAFE_MIN_TICK, ServoDriver, ServoPositions, ServoTelemetry
 from .camera import HeadCamera, HeadCameraConfig
 from .display import FaceDisplay, FaceDisplayConnectTimeoutError, FaceDisplayError, find_face_port
 from .dynamixel import (
@@ -82,6 +82,7 @@ __all__ = [
     "PiperEngine",
     "PortDetectionError",
     "ServoDriver",
+    "ServoPositions",
     "ServoTelemetry",
     "Speaker",
     "SpeakerConfig",

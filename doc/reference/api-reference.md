@@ -917,6 +917,19 @@ then hands the clamped positions to `_write_positions`, the abstract method a
 backend (`DynamixelDriver` included) implements to reach the hardware. A
 backend never has to apply the clamp itself.
 
+`ServoDriver.read_positions()` reads present servo positions but collapses a
+failed read to a safe placeholder (`{}` for a whole-batch failure, `NEUTRAL`
+for a single dropped motor), so a caller cannot tell a dropout from a real
+`NEUTRAL` reading. `ServoDriver.read_positions_span(motors=None)` reads the
+same signal without that placeholder: it returns a `ServoPositions`
+(`palmimo_sdk.io.base.ServoPositions`) whose `positions` mapping holds only
+the motors that answered, alongside `silent` (asked, no answer) and
+`unreached` (never asked because the sweep already stopped) — the same shape
+as `ServoTelemetry` below. Callers that must not mistake a dropped read for a
+real joint position (e.g. a policy loop running at a fixed control rate) use
+this instead of `read_positions()`. Optional capability; the default raises
+`NotImplementedError`.
+
 ## Port Auto-Detection
 
 ### `find_servo_port() -> str`

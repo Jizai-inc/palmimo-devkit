@@ -27,7 +27,7 @@ from typing import Any
 
 from ..kinematics import NEUTRAL
 from ._timeout import ProbeTimeoutError, run_with_timeout
-from .base import ServoDriver, ServoTelemetry
+from .base import ServoDriver, ServoPositions, ServoTelemetry
 
 
 logger = logging.getLogger(__name__)
@@ -465,6 +465,19 @@ class DynamixelDriver(ServoDriver):
         if raw is None:
             return {}
         return {name: (NEUTRAL if tick is None else int(tick)) for name, tick in raw.items()}
+
+    def read_positions_span(self, motors: Sequence[str] | None = None) -> ServoPositions:
+        if self._bus is None:
+            raise RuntimeError("Driver is not connected. Call connect() before read_positions_span().")
+        # No num_retry: the caller's control period bounds how long a read may
+        # take, and a retry would re-ask every motor rather than just the one
+        # that dropped.
+        sweep = self._bus.sync_read_span(["Present_Position"], motors=motors, num_retry=0)
+        return ServoPositions(
+            positions={n: v["Present_Position"] for n, v in sweep.values.items()},
+            silent=sweep.silent,
+            unreached=sweep.unreached,
+        )
 
     def read_telemetry(self, motors: Sequence[str] | None = None) -> ServoTelemetry:
         if self._bus is None:

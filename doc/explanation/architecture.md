@@ -142,7 +142,7 @@ packages/
       engine.py                         # MotionEngine — pure gait/IK computation, no I/O
       kinematics.py                     # Shared IK/FK (leg_ik / servo ticks / body-frame foot position)
       io/__init__.py                    # Re-exports ServoDriver / DynamixelDriver / HeadCamera / Microphone / MicStream / Speaker / FaceDisplay / find_servo_port
-      io/base.py                        # ServoDriver ABC (I/O boundary) + ServoTelemetry
+      io/base.py                        # ServoDriver ABC (I/O boundary) + ServoTelemetry / ServoPositions
       io/dynamixel.py                   # DynamixelDriver — concrete ServoDriver over the Dynamixel bus (+ find_servo_port auto-detection)
       io/camera.py                      # HeadCamera — head-camera capture resource (full-FOV MJPG -> downscale -> rotate)
       io/microphone.py                  # Microphone — USB mic capture (arecord/rec → WAV bytes)

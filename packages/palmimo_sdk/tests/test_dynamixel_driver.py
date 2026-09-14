@@ -66,6 +66,7 @@ class FakeBus:
         present: dict[str, int | None] | None = None,
         read_none: bool = False,
         fail_write_address: str | None = None,
+        span_send_fails: bool = False,
     ) -> None:
         self.motors: dict[str, None] = dict.fromkeys(MOTOR_NAMES)
         self.is_connected = True
@@ -81,11 +82,21 @@ class FakeBus:
         self.present = present if present is not None else dict.fromkeys(MOTOR_NAMES, NEUTRAL)
         self.read_none = read_none  # sync_read returns None (batch read failure)
         self.fail_write_address = fail_write_address  # raise on sync_write to this address
+        # sync_read_span's request never goes out, mirroring the real bus's
+        # txPacket-failure path: every motor comes back unreached, none silent.
+        self.span_send_fails = span_send_fails
         self.read_calls = 0
         # Telemetry the span read hands back: motor -> register -> raw value.
-        # A motor left out of it is one that did not answer.
+        # A motor left out of it is one that did not answer. Present_Position
+        # rides along here too, so read_positions_span (also a sync_read_span
+        # caller) can share this same answered/silent/unreached machinery.
         self.telemetry: dict[str, dict[str, int]] = {
-            name: {"Present_Current": 100, "Present_Input_Voltage": 47, "Present_Temperature": 30}
+            name: {
+                "Present_Current": 100,
+                "Present_Input_Voltage": 47,
+                "Present_Temperature": 30,
+                "Present_Position": tick if (tick := self.present.get(name)) is not None else NEUTRAL,
+            }
             for name in MOTOR_NAMES
         }
         self.span_reads: list[tuple[tuple[str, ...], tuple[str, ...] | None]] = []
@@ -119,6 +130,8 @@ class FakeBus:
     ) -> SpanRead:
         names = list(MOTOR_NAMES) if motors is None else [n for n in MOTOR_NAMES if n in set(motors)]
         self.span_reads.append((tuple(fields), None if motors is None else tuple(motors)))
+        if self.span_send_fails:
+            return SpanRead(unreached=tuple(names))
         values: dict[str, dict[str, int]] = {}
         silent: list[str] = []
         unreached: list[str] = []
@@ -141,10 +154,16 @@ def make_driver(
     present: dict[str, int | None] | None = None,
     read_none: bool = False,
     fail_write_address: str | None = None,
+    span_send_fails: bool = False,
     **kwargs: Any,
 ) -> tuple[DynamixelDriver, FakeBus, list[tuple[Any, ...]]]:
     """Build a driver wired to a fresh FakeBus, returning both."""
-    bus = FakeBus(present=present, read_none=read_none, fail_write_address=fail_write_address)
+    bus = FakeBus(
+        present=present,
+        read_none=read_none,
+        fail_write_address=fail_write_address,
+        span_send_fails=span_send_fails,
+    )
     calls: list[tuple[Any, ...]] = []
 
     def factory(port: str, motor_model: str, baudrate: int, profile_velocity: int, calibration: Any = None) -> FakeBus:
@@ -1101,3 +1120,58 @@ def test_read_telemetry_requires_a_connection() -> None:
     driver, _bus, _ = make_driver()
     with pytest.raises(RuntimeError, match="not connected"):
         driver.read_telemetry()
+
+
+def test_read_positions_span_returns_every_motor_that_answers() -> None:
+    """Unlike read_positions, a full sweep is not collapsed to a dict-shaped guess."""
+    present: dict[str, int | None] = {name: 1000 + i for i, name in enumerate(MOTOR_NAMES)}
+    driver, _bus, _ = make_driver(present=present)
+    driver.connect()
+
+    span = driver.read_positions_span()
+
+    assert span.positions == present
+    assert span.silent == ()
+    assert span.unreached == ()
+
+
+def test_read_positions_span_omits_a_motor_that_did_not_answer() -> None:
+    """No NEUTRAL stand-in: an invented position would look like a real joint reading."""
+    driver, bus, _ = make_driver()
+    driver.connect()
+    del bus.telemetry["leg_1_pitch1"]
+
+    span = driver.read_positions_span()
+
+    assert "leg_1_pitch1" not in span.positions
+    assert span.silent == ("leg_1_pitch1",)
+    assert "leg_1_pitch2" in span.unreached
+    assert "leg_1_yaw" in span.positions  # asked before the failure, so it answered
+
+
+def test_read_positions_span_reports_every_motor_unreached_on_a_send_failure() -> None:
+    """The request never goes out: nothing answered, and no motor is singled out as silent."""
+    driver, _bus, _ = make_driver(span_send_fails=True)
+    driver.connect()
+
+    span = driver.read_positions_span()
+
+    assert span.positions == {}
+    assert span.silent == ()
+    assert span.unreached == tuple(MOTOR_NAMES)
+
+
+def test_read_positions_span_sweeps_only_the_requested_motors() -> None:
+    driver, bus, _ = make_driver()
+    driver.connect()
+
+    span = driver.read_positions_span(["leg_2_yaw"])
+
+    assert set(span.positions) == {"leg_2_yaw"}
+    assert bus.span_reads[0][1] == ("leg_2_yaw",)
+
+
+def test_read_positions_span_requires_a_connection() -> None:
+    driver, _bus, _ = make_driver()
+    with pytest.raises(RuntimeError, match="not connected"):
+        driver.read_positions_span()
