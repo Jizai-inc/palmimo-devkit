@@ -235,7 +235,7 @@ class TestParallelToolCallsParameter:
     async def test_accepts_parallel_tool_calls_asks_about_the_value_and_the_tool_count(self) -> None:
         """Gemini lists the parameter but honours it only as True once more than one
         tool is offered, so a guard that asks whether the provider "supports" the
-        name sends False and the completion fails. The probe runs the mapping the
+        name sends a False that Gemini does not honour. The probe runs the mapping the
         request goes through, with the value and arity in play."""
         gemini = "gemini/gemini-3.5-flash-lite"
         assert _accepts_parallel_tool_calls(gemini, False, True) is False
