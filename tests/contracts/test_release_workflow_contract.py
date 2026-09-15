@@ -1,10 +1,13 @@
 """Pins the shape of the SDK-only release workflow.
 
-This repository's release now carries no asset -- the Palmimo Portal frontend
-build moved, together with the Portal itself, to its own repository. This
-contract checks the guardrails that make an
-SDK-only release safe: the tag trigger, the on-main guard, draft creation
-with generated notes, and the prerelease-on-hyphen rule.
+The Palmimo Portal frontend build moved, together with the Portal itself, to
+its own repository, so this repository's release carries only the app
+catalog asset (`palmimo-catalog-<tag>.json` + `.sha256`, built from
+`examples/*/palmimo.toml` by `tools/build_catalog.py` -- see
+doc/reference/app-manifest.md) rather than a Portal build. This contract
+checks the guardrails that make that safe: the tag trigger, the on-main
+guard, draft creation with generated notes, the prerelease-on-hyphen rule,
+and that the catalog (and nothing Portal-shaped) is what gets attached.
 
 Each check is scoped to the specific line or shell block that actually
 carries the thing being asserted -- not "does this string appear anywhere in
@@ -110,16 +113,34 @@ def test_release_workflow_never_references_the_portal_package_path() -> None:
     assert "palmimo-portal-static" not in text
 
 
-def test_release_workflow_has_no_asset_build_or_upload_steps() -> None:
-    # An SDK-only release carries no asset: no Node setup, no frontend
-    # build, no tarball/checksum packaging, no asset upload.
+def test_release_workflow_has_no_portal_frontend_build_steps() -> None:
+    # The catalog asset is a JSON file built from stdlib-only Python (see
+    # tools/build_catalog.py) -- no Node toolchain and no frontend bundling
+    # belong in this workflow.
     assert WORKFLOW_PATH.is_file(), f"missing {WORKFLOW_PATH}"
     text = WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "setup-node" not in text
     assert "npm ci" not in text
-    assert "sha256sum" not in text
-    assert "gh release upload" not in text
     assert "tar -c" not in text
+
+
+def test_release_workflow_builds_and_attaches_the_catalog_asset() -> None:
+    assert WORKFLOW_PATH.is_file(), f"missing {WORKFLOW_PATH}"
+    text = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    blocks = _run_blocks(text)
+    build_blocks = [block for block in blocks if "tools.build_catalog" in block]
+    assert build_blocks, f"{WORKFLOW_PATH} must build the catalog via tools/build_catalog.py"
+    assert any("sha256sum" in block for block in build_blocks), (
+        f"{WORKFLOW_PATH} must checksum the catalog asset it builds"
+    )
+
+    upload_blocks = [block for block in blocks if "gh release upload" in block]
+    assert upload_blocks, f"{WORKFLOW_PATH} must upload the catalog asset to the release"
+    assert any("--clobber" in block for block in upload_blocks), (
+        f"{WORKFLOW_PATH}'s asset upload must use --clobber, so re-running the workflow for an "
+        "existing draft refreshes the asset instead of failing"
+    )
 
 
 def test_releasing_guide_documents_the_prerelease_rule() -> None:

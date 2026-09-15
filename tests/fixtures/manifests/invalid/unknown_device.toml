@@ -1,0 +1,6 @@
+# unknown device: "gpu" is not one of camera, audio, motor_display
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run"]
+devices = ["gpu"]

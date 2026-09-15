@@ -101,6 +101,7 @@ include = [
     "packages/palmimo_sdk/**/*.py",
     "scripts/**/*.py",
     "tests/**/*.py",
+    "tools/**/*.py",
 ]
 exclude = [
     ".venv",
@@ -196,6 +197,7 @@ files = [
     "packages/palmimo_sdk/",
     "scripts/",
     "tests/",
+    "tools/",
 ]
 exclude = [
     "\\.venv",
