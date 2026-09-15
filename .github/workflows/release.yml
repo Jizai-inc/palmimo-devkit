@@ -2,17 +2,23 @@
 # auto-generated notes (shaped by .github/release.yml), for a maintainer to
 # review and publish by hand -- see doc/guides/releasing.md.
 #
-# This release carries no asset of its own. There is nothing on this
-# repository's tag for a device to install: the Palmimo Portal (the thing
-# that used to be built and attached here) now lives, and self-updates, from
-# its own repository. A palmimo-devkit release exists to
-# mark a validated SDK revision with human-readable notes; a user on a
-# cloned devkit updates with plain git (fetch + checkout the tag, or pull).
-# Publishing the draft this workflow creates does trigger a separate
-# workflow, publish.yml, which builds and uploads palmimo-sdk to PyPI.
+# This release carries exactly one asset pair of its own:
+# palmimo-catalog-<tag>.json (and its .sha256) -- the official-apps catalog
+# Palmimo Portal reads to list this repository's example apps (see
+# doc/reference/app-manifest.md and tools/build_catalog.py). There is
+# nothing else on this repository's tag for a device to install: the
+# Palmimo Portal itself (the thing that used to be built and attached here)
+# now lives, and self-updates, from its own repository. A palmimo-devkit
+# release otherwise exists to mark a validated SDK revision with
+# human-readable notes; a user on a cloned devkit updates with plain git
+# (fetch + checkout the tag, or pull). Publishing the draft this workflow
+# creates does trigger a separate workflow, publish.yml, which builds and
+# uploads palmimo-sdk to PyPI.
 #
 # The release is created as a **draft** on purpose: a maintainer reads and
-# edits the auto-generated notes and publishes by hand.
+# edits the auto-generated notes and publishes by hand. The catalog asset is
+# attached before the release is left in that draft state, so a maintainer
+# publishing early never exposes a release with notes but no catalog.
 #
 # A tag with a hyphen (e.g. v1.2.0-rc1) is a pre-release build by SemVer
 # convention, so it is created with `--prerelease`. `GET
@@ -77,3 +83,30 @@ jobs:
           esac
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "$TAG" \
             "${prerelease_flag[@]}"
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Build the app catalog
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # --no-project: tools/build_catalog.py only reads palmimo.toml
+          # files with the standard library (tomllib), so it needs no
+          # workspace dependency resolved.
+          uv run --no-project python -m tools.build_catalog "$TAG" "palmimo-catalog-$TAG.json"
+          sha256sum "palmimo-catalog-$TAG.json" > "palmimo-catalog-$TAG.json.sha256"
+
+      - name: Attach the catalog asset to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # --clobber: re-running this workflow for a tag that already has a
+          # release (see the idempotency note above) must refresh the asset
+          # rather than fail on "already exists".
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "palmimo-catalog-$TAG.json" "palmimo-catalog-$TAG.json.sha256"

@@ -1,0 +1,15 @@
+schema = 1
+name = "palmimo-wakeword-agent"
+description = "One-shot wake-word voice agent: hear the wake word and a command in one breath, execute it, and speak the reply."
+command = ["palmimo-wakeword-agent"]
+devices = ["audio", "motor_display"]
+
+[env.OPENAI_API_KEY]
+required = true
+description = "OpenAI API key: Whisper speech-to-text transcription always runs against it, unconditionally."
+help_url = "https://platform.openai.com/api-keys"
+
+[env.GEMINI_API_KEY]
+required = true
+description = "Google Gemini API key, needed by the default command model. Not needed if command_model is overridden to a plain OpenAI model."
+help_url = "https://aistudio.google.com/apikey"
