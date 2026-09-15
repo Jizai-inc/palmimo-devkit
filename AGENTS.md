@@ -192,4 +192,5 @@ to different readers.
 | Motion system | [doc/explanation/motion-system.md](doc/explanation/motion-system.md), [doc/reference/motions.md](doc/reference/motions.md) |
 | Architecture & SDK design | [doc/explanation/architecture.md](doc/explanation/architecture.md) |
 | API reference | [doc/reference/api-reference.md](doc/reference/api-reference.md) |
+| App manifest (`palmimo.toml`) | [doc/reference/app-manifest.md](doc/reference/app-manifest.md) |
 | New motion checklist | [doc/guides/motion-development-guide.md](doc/guides/motion-development-guide.md) |

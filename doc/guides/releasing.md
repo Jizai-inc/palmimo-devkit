@@ -2,12 +2,13 @@
 
 How to cut a palmimo-devkit release: a SemVer tag and one GitHub Release.
 
-A release marks a validated SDK revision with human-readable notes — the
-GitHub release itself carries no asset, and it does not push anything to any
-device. If you have a clone of this repository, you update by fetching and
-checking out the tag (or by pulling `main`), not by downloading anything
-from the release page. Publishing the release is what puts `palmimo-sdk` on
-PyPI — see [Publish](#4-publish) below.
+A release marks a validated SDK revision with human-readable notes, and does
+not push anything to any device. If you have a clone of this repository, you
+update by fetching and checking out the tag (or by pulling `main`), not by
+downloading anything from the release page. The one asset the GitHub release
+itself carries, `palmimo-catalog-<tag>.json`, is for Palmimo Portal, not for
+you — see [What CI does](#3-what-ci-does). Publishing the release is what
+puts `palmimo-sdk` on PyPI — see [Publish](#4-publish) below.
 
 Palmimo Portal is a separate product, maintained in its own
 repository; it self-updates from there, independently of this repository's
@@ -67,6 +68,12 @@ Pushing a `v*` tag triggers `.github/workflows/release.yml`:
    below). If the tag name contains a `-` (a pre-release build), the release
    is created with `--prerelease` so it can never surface as
    `releases/latest`.
+3. Builds `palmimo-catalog-<tag>.json` (and its `.sha256`) from every
+   example's `palmimo.toml` (see
+   [doc/reference/app-manifest.md](../reference/app-manifest.md) and
+   `tools/build_catalog.py`) and attaches both to the draft release. Palmimo
+   Portal reads this asset from `releases/latest` to list the official apps
+   in its catalog.
 
 Re-running the workflow for a tag that already has a release does nothing
 if that release already exists — draft or published. Re-running it for a

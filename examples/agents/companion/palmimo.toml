@@ -1,0 +1,15 @@
+schema = 1
+name = "palmimo-companion-agent"
+description = "Always-on companion agent: an autonomous idle loop plus speech- and vision-driven responses, with a motion and expression vocabulary."
+command = ["palmimo-companion-agent", "--ui", "cli"]
+devices = ["camera", "audio", "motor_display"]
+
+[env.OPENAI_API_KEY]
+required = true
+description = "OpenAI API key, read by LiteLLM: used by the default speech-to-text model and, when voice_backend is set to openai, for text-to-speech."
+help_url = "https://platform.openai.com/api-keys"
+
+[env.GEMINI_API_KEY]
+required = true
+description = "Google Gemini API key, read by LiteLLM: used by the default chat, guard, and vision-language models. Not needed if those are all reconfigured away from Gemini."
+help_url = "https://aistudio.google.com/apikey"

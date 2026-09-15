@@ -1,0 +1,19 @@
+schema = 1
+name = "palmimo-teleop"
+description = "Drive Palmimo from a phone or laptop browser over WebSocket, with live MJPEG camera video, on the same LAN."
+command = ["palmimo-teleop", "--port", "{port}", "{no_camera}"]
+url = "http://{host}:{port}/"
+devices = ["camera", "motor_display"]
+
+[params.port]
+type = "int"
+default = 8000
+min = 1024
+max = 65535
+description = "HTTP/WebSocket port the teleop web app is served on."
+
+[params.no_camera]
+type = "bool"
+default = false
+flag = "--no-camera"
+description = "Disable the head camera video feed."

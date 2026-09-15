@@ -1,0 +1,5 @@
+# bad name: uppercase letters are not allowed by the name pattern
+schema = 1
+name = "BadApp"
+description = "test"
+command = ["run"]

@@ -22,6 +22,7 @@ const SIDEBAR_ORDER = {
   'guides/releasing.md': 6,
   'reference/api-reference.md': 1,
   'reference/motions.md': 2,
+  'reference/app-manifest.md': 3,
   'explanation/architecture.md': 1,
   'explanation/motion-system.md': 2,
 };
