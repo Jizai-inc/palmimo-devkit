@@ -1,0 +1,17 @@
+schema = 1
+name = "palmimo-companion-realtime"
+description = "Voice conversation with the companion over the OpenAI Realtime API, with camera frames pushed to the model periodically."
+command = ["palmimo-realtime", "--seconds", "{seconds}"]
+devices = ["camera", "audio", "motor_display"]
+
+[params.seconds]
+type = "float"
+default = 120
+min = 10
+max = 3600
+description = "Session length in seconds."
+
+[env.OPENAI_API_KEY]
+required = true
+description = "OpenAI API key for the Realtime session: speech in, spoken replies out, and tool calls."
+help_url = "https://platform.openai.com/api-keys"

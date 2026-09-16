@@ -14,6 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+#: Matches `palmimo.toml` (the default manifest) or `palmimo.<variant>.toml`,
+#: where `<variant>` is the same shape as an app `name`. Anything else in an
+#: app directory -- a stray `palmimo_backup.toml`, a differently-cased
+#: `palmimo.TOML` -- is not a manifest.
+MANIFEST_FILENAME_RE = re.compile(r"^palmimo(?:\.[a-z][a-z0-9-]{0,39})?\.toml$")
+
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,39}$")
 PARAM_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
@@ -92,6 +98,20 @@ class AppManifest:
     devices: tuple[str, ...]
     env: dict[str, EnvVar]
     params: dict[str, Param]
+
+
+def is_manifest_filename(name: str) -> bool:
+    """Whether *name* is a `palmimo.toml` manifest filename (see MANIFEST_FILENAME_RE)."""
+    return MANIFEST_FILENAME_RE.fullmatch(name) is not None
+
+
+def discover_manifests(app_dir: Path) -> list[Path]:
+    """Return every manifest file directly in *app_dir*, sorted for deterministic output.
+
+    Non-recursive: an app's own package directories (e.g.
+    `palmimo_companion_agent/`) are never searched.
+    """
+    return sorted(path for path in app_dir.iterdir() if path.is_file() and is_manifest_filename(path.name))
 
 
 def load_manifest(path: Path) -> AppManifest:
