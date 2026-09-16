@@ -1,11 +1,14 @@
 """Build `palmimo-catalog-<tag>.json`, the official-apps catalog Portal reads from a devkit Release.
 
-Scans `examples/*/palmimo.toml` and `examples/agents/*/palmimo.toml` (the same
-example apps `.github/workflows/release.yml` ships in the catalog asset),
-validates each against doc/reference/app-manifest.md, and writes one catalog
-entry per app: name, description, its env/devices exactly as declared (so the
-catalog never drifts from the manifest it was built from), and a `source`
-pointing at this repository's git subdir, pinned to *tag*.
+Scans every manifest file (`palmimo.toml` or `palmimo.<variant>.toml`) in
+`examples/*` and `examples/agents/*` (the same example directories
+`.github/workflows/release.yml` ships in the catalog asset) -- one app per
+manifest file, so a directory may ship several -- validates each against
+doc/reference/app-manifest.md, and writes one catalog entry per app: name,
+description, its env/devices exactly as declared (so the catalog never
+drifts from the manifest it was built from), and a `source` pointing at this
+repository's git subdir, pinned to *tag*, plus a `manifest` filename when the
+app's file isn't the default `palmimo.toml`.
 
 Usage:
     uv run python -m tools.build_catalog <tag> <output-path>
@@ -18,26 +21,42 @@ import json
 from pathlib import Path
 
 from tools.manifest import AppManifest, load_manifest
+from tools.manifest import discover_manifests as _discover_manifests_in_dir
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEVKIT_REPO_URL = "https://github.com/Jizai-inc/palmimo-devkit"
 
-# `examples/*/palmimo.toml` and `examples/agents/*/palmimo.toml` cover every
-# app example without also matching the grouping directory
-# `examples/agents/` (which carries no manifest of its own) -- the same two
-# globs `[tool.uv.workspace]` in pyproject.toml uses for the same directories.
-MANIFEST_GLOBS = ("examples/*/palmimo.toml", "examples/agents/*/palmimo.toml")
+# `examples/*` and `examples/agents/*` cover every app example directory
+# without also matching the grouping directory `examples/agents/` itself
+# (which carries no manifest of its own) -- the same two globs
+# `[tool.uv.workspace]` in pyproject.toml uses for the same directories.
+APP_DIR_GLOBS = ("examples/*", "examples/agents/*")
 
 
-def discover_manifests() -> list[Path]:
-    """Return every `palmimo.toml` under `examples/`, sorted for deterministic output."""
-    paths = {path for pattern in MANIFEST_GLOBS for path in REPO_ROOT.glob(pattern)}
+def discover_manifests(root: Path = REPO_ROOT) -> list[Path]:
+    """Return every manifest file under *root*'s example app directories, sorted for deterministic output.
+
+    Scoped to the two example-app directory levels (not recursive within
+    each), so a manifest-shaped file inside an app's own package (e.g.
+    `palmimo_companion_agent/`) is never picked up.
+    """
+    app_dirs = {path for pattern in APP_DIR_GLOBS for path in root.glob(pattern) if path.is_dir()}
+    paths = [manifest for app_dir in app_dirs for manifest in _discover_manifests_in_dir(app_dir)]
     return sorted(paths)
 
 
-def _catalog_entry(manifest_path: Path, manifest: AppManifest, tag: str) -> dict:
-    subdir = manifest_path.parent.relative_to(REPO_ROOT).as_posix()
+def _catalog_entry(manifest_path: Path, manifest: AppManifest, tag: str, root: Path) -> dict:
+    subdir = manifest_path.parent.relative_to(root).as_posix()
+    source = {
+        "type": "git",
+        "url": DEVKIT_REPO_URL,
+        "subdir": subdir,
+        "ref_kind": "tag",
+        "ref": tag,
+    }
+    if manifest_path.name != "palmimo.toml":
+        source["manifest"] = manifest_path.name
     return {
         "name": manifest.name,
         "description": manifest.description,
@@ -46,22 +65,27 @@ def _catalog_entry(manifest_path: Path, manifest: AppManifest, tag: str) -> dict
             for env_name, env in sorted(manifest.env.items())
         },
         "devices": sorted(manifest.devices),
-        "source": {
-            "type": "git",
-            "url": DEVKIT_REPO_URL,
-            "subdir": subdir,
-            "ref_kind": "tag",
-            "ref": tag,
-        },
+        "source": source,
     }
 
 
-def build_catalog(tag: str) -> dict:
-    """Build the catalog document for *tag* from every example manifest."""
+def build_catalog(tag: str, root: Path = REPO_ROOT) -> dict:
+    """Build the catalog document for *tag* from every example manifest under *root*.
+
+    Raises:
+        ValueError: if two manifests declare the same `name` -- the catalog
+            is keyed by name, so a collision would silently drop one app.
+    """
     entries = []
-    for manifest_path in discover_manifests():
+    seen_names: dict[str, Path] = {}
+    for manifest_path in discover_manifests(root):
         manifest = load_manifest(manifest_path)
-        entries.append(_catalog_entry(manifest_path, manifest, tag))
+        if manifest.name in seen_names:
+            raise ValueError(
+                f"duplicate app name {manifest.name!r} in {manifest_path} and {seen_names[manifest.name]}"
+            )
+        seen_names[manifest.name] = manifest_path
+        entries.append(_catalog_entry(manifest_path, manifest, tag, root))
     entries.sort(key=lambda entry: entry["name"])
     return {"schema": 1, "apps": entries}
 

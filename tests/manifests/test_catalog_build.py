@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from tools.build_catalog import build_catalog, discover_manifests
 from tools.manifest import load_manifest
 
@@ -46,6 +48,30 @@ def test_catalog_covers_every_example_manifest() -> None:
     manifest_names = {load_manifest(path).name for path in discover_manifests()}
     assert catalog_names == manifest_names
     assert catalog_names  # would pass vacuously if discovery ever found nothing
+
+
+def test_catalog_entry_manifest_key_present_only_for_non_default_filename() -> None:
+    catalog = build_catalog("v1.2.3")
+    entries_by_name = {app["name"]: app for app in catalog["apps"]}
+
+    realtime = entries_by_name["palmimo-companion-realtime"]
+    assert realtime["source"]["manifest"] == "palmimo.realtime.toml"
+
+    pipeline = entries_by_name["palmimo-companion-agent"]
+    assert "manifest" not in pipeline["source"]
+
+
+def test_build_catalog_rejects_duplicate_app_names(tmp_path: Path) -> None:
+    app_dir = tmp_path / "examples" / "dup"
+    app_dir.mkdir(parents=True)
+    manifest_body = (
+        'schema = 1\nname = "palmimo-dup"\ndescription = "d"\ncommand = ["true"]\n'
+    )
+    (app_dir / "palmimo.toml").write_text(manifest_body)
+    (app_dir / "palmimo.other.toml").write_text(manifest_body)
+
+    with pytest.raises(ValueError, match="palmimo-dup"):
+        build_catalog("v1.2.3", root=tmp_path)
 
 
 def test_write_catalog_writes_deterministic_bytes(tmp_path: Path) -> None:
