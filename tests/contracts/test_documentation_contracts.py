@@ -120,6 +120,11 @@ COMMAND_PAGES = frozenset(
         "doc/guides/raspberry-pi-setup.md",
         "doc/guides/releasing.md",
         "docs-site/README.md",
+        # The one command this repository states that no single example's own
+        # README can own: the editable-overlay invocation for developing an
+        # example against local, unreleased SDK changes applies uniformly to
+        # every standalone example project, not to one of them.
+        "examples/README.md",
         "examples/agents/companion/README.md",
         "examples/agents/openclaw/README.md",
         "examples/agents/wakeword/README.md",

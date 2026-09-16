@@ -128,9 +128,12 @@ other peripheral; mic is not a special case.
 
 ### Package Structure
 
-A uv-managed workspace. `palmimo_sdk` is the core; every other package consumes it
-through the `Palmimo` facade. The dependency only ever runs that way — the core
-never imports a package built on top of it:
+A uv-managed workspace holding the SDK core; `palmimo_sdk` is the only member.
+The examples under `examples/` each consume it through the `Palmimo` facade,
+but as their own standalone uv projects depending on the published
+`palmimo-sdk` package, not as workspace members — see
+[examples/README.md](../../examples/README.md). The dependency only ever runs
+one way — the core never imports a package built on top of it:
 
 ```
 pyproject.toml                          # uv workspace root

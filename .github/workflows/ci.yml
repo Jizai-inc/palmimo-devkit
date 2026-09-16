@@ -49,8 +49,6 @@ jobs:
       - run: uv sync --dev
       - run: uv run mypy
 
-  # 3.12 alone: the companion example pins mediapipe 0.10.18, which publishes
-  # cp312 wheels only, so the workspace does not resolve on 3.13 at all.
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -58,12 +56,12 @@ jobs:
       matrix:
         python-version: ["3.12"]
     env:
-      # A ratchet, under today's 88.8%. Raise it when the real number rises.
+      # A ratchet, under today's 90.2%. Raise it when the real number rises.
       COVERAGE_FLOOR: 85
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      # sounddevice (palmimo_sdk's MicStream, used by the wakeword agent example)
-      # loads PortAudio at import time, so the tests need the native runtime
+      # sounddevice (palmimo_sdk's MicStream, dev-group `voice` extra) loads
+      # PortAudio at import time, so the tests need the native runtime
       # library on the runner.
       - run: sudo apt-get update && sudo apt-get install -y libportaudio2
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
@@ -71,6 +69,48 @@ jobs:
           enable-cache: true
       - run: uv sync --dev --python ${{ matrix.python-version }}
       - run: uv run --python ${{ matrix.python-version }} pytest --cov --cov-fail-under="$COVERAGE_FLOOR"
+
+  # Each example under examples/ is its own standalone uv project (its own
+  # uv.lock, resolving palmimo-sdk from PyPI) rather than a member of the root
+  # workspace above -- see examples/README.md. This job checks each one in its
+  # own directory, the way a user of that example actually would.
+  #
+  # 3.12 only: the companion example pins mediapipe==0.10.18, which publishes
+  # cp312 wheels only.
+  #
+  # Every lint/type/test step also runs once with an editable overlay of this
+  # PR's own packages/palmimo_sdk (--with-editable), so an SDK change that
+  # breaks an example fails that example's job on the same PR that made the
+  # change, instead of only after the next palmimo-sdk release. pytest runs a
+  # second time without the overlay -- against the locked PyPI palmimo-sdk
+  # release alone -- because that combination, not the overlay, is what
+  # actually ships when someone installs this example.
+  examples:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example:
+          - dir: examples/teleop
+          - dir: examples/agents/wakeword
+          - dir: examples/agents/companion
+    defaults:
+      run:
+        working-directory: ${{ matrix.example.dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # sounddevice (via palmimo-sdk's voice extra) loads PortAudio at import time.
+      - run: sudo apt-get update && sudo apt-get install -y libportaudio2
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - run: uv lock --check
+      - run: uv sync --frozen --dev --python 3.12
+      - run: uv run --with-editable ${{ github.workspace }}/packages/palmimo_sdk ruff check .
+      - run: uv run --with-editable ${{ github.workspace }}/packages/palmimo_sdk ruff format --check .
+      - run: uv run --with-editable ${{ github.workspace }}/packages/palmimo_sdk mypy
+      - run: uv run --with-editable ${{ github.workspace }}/packages/palmimo_sdk pytest --cov
+      - run: uv run --frozen --no-sync pytest --cov
 
   # Every job above runs in the dev venv, where each optional dependency is
   # already installed, so an eager import of one cannot fail there. This is the

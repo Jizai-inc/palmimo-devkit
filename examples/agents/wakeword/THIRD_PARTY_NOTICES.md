@@ -15,8 +15,8 @@ runtime into a local cache directory (see
 `palmimo_wakeword_agent.vad.SileroVad.load`), the same way
 `palmimo_sdk.audio.denoise` resolves the GTCRN model.
 
-This package is an unconditional dependency of the workspace root, so
-everything here lands in a default install of the tree, with no extra selected.
+This package is its own standalone uv project, so everything here lands in an
+ordinary install of this project's own directory, with no extra selected.
 `numpy` is declared here too, but it is a `palmimo-sdk` dependency as well and
 is attributed in its file above.
 

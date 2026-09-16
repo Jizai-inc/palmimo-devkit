@@ -9,11 +9,12 @@ found rather than asserting there are no others. A complete attribution for a
 pre-installed image will be produced from the resolved lockfile as a separate
 artifact rather than maintained here, and nothing here substitutes for it.
 
-These notices cover two sets: the direct dependencies of the
-`palmimo-devkit-software` workspace root itself, and any weak-copyleft
-transitive dependency that no workspace member's own file claims — wherever in
-the graph that one is reached from. Everything else reached through a member is
-covered by that member's own file:
+These notices cover the direct dependencies of the `palmimo-devkit-software`
+workspace root itself, plus any weak-copyleft transitive dependency reached
+from its own `uv.lock` that `packages/palmimo_sdk`'s own file does not already
+claim (`packages/*` is this workspace's only member; each example under
+`examples/` is a standalone project outside it, with its own `uv.lock` and its
+own copy of this same weak-copyleft check):
 
 - [`packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](packages/palmimo_sdk/THIRD_PARTY_NOTICES.md)
 - [`examples/agents/companion/THIRD_PARTY_NOTICES.md`](examples/agents/companion/THIRD_PARTY_NOTICES.md)
@@ -33,13 +34,18 @@ None of the components below are vendored or distributed with this repository
 — they are installed as regular PyPI dependencies.
 
 The list covers direct dependencies plus any transitive dependency whose own
-license is copyleft, however weak. Every dist in `uv.lock` was checked against
-that rule by its declared license; `tqdm` and `certifi` are the only two that
-meet it. `pathspec` (MPL-2.0) is reached only through `mypy` in the dev group,
-so it never ships. That count is about declared licenses only — copyleft
-material bundled inside a wheel does not appear in one, and three such cases
-are recorded below: FFmpeg under each of the two OpenCV dists, ALSA under
-`sherpa-onnx`, and the dual-licensed FreeType under `matplotlib`.
+license is copyleft, however weak. Every dist in this workspace's own
+`uv.lock` was checked against that rule by its declared license; `tqdm` is the
+only one that meets it (`certifi`, reached the same way before the examples
+moved out to their own standalone projects, no longer resolves into this
+workspace's `uv.lock` at all -- see
+[`examples/agents/companion/THIRD_PARTY_NOTICES.md`](examples/agents/companion/THIRD_PARTY_NOTICES.md#certifi)
+for where that attribution lives now). `pathspec` (MPL-2.0) is reached only
+through `mypy` in the dev group, so it never ships. That count is about
+declared licenses only — copyleft material bundled inside a wheel does not
+appear in one, and cases of that are recorded in whichever of these four files
+covers the dist that bundles it: FFmpeg under each of the two OpenCV dists,
+ALSA under `sherpa-onnx`, and the dual-licensed FreeType under `matplotlib`.
 
 That check reads what each dist declares for itself, so it cannot see
 third-party material bundled inside a wheel, which carries its own terms. That
@@ -111,28 +117,3 @@ work, and both are easy to break silently:
   notice to travel with the code, which here means leaving
   `tqdm-*.dist-info/LICENCE` in place rather than pruning `dist-info`
   directories to save space.
-
-## certifi
-
-Reached only through workspace members, by two routes that both start at the
-example agents: `openai` / `litellm` → `httpx` → `certifi` (`httpx` is
-also reached a third way, `litellm` → `tokenizers` → `huggingface-hub` →
-`httpx`), and `litellm` → `tiktoken` → `requests` → `certifi`. `palmimo-sdk`'s
-own closure does not contain it on any path — the `speech` extra reaches
-`nltk`, whose dependencies are `click`, `defusedxml`, `joblib`, `regex` and
-`tqdm`, and no `requests`. It is listed here rather than in a member file
-because it is weak copyleft that no member file claims — the second of the two
-sets this file covers. It is part of the default resolution, with no extra
-selected.
-
-- License: **MPL-2.0**
-- Source: https://github.com/certifi/python-certifi
-
-`certifi` also bundles the Mozilla CA root store as data, so the notice covers
-that bundle as well as the code.
-
-MPL-2.0 applies per file and does not reach the code that imports it. certifi
-is used unmodified, so the obligation is the same as for tqdm, and so are the
-two image conditions listed under it: `site-packages/certifi/` is Source Code
-Form (including `cacert.pem`, the data the notice covers), and
-`certifi-*.dist-info/LICENSE` must stay on the image.

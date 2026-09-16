@@ -12,9 +12,9 @@ for the `hardware`/`vision` extras it selects). None of the components below
 are vendored or distributed with this package — they are installed as
 regular PyPI dependencies.
 
-This package is an unconditional dependency of the workspace root, so
-everything here lands in a default install of the tree, with no extra
-selected. The frontend (`palmimo_teleop/static/`) is hand-written vanilla
+This package is its own standalone uv project, so everything here lands in an
+ordinary install of this project's own directory, with no extra selected.
+The frontend (`palmimo_teleop/static/`) is hand-written vanilla
 JS/CSS/HTML with no bundled or CDN-loaded library; the only third-party
 content it carries is the two inline SVG icons listed under
 [Vendored assets](#vendored-assets).

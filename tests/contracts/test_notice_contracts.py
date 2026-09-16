@@ -79,14 +79,24 @@ def _notice_files() -> list[Path]:
 
 
 def _project_dirs() -> list[Path]:
-    """Every directory in this workspace holding a `pyproject.toml`.
+    """Every directory in this tree holding a `pyproject.toml`, workspace or not.
 
     The workspace root is included deliberately. It is not a member of its own
     `members` globs, so a contract written only against members leaves the root
     project's own dependencies -- and the root notice file that covers them --
-    unguarded.
+    unguarded. Each example under examples/ is a standalone project outside
+    the workspace (its own uv.lock), not reachable via `[tool.uv.workspace]`
+    at all, so it is derived separately the same way
+    test_layering_contracts.py and test_self_containment.py derive it -- a
+    pyproject.toml directly inside a directory under examples/.
     """
-    return [SOFTWARE_ROOT, *_workspace_member_dirs()]
+    examples_root = SOFTWARE_ROOT / "examples"
+    example_dirs = sorted(
+        path.parent
+        for path in examples_root.rglob("pyproject.toml")
+        if not any(part.startswith(".") or part == "__pycache__" for part in path.relative_to(examples_root).parts)
+    )
+    return [SOFTWARE_ROOT, *_workspace_member_dirs(), *example_dirs]
 
 
 def _workspace_member_dirs() -> list[Path]:

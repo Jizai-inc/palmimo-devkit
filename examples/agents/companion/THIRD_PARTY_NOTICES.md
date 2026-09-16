@@ -13,8 +13,8 @@ or distributed with this package — the dependencies are installed from PyPI,
 and each model weights entry is downloaded automatically at runtime into a
 local cache directory.
 
-This package is an unconditional dependency of the workspace root, so
-everything here lands in a default install of the tree, with no extra selected.
+This package is its own standalone uv project, so everything here lands in an
+ordinary install of this project's own directory, with no extra selected.
 `numpy` and `opencv-python` are declared here too, but they are `palmimo-sdk`
 dependencies as well and are attributed in its file above.
 
@@ -29,6 +29,25 @@ dependencies as well and are attributed in its file above.
   separate license "if that directory exists". It does not exist in the
   published wheel (no `litellm/enterprise/*` entries in its `RECORD`), so what
   is installed here is MIT in full.
+
+### certifi
+
+Not declared directly; reached transitively, by two routes that both start
+from `litellm`: `litellm` -> `httpx` -> `certifi`, and `litellm` -> `tiktoken`
+-> `requests` -> `certifi`. Listed here because it is weak copyleft and this
+is the only standalone project in this tree whose own `uv.lock` resolves it
+(`palmimo-sdk`'s own closure does not reach it on any path).
+
+- License: **MPL-2.0**
+- Source: https://github.com/certifi/python-certifi
+- Also bundles the Mozilla CA root store as data, so the notice covers that
+  bundle as well as the code.
+- MPL-2.0 applies per file and does not reach the code that imports it.
+  `certifi` is used unmodified, so the only obligation is keeping
+  `site-packages/certifi/` (including `cacert.pem`, the data the notice
+  covers) and `certifi-*.dist-info/LICENSE` on any image that ships it,
+  mirroring `tqdm`'s section in
+  [`../../../THIRD_PARTY_NOTICES.md`](../../../THIRD_PARTY_NOTICES.md).
 
 ### pydantic-settings
 
