@@ -2,12 +2,13 @@
 
 What these lists are, how they were built, and what they deliberately do not
 cover is declared at the top of
-[`../../../THIRD_PARTY_NOTICES.md`](../../../THIRD_PARTY_NOTICES.md). This file travels on its own, so read that
-first.
+[`THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/THIRD_PARTY_NOTICES.md). This file travels on its own
+(a copied example has no parent tree), so those links point at the published
+repository; read that first.
 
 These notices apply to `palmimo-wakeword-agent` itself, in addition to
 whatever the `palmimo_sdk` extras it depends on already require (see
-[`../../../packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](../../../packages/palmimo_sdk/THIRD_PARTY_NOTICES.md)
+[`packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/packages/palmimo_sdk/THIRD_PARTY_NOTICES.md)
 for the `voice`/`speech`/`hardware` extras it selects). None of the components
 below are vendored or distributed with this package — the dependencies are
 installed from PyPI, and the Silero VAD model is downloaded automatically at
@@ -52,7 +53,7 @@ is attributed in its file above.
 
 `onnxruntime`, `pydantic-settings`, and `typer` are declared by the companion
 example as well, so they also appear in
-[`../companion/THIRD_PARTY_NOTICES.md`](../companion/THIRD_PARTY_NOTICES.md).
+[`examples/agents/companion/THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/examples/agents/companion/THIRD_PARTY_NOTICES.md).
 Each file lists what its own package declares, so either one stands alone.
 
 ## Model weights

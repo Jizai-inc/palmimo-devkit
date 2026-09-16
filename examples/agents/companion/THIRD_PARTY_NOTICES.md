@@ -2,12 +2,13 @@
 
 What these lists are, how they were built, and what they deliberately do not
 cover is declared at the top of
-[`../../../THIRD_PARTY_NOTICES.md`](../../../THIRD_PARTY_NOTICES.md). This file travels on its own, so read that
-first.
+[`THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/THIRD_PARTY_NOTICES.md). This file travels on its own
+(a copied example has no parent tree), so those links point at the published
+repository; read that first.
 
 These notices apply to `palmimo-companion-agent` itself, in addition to
 whatever the `palmimo_sdk` extras it depends on already require (see
-[`../../../packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](../../../packages/palmimo_sdk/THIRD_PARTY_NOTICES.md)
+[`packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/packages/palmimo_sdk/THIRD_PARTY_NOTICES.md)
 for the `voice`/`vision`/`agent` extras it selects). Nothing below is vendored
 or distributed with this package — the dependencies are installed from PyPI,
 and each model weights entry is downloaded automatically at runtime into a
@@ -47,7 +48,7 @@ is the only standalone project in this tree whose own `uv.lock` resolves it
   `site-packages/certifi/` (including `cacert.pem`, the data the notice
   covers) and `certifi-*.dist-info/LICENSE` on any image that ships it,
   mirroring `tqdm`'s section in
-  [`../../../THIRD_PARTY_NOTICES.md`](../../../THIRD_PARTY_NOTICES.md).
+  [`THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/THIRD_PARTY_NOTICES.md).
 
 ### pydantic-settings
 
@@ -127,7 +128,7 @@ third-party binaries that its own declared license does not describe.
   `LICENSE-3RD-PARTY.txt` in the installed `opencv_contrib_python` dist-info
   for the full list and license texts. This is the same bundled FFmpeg noted
   under `opencv-python` in
-  [`../../../packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](../../../packages/palmimo_sdk/THIRD_PARTY_NOTICES.md),
+  [`packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/packages/palmimo_sdk/THIRD_PARTY_NOTICES.md),
   reaching the install a second way.
 
 ### matplotlib
