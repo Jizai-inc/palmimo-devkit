@@ -5,10 +5,10 @@ no real servo bus, no real camera, no real time."""
 import asyncio
 import time
 from collections.abc import Callable, Iterator
-from typing import Any
+from typing import Any, cast
 
 import pytest
-from fastapi import WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from palmimo_sdk import Palmimo, ServoDriver
@@ -314,6 +314,10 @@ class _HangingWebSocket:
         self.closed_with = code
 
 
+def _websocket(fake: _FakeWebSocket | _HangingWebSocket) -> WebSocket:
+    return cast(WebSocket, fake)
+
+
 async def test_pilot_slot_is_released_when_the_grant_send_fails() -> None:
     # Without this, a grant `send_json` that fails with anything other than
     # WebSocketDisconnect (e.g. a peer that closed mid-handshake surfacing
@@ -324,7 +328,7 @@ async def test_pilot_slot_is_released_when_the_grant_send_fails() -> None:
     registry = _ConnectionRegistry()
     ws = _FakeWebSocket([{"role": "pilot"}], fail_send=RuntimeError("peer gone"))
     with pytest.raises(RuntimeError):
-        await _control_connection(ws, session, registry, client_id=1)
+        await _control_connection(_websocket(ws), session, registry, client_id=1)
     assert session.pilot_present is False
     assert session.acquire_pilot(2) is True
 
@@ -341,6 +345,10 @@ class _CancellingRegistry:
         raise asyncio.CancelledError()
 
 
+def _registry(fake: _CancellingRegistry) -> _ConnectionRegistry:
+    return cast(_ConnectionRegistry, fake)
+
+
 async def test_pilot_slot_is_released_even_when_cancelled_during_deregistration() -> None:
     # Without this, cancellation landing on the `await registry.remove(...)`
     # in `finally` -- before the synchronous `session.release_pilot` that
@@ -350,7 +358,7 @@ async def test_pilot_slot_is_released_even_when_cancelled_during_deregistration(
     registry = _CancellingRegistry()
     ws = _FakeWebSocket([{"role": "pilot"}])
     with pytest.raises(asyncio.CancelledError):
-        await _control_connection(ws, session, registry, client_id=1)
+        await _control_connection(_websocket(ws), session, _registry(registry), client_id=1)
     assert session.pilot_present is False
 
 
@@ -425,9 +433,9 @@ async def test_broadcast_delivers_to_other_sockets_despite_one_failing_or_stalli
     healthy = _FakeWebSocket()
     failing = _FakeWebSocket(fail_send=RuntimeError("peer gone"))
     hanging = _HangingWebSocket()
-    await registry.add(healthy)
-    await registry.add(failing)
-    await registry.add(hanging)
+    await registry.add(_websocket(healthy))
+    await registry.add(_websocket(failing))
+    await registry.add(_websocket(hanging))
     await asyncio.wait_for(registry.broadcast({"pilot_present": False, "motion": None}), timeout=1.0)
     assert healthy.sent == [{"pilot_present": False, "motion": None}]
 
@@ -479,7 +487,7 @@ def test_lifespan_skips_disconnect_when_the_loop_thread_did_not_settle() -> None
     session = PilotSession()
     robot_loop = _StuckRobotLoop()
     video = VideoStream(None)
-    app = create_app(robot, session, robot_loop, video)
+    app = create_app(cast(Palmimo, robot), session, cast(RobotLoop, robot_loop), video)
     with TestClient(app):
         pass
     assert robot.disconnect_calls == 0

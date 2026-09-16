@@ -113,11 +113,3 @@ namespace_packages = true
 ignore_missing_imports = true
 files = ["palmimo_teleop/", "tests/"]
 exclude = ["\\.venv"]
-
-[[tool.mypy.overrides]]
-# Tests pass minimal fakes where the app's concrete classes are expected.
-# Inside the former shared workspace mypy saw the app package as untyped from
-# its tests, so these call sites were never checked; typing the fakes (e.g. as
-# Protocols) is what would let these codes back on.
-module = ["tests.*"]
-disable_error_code = ["arg-type", "assignment"]

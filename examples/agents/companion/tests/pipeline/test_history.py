@@ -77,7 +77,9 @@ def test_history_evicts_oldest_beyond_maxlen() -> None:
     history.add(KeyboardEvent("one"))
     history.add(KeyboardEvent("two"))
     history.add(KeyboardEvent("three"))
-    assert [e.text for e in history.events] == ["two", "three"]
+    events = list(history.events)
+    assert all(isinstance(e, KeyboardEvent) for e in events)
+    assert [e.text for e in events if isinstance(e, KeyboardEvent)] == ["two", "three"]
 
 
 def test_to_messages_concatenates_events_in_order() -> None:

@@ -59,7 +59,7 @@ def test_parse_server_event_round_trips_every_known_kind(raw_type: str, extra: d
     raw = json.dumps({"type": raw_type, **extra})
     event = parse_server_event(raw)
     assert isinstance(event, expected_cls)
-    assert event.type == raw_type  # type: ignore[attr-defined]
+    assert event.type == raw_type
 
 
 def test_parse_server_event_falls_back_to_unknown_for_an_unrecognized_kind() -> None:

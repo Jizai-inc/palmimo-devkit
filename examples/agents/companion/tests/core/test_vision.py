@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any
+from typing import Any, ClassVar, cast
 
 import pytest
 
@@ -167,8 +167,10 @@ def test_face_locator_largest_center_returns_none_for_no_detections() -> None:
 def test_face_locator_largest_center_computes_the_normalized_center() -> None:
     detections = [_FakeDetection(_FakeBox(origin_x=100, origin_y=50, width=200, height=100))]
 
-    cx, cy = FaceLocator._largest_center(detections, width=640, height=480)
+    result = FaceLocator._largest_center(detections, width=640, height=480)
 
+    assert result is not None
+    cx, cy = result
     assert cx == pytest.approx((100 + 100) / 640)
     assert cy == pytest.approx((50 + 50) / 480)
 
@@ -177,8 +179,10 @@ def test_face_locator_largest_center_picks_the_widest_box() -> None:
     small = _FakeDetection(_FakeBox(origin_x=0, origin_y=0, width=50, height=50))
     big = _FakeDetection(_FakeBox(origin_x=300, origin_y=300, width=200, height=200))
 
-    cx, cy = FaceLocator._largest_center([small, big], width=640, height=480)
+    result = FaceLocator._largest_center([small, big], width=640, height=480)
 
+    assert result is not None
+    cx, cy = result
     assert cx == pytest.approx((300 + 100) / 640)
     assert cy == pytest.approx((300 + 100) / 480)
 
@@ -216,7 +220,7 @@ async def _wait_until(predicate: Any, *, timeout: float = 2.0, interval: float =
 class ScriptedDetector:
     """Returns the next scripted Detection (or None) on each call, in order."""
 
-    kind = DetectionKind.WAVE
+    kind: ClassVar[DetectionKind] = DetectionKind.WAVE
 
     def __init__(self, results: list[Detection | None]) -> None:
         self._results = list(results)
@@ -307,7 +311,7 @@ async def test_vision_watch_swallows_a_detector_exception() -> None:
     class BrokenDetector:
         # Arbitrary valid kind: only .process() (which always raises) matters
         # for this test, the label itself is never asserted.
-        kind = DetectionKind.WAVE
+        kind: ClassVar[DetectionKind] = DetectionKind.WAVE
 
         def process(self, frame: Any, timestamp: float) -> Detection | None:
             raise RuntimeError("boom")
@@ -345,7 +349,7 @@ async def test_on_frame_does_not_block_the_calling_thread() -> None:
 
     class SlowDetector:
         # Arbitrary valid kind, not asserted -- see BrokenDetector above.
-        kind = DetectionKind.WAVE
+        kind: ClassVar[DetectionKind] = DetectionKind.WAVE
 
         def __init__(self) -> None:
             self.calls = 0
@@ -386,8 +390,14 @@ class _ScriptedLocator:
         return self._results.pop(0) if self._results else None
 
 
+def _locator(fake: _ScriptedLocator) -> FaceLocator:
+    return cast(FaceLocator, fake)
+
+
 def test_face_presence_detector_requires_consecutive_hits() -> None:
-    detector = FacePresenceDetector(_ScriptedLocator([(0.5, 0.5), (0.5, 0.5), None, (0.5, 0.5)]), consecutive_hits=3)
+    detector = FacePresenceDetector(
+        _locator(_ScriptedLocator([(0.5, 0.5), (0.5, 0.5), None, (0.5, 0.5)])), consecutive_hits=3
+    )
     assert detector.process(frame=None, timestamp=0.0) is None
     assert detector.process(frame=None, timestamp=0.1) is None
     assert detector.process(frame=None, timestamp=0.2) is None  # miss resets the streak
@@ -396,7 +406,7 @@ def test_face_presence_detector_requires_consecutive_hits() -> None:
 
 def test_face_presence_detector_emits_after_streak_then_rearms() -> None:
     hits: list[tuple[float, float] | None] = [(0.5, 0.5)] * 6
-    detector = FacePresenceDetector(_ScriptedLocator(hits), consecutive_hits=3)
+    detector = FacePresenceDetector(_locator(_ScriptedLocator(hits)), consecutive_hits=3)
     results = [detector.process(frame=None, timestamp=i * 0.1) for i in range(6)]
     detections = [r for r in results if r is not None]
     assert len(detections) == 2  # frames 3 and 6: emits, then re-arms for another full streak

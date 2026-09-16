@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import io
 from collections.abc import Iterator
+from typing import TextIO, cast
 
 import pytest
 
@@ -21,10 +22,12 @@ from palmimo_companion_agent.core.reflexes import ReflexEngine
 from palmimo_companion_agent.core.tools import LookAtFaceTool
 from palmimo_companion_agent.core.vision import FacePresenceDetector
 from palmimo_companion_agent.pipeline import wiring
-from palmimo_companion_agent.pipeline.history import ToolExecEvent
+from palmimo_companion_agent.pipeline.conductor import Conductor
+from palmimo_companion_agent.pipeline.history import History, ToolExecEvent
 from palmimo_companion_agent.pipeline.settings import PipelineSettings
 from palmimo_companion_agent.pipeline.wiring import Runtime, build_runtime
-from palmimo_sdk import Palmimo, SpeakerConfig
+from palmimo_sdk import OpenAiEngine, Palmimo, PiperEngine, SpeakerConfig
+from palmimo_sdk.agent.toolset import AgentToolSet
 
 
 def _settings(**overrides: object) -> PipelineSettings:
@@ -236,7 +239,7 @@ def test_build_runtime_injects_the_face_locator_into_look_at_face(monkeypatch: p
     # ClassVar assignment on the shared LookAtFaceTool -- see
     # test_build_runtime_does_not_leak_the_face_locator_into_the_shared_base_class
     # and test_build_runtime_look_at_face_locators_do_not_leak_between_two_runtimes.
-    registered = rt.toolset.tool_models["look_at_face"]
+    registered = cast(type[LookAtFaceTool], rt.toolset.tool_models["look_at_face"])
     assert registered._face_locator is fakes["face_locator"]
 
 
@@ -264,8 +267,8 @@ def test_build_runtime_look_at_face_locators_do_not_leak_between_two_runtimes(
     fakes_2 = _patch_all_peripherals(monkeypatch)
     rt2 = build_runtime(_settings(hardware=True))
 
-    tool_1 = rt1.toolset.tool_models["look_at_face"]
-    tool_2 = rt2.toolset.tool_models["look_at_face"]
+    tool_1 = cast(type[LookAtFaceTool], rt1.toolset.tool_models["look_at_face"])
+    tool_2 = cast(type[LookAtFaceTool], rt2.toolset.tool_models["look_at_face"])
     assert tool_1 is not tool_2
     assert tool_1._face_locator is fakes_1["face_locator"]
     assert tool_2._face_locator is fakes_2["face_locator"]
@@ -346,11 +349,22 @@ class FakeConductor:
             raise
 
 
+def _lifecycle_runtime(conductor: FakeConductor, palmimo: Palmimo, *, event_log: TextIO | None = None) -> Runtime:
+    """A Runtime for connect()/start()/aclose() lifecycle tests, which never touch toolset/history."""
+    return Runtime(
+        conductor=cast(Conductor, conductor),
+        palmimo=palmimo,
+        toolset=cast(AgentToolSet, None),
+        history=cast(History, None),
+        event_log=event_log,
+    )
+
+
 async def test_runtime_connect_skips_connect_for_a_compute_only_palmimo() -> None:
     """A compute-only Palmimo (hardware=False) has nothing to connect -- connect() on it would raise."""
     palmimo = Palmimo()
     conductor = FakeConductor()
-    rt = Runtime(conductor=conductor, palmimo=palmimo, toolset=None, history=None, event_log=None)
+    rt = _lifecycle_runtime(conductor, palmimo)
 
     await rt.connect()  # must not raise
 
@@ -365,7 +379,7 @@ async def test_runtime_start_connects_the_robot_and_launches_the_conductor_task(
     monkeypatch.setattr(type(palmimo), "has_connectable_resource", property(lambda self: True))
     monkeypatch.setattr(palmimo, "connect", lambda: connect_calls.append(1))
     conductor = FakeConductor()
-    rt = Runtime(conductor=conductor, palmimo=palmimo, toolset=None, history=None, event_log=None)
+    rt = _lifecycle_runtime(conductor, palmimo)
 
     await rt.start()
     await asyncio.sleep(0)  # let the conductor task actually start running
@@ -382,7 +396,7 @@ async def test_runtime_start_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(type(palmimo), "has_connectable_resource", property(lambda self: True))
     monkeypatch.setattr(palmimo, "connect", lambda: connect_calls.append(1))
     conductor = FakeConductor()
-    rt = Runtime(conductor=conductor, palmimo=palmimo, toolset=None, history=None, event_log=None)
+    rt = _lifecycle_runtime(conductor, palmimo)
 
     await rt.start()
     await rt.start()
@@ -398,7 +412,7 @@ async def test_runtime_connect_then_start_connects_only_once(monkeypatch: pytest
     monkeypatch.setattr(type(palmimo), "has_connectable_resource", property(lambda self: True))
     monkeypatch.setattr(palmimo, "connect", lambda: connect_calls.append(1))
     conductor = FakeConductor()
-    rt = Runtime(conductor=conductor, palmimo=palmimo, toolset=None, history=None, event_log=None)
+    rt = _lifecycle_runtime(conductor, palmimo)
 
     await rt.connect()
     await rt.start()
@@ -417,7 +431,7 @@ async def test_runtime_start_propagates_a_connect_failure(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(palmimo, "connect", _raise)
     conductor = FakeConductor()
-    rt = Runtime(conductor=conductor, palmimo=palmimo, toolset=None, history=None, event_log=None)
+    rt = _lifecycle_runtime(conductor, palmimo)
 
     with pytest.raises(RuntimeError, match="servo bus not found"):
         await rt.start()
@@ -435,7 +449,7 @@ async def test_runtime_aclose_cancels_tasks_disconnects_the_robot_and_closes_the
     monkeypatch.setattr(palmimo, "disconnect", lambda: disconnect_calls.append(1))
     conductor = FakeConductor()
     log = io.StringIO()
-    rt = Runtime(conductor=conductor, palmimo=palmimo, toolset=None, history=None, event_log=log)
+    rt = _lifecycle_runtime(conductor, palmimo, event_log=log)
 
     await rt.start()
     await asyncio.sleep(0)
@@ -449,7 +463,7 @@ async def test_runtime_aclose_cancels_tasks_disconnects_the_robot_and_closes_the
 async def test_runtime_aclose_without_start_does_not_raise() -> None:
     palmimo = Palmimo()
     conductor = FakeConductor()
-    rt = Runtime(conductor=conductor, palmimo=palmimo, toolset=None, history=None, event_log=None)
+    rt = _lifecycle_runtime(conductor, palmimo)
 
     await rt.aclose()  # must not raise even though start() was never called
 
@@ -457,6 +471,14 @@ async def test_runtime_aclose_without_start_does_not_raise() -> None:
 # ----------------------------------------------------------------------
 # _build_engine
 # ----------------------------------------------------------------------
+
+
+def _piper(settings: PipelineSettings) -> PiperEngine:
+    return cast(PiperEngine, wiring._build_engine(settings))
+
+
+def _openai_tts(settings: PipelineSettings) -> OpenAiEngine:
+    return cast(OpenAiEngine, wiring._build_engine(settings))
 
 
 def test_build_engine_defaults_to_piper() -> None:
@@ -471,11 +493,11 @@ def test_build_engine_rejects_an_unknown_backend() -> None:
 def test_build_engine_leaves_the_voice_name_to_the_backend_when_unset() -> None:
     """Neither engine takes None as "your default", so an unset name has to
     mean the argument is never passed."""
-    assert wiring._build_engine(_settings())._model_ja == "ja_JP-tsukuyomi-chan-medium"
+    assert _piper(_settings())._model_ja == "ja_JP-tsukuyomi-chan-medium"
 
 
 def test_build_engine_passes_the_voice_name_to_piper() -> None:
-    piper = wiring._build_engine(_settings(voice_name="ja_JP-css10-6lang-medium"))
+    piper = _piper(_settings(voice_name="ja_JP-css10-6lang-medium"))
     assert piper._model_ja == "ja_JP-css10-6lang-medium"
 
 
@@ -484,15 +506,15 @@ def test_build_engine_returns_openai_when_selected() -> None:
 
 
 def test_build_engine_passes_the_voice_name_to_openai() -> None:
-    assert wiring._build_engine(_settings(voice_backend="openai", voice_name="cedar"))._voice == "cedar"
+    assert _openai_tts(_settings(voice_backend="openai", voice_name="cedar"))._voice == "cedar"
 
 
 def test_build_engine_inverts_speed_for_piper_only() -> None:
     """voice_speed is "higher is faster", which is the openai engine's sense
     and the inverse of piper's length_scale -- so the same setting has to
     reach the two engines as reciprocals of each other."""
-    assert wiring._build_engine(_settings(voice_speed=0.625))._length_scale == pytest.approx(1.6)
-    assert wiring._build_engine(_settings(voice_backend="openai", voice_speed=1.3))._speed == pytest.approx(1.3)
+    assert _piper(_settings(voice_speed=0.625))._length_scale == pytest.approx(1.6)
+    assert _openai_tts(_settings(voice_backend="openai", voice_speed=1.3))._speed == pytest.approx(1.3)
 
 
 # ----------------------------------------------------------------------
@@ -507,6 +529,10 @@ class _RecordingMicStream:
         self.processors = kwargs.get("processors")
 
 
+def _recording_mic(settings: PipelineSettings) -> _RecordingMicStream:
+    return cast(_RecordingMicStream, wiring._build_mic(settings))
+
+
 def test_build_mic_attaches_an_echo_canceller_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     built: list[dict[str, object]] = []
 
@@ -517,7 +543,7 @@ def test_build_mic_attaches_an_echo_canceller_by_default(monkeypatch: pytest.Mon
     monkeypatch.setattr(wiring, "MicStream", _RecordingMicStream)
     monkeypatch.setattr(wiring, "EchoCanceller", _canceller)
 
-    mic = wiring._build_mic(_settings())
+    mic = _recording_mic(_settings())
 
     assert mic.processors == ["canceller"]
     assert built == [{"near_channel": 0, "reference_channel": 5}]
@@ -549,4 +575,4 @@ def test_build_mic_leaves_capture_raw_when_echo_cancel_is_off(monkeypatch: pytes
     monkeypatch.setattr(wiring, "MicStream", _RecordingMicStream)
     monkeypatch.setattr(wiring, "EchoCanceller", _should_not_build_a_canceller)
 
-    assert wiring._build_mic(_settings(echo_cancel=False)).processors == []
+    assert _recording_mic(_settings(echo_cancel=False)).processors == []

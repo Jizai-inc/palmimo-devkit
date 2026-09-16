@@ -15,15 +15,15 @@ from palmimo_companion_agent.realtime.state import Sleeping
 
 def _live_frame(jpeg: bytes | None = b"\xff\xd8jpeg") -> LiveFrame:
     frame = LiveFrame(camera=None)
-    frame._encode = lambda: jpeg
+    frame._encode = lambda: jpeg  # type: ignore[method-assign]
     return frame
 
 
 def _kinds(client: Any) -> list[str]:
-    kinds = []
+    kinds: list[str] = []
     for event in client.sent:
         if isinstance(event, ItemCreate):
-            kinds.append(event.item.get("type") if event.item.get("type") != "message" else "create")
+            kinds.append(event.item.get("type", "") if event.item.get("type") != "message" else "create")
         elif isinstance(event, ItemDelete):
             kinds.append("delete")
     return kinds

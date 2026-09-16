@@ -10,9 +10,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections.abc import AsyncIterator
+from typing import cast
 
+from palmimo_companion_agent.core.reflexes import ReflexEngine
+from palmimo_companion_agent.core.vision import VisionWatch
+from palmimo_companion_agent.realtime.client import RealtimeClientLike
 from palmimo_companion_agent.realtime.log import EventLog
-from palmimo_companion_agent.realtime.protocol import ItemCreate
+from palmimo_companion_agent.realtime.protocol import ItemCreate, ServerEvent, Unknown
 from palmimo_companion_agent.realtime.services.reflexes import ReflexRunner, _build_notify
 
 
@@ -60,12 +65,12 @@ async def test_a_failing_notify_send_is_reported_not_silently_dropped(fake_clien
         async def send(self, event: object) -> None:
             raise RuntimeError("socket is gone")
 
-        def events(self) -> object:
+        def events(self) -> AsyncIterator[ServerEvent | Unknown]:
             raise NotImplementedError
 
     log = _RecordingLog()
     pending: set[asyncio.Task[None]] = set()
-    notify = _build_notify(_FailingClient(), log, pending)
+    notify = _build_notify(cast(RealtimeClientLike, _FailingClient()), log, pending)
 
     notify("this send will fail")
     for task in list(pending):
@@ -91,7 +96,7 @@ async def test_settle_cancels_and_awaits_pending_notify_tasks() -> None:
     pending.add(task)
     await asyncio.sleep(0)  # let it start
 
-    runner = ReflexRunner(watch=object(), engine=object(), notify_tasks=pending)
+    runner = ReflexRunner(watch=cast(VisionWatch, object()), engine=cast(ReflexEngine, object()), notify_tasks=pending)
     await runner.settle(1.0)
 
     assert task.cancelled() or task.done()
@@ -109,7 +114,7 @@ async def test_settle_does_not_wait_forever_on_an_uncancellable_notify_task() ->
     pending.add(task)
     await asyncio.sleep(0)
 
-    runner = ReflexRunner(watch=object(), engine=object(), notify_tasks=pending)
+    runner = ReflexRunner(watch=cast(VisionWatch, object()), engine=cast(ReflexEngine, object()), notify_tasks=pending)
     started = time.monotonic()
     await runner.settle(0.05)
     elapsed = time.monotonic() - started
@@ -121,5 +126,5 @@ async def test_settle_does_not_wait_forever_on_an_uncancellable_notify_task() ->
 
 
 async def test_settle_with_no_pending_tasks_is_a_no_op() -> None:
-    runner = ReflexRunner(watch=object(), engine=object(), notify_tasks=set())
+    runner = ReflexRunner(watch=cast(VisionWatch, object()), engine=cast(ReflexEngine, object()), notify_tasks=set())
     await runner.settle(1.0)  # must not raise
