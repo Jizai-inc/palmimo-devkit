@@ -7,7 +7,11 @@ kit with no palmimo_sdk app to launch (see its README), so it is excluded the
 same way the root uv workspace excludes it from `[tool.uv.workspace]`.
 """
 
+from collections import Counter
 from pathlib import Path
+
+from tools.build_catalog import discover_manifests
+from tools.manifest import load_manifest
 
 
 SOFTWARE_ROOT = Path(__file__).resolve().parents[2]
@@ -31,3 +35,11 @@ def test_every_app_example_has_a_palmimo_manifest() -> None:
     assert app_dirs, f"no app example directories found under {EXAMPLES_DIR}"
     missing = [path.relative_to(SOFTWARE_ROOT).as_posix() for path in app_dirs if not (path / "palmimo.toml").is_file()]
     assert missing == [], f"these app examples ship no palmimo.toml: {missing}"
+
+
+def test_every_manifest_name_is_unique_across_examples() -> None:
+    # A collision silently drops one app from the release catalog
+    # (tools/build_catalog.py keys entries by name) with no other signal.
+    names = [load_manifest(path).name for path in discover_manifests(SOFTWARE_ROOT)]
+    duplicates = [name for name, count in Counter(names).items() if count > 1]
+    assert duplicates == [], f"duplicate app manifest name(s): {duplicates}"

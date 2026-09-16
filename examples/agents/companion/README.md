@@ -270,6 +270,11 @@ A second runtime, alongside the `tui` / `cli` pipeline ones:
 uv run palmimo-realtime --seconds 360
 ```
 
+To the Portal, this runtime is a separate app from `palmimo-companion-agent`
+because it needs different env vars and devices — it ships as its own
+manifest, `palmimo.realtime.toml` (see
+[doc/reference/app-manifest.md](../../../doc/reference/app-manifest.md)).
+
 Requires `OPENAI_API_KEY`, from the environment or from the same `.env` the
 chat front ends read — this front end ships inside the companion project and
 has no `.env` of its own. Billed per turn on the whole conversation context, so

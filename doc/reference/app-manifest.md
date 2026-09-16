@@ -33,6 +33,19 @@ flag = "--no-camera"
 description = "Disable the head camera video feed."
 ```
 
+## File name
+
+An app directory may ship more than one manifest: a file named `palmimo.toml`
+(the default) or `palmimo.<variant>.toml`, where `<variant>` matches
+`^[a-z][a-z0-9-]{0,39}$`. Any other name in the directory (`palmimo_backup.toml`,
+`palmimo.TOML`, `palmimo..toml`) is not a manifest and is ignored. Each
+manifest file is an independent app with its own `name`, unique across the
+catalog; a host that launches an app by name with none given reads
+`palmimo.toml`. `examples/agents/companion/palmimo.realtime.toml` is an
+example: the same directory's `palmimo.toml` is the cascaded pipeline app,
+and `palmimo.realtime.toml` is the OpenAI Realtime voice runtime, because the
+two need different env vars and devices.
+
 ## Fields
 
 | Key | Type | Required | Rule |
@@ -137,4 +150,5 @@ if any of the following holds:
 |---|---|
 | [examples/teleop/palmimo.toml](../../examples/teleop/palmimo.toml) | The example above |
 | [examples/agents/companion/palmimo.toml](../../examples/agents/companion/palmimo.toml) | Companion agent manifest |
+| [examples/agents/companion/palmimo.realtime.toml](../../examples/agents/companion/palmimo.realtime.toml) | Companion OpenAI Realtime voice runtime, a separate app in the same directory |
 | [examples/agents/wakeword/palmimo.toml](../../examples/agents/wakeword/palmimo.toml) | Wake-word agent manifest |
