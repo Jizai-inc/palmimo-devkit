@@ -20,9 +20,9 @@
   "dependencies": {
     "@astrojs/sitemap": "^3.7.4",
     "@astrojs/starlight": "^0.42.0",
-    "astro": "^7.2.9",
-    "pyodide": "^314.0.6",
+    "astro": "^7.3.2",
+    "pyodide": "^314.0.7",
     "sharp": "^0.35.3",
-    "three": "^0.185.1"
+    "three": "^0.186.0"
   }
 }
