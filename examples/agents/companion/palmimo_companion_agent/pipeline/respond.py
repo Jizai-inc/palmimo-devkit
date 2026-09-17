@@ -91,7 +91,7 @@ class RespondTurn:
             return
 
         message = response.choices[0].message
-        tool_calls = list(message.tool_calls) if message.tool_calls else []
+        tool_calls = dispatch.function_tool_calls(message.tool_calls)
         if not tool_calls:
             dispatch.record_no_tool_call(self.history, message.content, no_tool_call_note=_NO_TOOL_CALL_NOTE)
             return

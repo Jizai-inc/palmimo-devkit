@@ -42,6 +42,7 @@ from palmimo_sdk.agent.tools import (
     _run_motion,
 )
 from palmimo_sdk.robot import NeckPitchDegrees, NeckYawDegrees
+from palmimo_sdk.thermal import NeckThermalState
 
 
 try:
@@ -124,6 +125,9 @@ class FakeRobot:
         speaker: FakeSpeaker | None = None,
         camera: FakeCamera | None = None,
         run_raises: BaseException | None = None,
+        neck_thermal_state: NeckThermalState = NeckThermalState.NORMAL,
+        neck_lock_active: bool = False,
+        neck_temperature_c: float | None = None,
     ) -> None:
         self.calls: list[tuple[Any, ...]] = []
         self.display = display
@@ -132,6 +136,12 @@ class FakeRobot:
         # When set, run() records the call, then raises this instead of
         # returning -- for exercising the try/finally stop() guarantee.
         self._run_raises = run_raises
+        # Mirrors Palmimo.neck_thermal_state / .neck_lock_active / .neck_temperature_c --
+        # the neck tools (look/nod/head_shake) read neck_lock_active to report a
+        # thermal-guard rejection instead of claiming success.
+        self.neck_thermal_state = neck_thermal_state
+        self.neck_lock_active = neck_lock_active
+        self.neck_temperature_c = neck_temperature_c
 
     def _record(self, *entry: Any) -> None:
         self.calls.append(entry)
@@ -709,6 +719,31 @@ def test_look_default_is_center() -> None:
     assert robot.calls == [("look", NeckPitchDegrees(0.0), NeckYawDegrees(0.0)), ("run", 0.6)]
 
 
+@pytest.mark.parametrize("state", [NeckThermalState.HOT, NeckThermalState.UNMONITORED])
+def test_look_reports_the_neck_thermal_guard_ignored_it(state: NeckThermalState) -> None:
+    """An LLM told "looking at X deg" when the guard actually dropped the request would keep
+    re-issuing look() calls it believes are landing -- the tool must surface the rejection instead
+    of reporting the same success text it uses when the neck genuinely moved. UNMONITORED is
+    included because the lock can outlast HOT reporting (stale telemetry after a HOT reading, see
+    Palmimo.neck_lock_active) -- the tool must key off the lock, not the state label."""
+    robot = FakeRobot(neck_thermal_state=state, neck_lock_active=True, neck_temperature_c=63.0)
+    result = LookTool(pitch=15.0).execute(cast(PalmimoLike, robot))
+    assert "ignored" in result.text
+    assert "63" in result.text
+
+
+def test_nod_reports_the_neck_thermal_guard_ignored_it() -> None:
+    robot = FakeRobot(neck_thermal_state=NeckThermalState.HOT, neck_lock_active=True, neck_temperature_c=63.0)
+    result = NodTool().execute(cast(PalmimoLike, robot))
+    assert "ignored" in result.text
+
+
+def test_head_shake_reports_the_neck_thermal_guard_ignored_it() -> None:
+    robot = FakeRobot(neck_thermal_state=NeckThermalState.HOT, neck_lock_active=True, neck_temperature_c=70.0)
+    result = HeadShakeTool().execute(cast(PalmimoLike, robot))
+    assert "ignored" in result.text
+
+
 def test_look_center_calls_facade_look_center_then_settles() -> None:
     robot = FakeRobot()
     result = LookCenterTool().execute(cast(PalmimoLike, robot))
@@ -750,25 +785,58 @@ def test_look_pitch_out_of_range_raises_validation_error() -> None:
         LookTool(pitch=MotionEngine.NECK_PITCH_TRAVEL_DEG + 1.0, yaw=0.0)
 
 
+def test_look_pitch_beyond_chin_up_travel_raises_validation_error() -> None:
+    """The chin-up (negative) side has its own, larger bound
+    (NECK_PITCH_UP_TRAVEL_DEG) -- a request past THAT is still rejected."""
+    with pytest.raises(ValidationError):
+        LookTool(pitch=-(MotionEngine.NECK_PITCH_UP_TRAVEL_DEG + 1.0), yaw=0.0)
+
+
 def test_look_yaw_out_of_range_raises_validation_error() -> None:
     with pytest.raises(ValidationError):
         LookTool(pitch=0.0, yaw=MotionEngine.NECK_YAW_TRAVEL_DEG + 1.0)
 
 
 def test_look_schema_range_matches_engine_neck_travel_for_both_axes() -> None:
-    """pitch/yaw declared ranges now equal the engine's real PER-AXIS neck
-    travel -- previously pitch was capped at a hand-picked 30 deg and yaw at
-    60 deg, more than double the neck's actual ~26.4 deg mechanical travel,
-    so the schema silently overpromised range an LLM could never actually
-    reach.
+    """yaw's declared range equals the engine's real per-axis neck travel, and
+    pitch's declared range is asymmetric to match it: chin-down capped at
+    NECK_PITCH_TRAVEL_DEG, chin-up (negative) at the larger
+    NECK_PITCH_UP_TRAVEL_DEG (pitch2 extends the chin-up reach past pitch1's
+    own travel -- see MotionEngine._apply_neck). Previously pitch was capped
+    at a hand-picked 30 deg (symmetric) and yaw at 60 deg, more than double
+    the neck's actual ~26.4 deg mechanical travel, so the schema silently
+    overpromised range an LLM could never actually reach; an undifferentiated
+    symmetric pitch bound today would instead under-promise the chin-up side.
     """
     schema = LookTool.parameters_schema()
-    pitch_travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    pitch_down_travel = MotionEngine.NECK_PITCH_TRAVEL_DEG
+    pitch_up_travel = MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
     yaw_travel = MotionEngine.NECK_YAW_TRAVEL_DEG
-    assert schema["properties"]["pitch"]["minimum"] == -pitch_travel
-    assert schema["properties"]["pitch"]["maximum"] == pitch_travel
+    assert schema["properties"]["pitch"]["minimum"] == -pitch_up_travel
+    assert schema["properties"]["pitch"]["maximum"] == pitch_down_travel
     assert schema["properties"]["yaw"]["minimum"] == -yaw_travel
     assert schema["properties"]["yaw"]["maximum"] == yaw_travel
+
+
+@pytest.mark.parametrize(
+    ("pitch", "expect_accepted"),
+    [(-30.0, True), (30.0, False)],
+    ids=["chin_up_30deg_accepted", "chin_down_30deg_rejected"],
+)
+def test_look_pitch_asymmetric_bound_accepts_chin_up_rejects_chin_down(pitch: float, expect_accepted: bool) -> None:
+    """-30 deg is within the chin-up bound (~37.7 deg) and reaches robot.look() as
+    NeckPitchDegrees(-30.0); +30 deg is beyond the chin-down bound (~26.37 deg) and
+    is still rejected -- without this, a single symmetric bound (either too
+    tight, silently refusing a real chin-up angle the hardware can reach, or too
+    loose, accepting a chin-down angle the hardware cannot) would go unnoticed.
+    """
+    if expect_accepted:
+        robot = FakeRobot()
+        LookTool(pitch=pitch, yaw=0.0).execute(cast(PalmimoLike, robot))
+        assert robot.calls == [("look", NeckPitchDegrees(pitch), NeckYawDegrees(0.0)), ("run", 0.6)]
+    else:
+        with pytest.raises(ValidationError):
+            LookTool(pitch=pitch, yaw=0.0)
 
 
 def test_extra_argument_is_rejected() -> None:

@@ -92,7 +92,7 @@ def _build_notify(client: RealtimeClientLike, log: EventLog, pending: set[asynci
     """
 
     def notify(text: str) -> None:
-        print(f"reflex > {text}", flush=True)
+        print(f"reflex  > {text}", flush=True)
         log.write("reflex", text=text)
         task = asyncio.ensure_future(client.send(ItemCreate.text(text)))
         pending.add(task)

@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 from palmimo_sdk.robot import NeckPitchDegrees, NeckPitchNormalized, NeckYawDegrees, NeckYawNormalized
+from palmimo_sdk.thermal import NeckThermalState
 
 
 @runtime_checkable
@@ -104,9 +105,9 @@ class PalmimoLike(Protocol):
 
     def stretch(self) -> None: ...
 
-    def nod(self) -> None: ...
+    def nod(self) -> bool: ...
 
-    def head_shake(self) -> None: ...
+    def head_shake(self) -> bool: ...
 
     # ----------------------------------------------------------------
     # Run / stop / cancel
@@ -140,9 +141,18 @@ class PalmimoLike(Protocol):
         self,
         pitch: float | NeckPitchDegrees | NeckPitchNormalized = 0.0,
         yaw: float | NeckYawDegrees | NeckYawNormalized = 0.0,
-    ) -> None: ...
+    ) -> bool: ...
 
     def look_center(self) -> None: ...
+
+    @property
+    def neck_thermal_state(self) -> NeckThermalState: ...
+
+    @property
+    def neck_lock_active(self) -> bool: ...
+
+    @property
+    def neck_temperature_c(self) -> float | None: ...
 
     # ----------------------------------------------------------------
     # Face / voice

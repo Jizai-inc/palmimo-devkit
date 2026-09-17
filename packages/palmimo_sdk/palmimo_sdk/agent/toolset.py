@@ -358,7 +358,14 @@ class AgentToolSet:
                     # early and abandoning the worker.
                     self._robot.cancel()
                     while not task.done():
-                        with contextlib.suppress(asyncio.CancelledError):
+                        # Suppress every exception, not just CancelledError:
+                        # the robot.cancel() above makes the worker end in
+                        # MotionCancelled, and awaiting the shield re-raises
+                        # that here. Letting it out would replace the
+                        # CancelledError this handler exists to re-raise with
+                        # a plain Exception, which callers treat as a failed
+                        # tool call and swallow -- so Ctrl+C never unwinds.
+                        with contextlib.suppress(BaseException):
                             await asyncio.shield(task)
                     with contextlib.suppress(BaseException):
                         task.result()

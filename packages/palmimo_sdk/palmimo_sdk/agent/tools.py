@@ -55,6 +55,24 @@ from palmimo_sdk.robot import MotionCancelled, NeckPitchDegrees, NeckYawDegrees
 from .receiver import PalmimoLike, _SpeechHandleLike
 
 
+def _neck_guard_ignored_text(robot: PalmimoLike, action: str) -> str | None:
+    """A short observation reporting that the neck thermal guard dropped *action*, or ``None``.
+
+    ``None`` while :attr:`~palmimo_sdk.robot.Palmimo.neck_lock_active` is
+    ``False`` -- the normal case, where nothing needs explaining. *action*
+    reads naturally after "ignored" (e.g. ``"look"``, ``"nod"``). Checking
+    ``neck_lock_active`` rather than ``neck_thermal_state == HOT`` matters
+    while the guard is UNMONITORED-but-locked (stale telemetry after a HOT
+    reading): the rejection is still real then, and the LLM must not be told
+    it succeeded just because the state name changed.
+    """
+    if not robot.neck_lock_active:
+        return None
+    temp = robot.neck_temperature_c
+    temp_text = f"{temp:.0f}C" if temp is not None else "an unknown temperature"
+    return f"neck is cooling down ({temp_text}), {action} ignored"
+
+
 class ToolResult:
     """Outcome of one tool call: an observation string plus optional images.
 
@@ -207,7 +225,7 @@ def _strip_titles(node: Any) -> None:
 _STANCE_SETTLE_SECONDS = 0.5
 
 
-def _run_motion(robot: PalmimoLike, set_motion: Callable[[], None], seconds: float) -> None:
+def _run_motion(robot: PalmimoLike, set_motion: Callable[[], object], seconds: float) -> None:
     """Set a motion, ``run(seconds=...)`` it with ``stop()`` guaranteed, then settle the stance.
 
     ``robot.run()`` blocks, pacing the motion in real time; if it raises
@@ -624,7 +642,10 @@ class NodTool(Expressive):
     seconds: float = Field(default=3.0, ge=0.5, le=15.0, description="How long to run the nod motion, in seconds.")
 
     def _act(self, robot: PalmimoLike) -> ToolResult:
+        ignored = _neck_guard_ignored_text(robot, "nod")
         _run_motion(robot, robot.nod, self.seconds)
+        if ignored is not None:
+            return ToolResult(text=ignored)
         return _ran("nodded", self.seconds)
 
 
@@ -642,7 +663,10 @@ class HeadShakeTool(Expressive):
     )
 
     def _act(self, robot: PalmimoLike) -> ToolResult:
+        ignored = _neck_guard_ignored_text(robot, "head shake")
         _run_motion(robot, robot.head_shake, self.seconds)
+        if ignored is not None:
+            return ToolResult(text=ignored)
         return _ran("shook the head", self.seconds)
 
 
@@ -708,15 +732,22 @@ class WakeTool(Tool):
 # reason about than the facade's normalized [-1, 1]), passed to robot.look()
 # as NeckPitchDegrees / NeckYawDegrees so Palmimo.look() does the
 # degrees->normalized conversion itself (dividing by the engine's PUBLIC
-# per-axis neck travel, MotionEngine.NECK_PITCH_TRAVEL_DEG /
-# NECK_YAW_TRAVEL_DEG, ~26.4 deg today on both axes). The schema's declared
-# range per axis is that same travel, so the LLM's stated range and the
-# physical range always agree -- no more "declared 60 deg yaw, actually
-# saturates around 26". A request right at the schema boundary lands exactly
-# at the neck's full deflection; the value objects self-validate at
-# construction (ValueError past travel) rather than saturating, so the schema
-# bound and the value object's own bound must (and do) agree.
-_LOOK_PITCH_MAX_DEG = MotionEngine.NECK_PITCH_TRAVEL_DEG
+# per-axis neck travel). Yaw is symmetric
+# (MotionEngine.NECK_YAW_TRAVEL_DEG, ~26.4 deg both ways). Pitch is NOT:
+# pitch2 extends the chin-up (negative) reach past pitch1's own travel (see
+# NeckPitchDegrees' docstring in robot.py and MotionEngine._apply_neck), so
+# chin-down is capped at MotionEngine.NECK_PITCH_TRAVEL_DEG (~26.4 deg) while
+# chin-up reaches the larger MotionEngine.NECK_PITCH_UP_TRAVEL_DEG (~37.7 deg
+# at the shipped defaults). The schema's declared range per axis/side is that
+# same travel, so the LLM's stated range and the physical range always agree
+# -- no more "declared 60 deg yaw, actually saturates around 26", and no more
+# leaving the extra chin-up reach unreachable through this tool. A request
+# right at either schema boundary lands exactly at the neck's full deflection
+# on that side; the value objects self-validate at construction (ValueError
+# past travel) rather than saturating, so the schema bounds and the value
+# object's own bounds must (and do) agree.
+_LOOK_PITCH_DOWN_MAX_DEG = MotionEngine.NECK_PITCH_TRAVEL_DEG
+_LOOK_PITCH_UP_MAX_DEG = MotionEngine.NECK_PITCH_UP_TRAVEL_DEG
 _LOOK_YAW_MAX_DEG = MotionEngine.NECK_YAW_TRAVEL_DEG
 
 # How long look()/look_center()/stop() run() the neck for after setting a new
@@ -737,7 +768,9 @@ class LookTool(Expressive):
     # not yet verified on hardware, so the description makes no direction claim.
     description: ClassVar[str] = (
         "Aim the head/gaze in a direction. Use to look toward a person, object, or direction "
-        "without moving the body. Positive pitch tips the chin down (looks down)."
+        "without moving the body. Positive pitch tips the chin down (looks down); the chin-up "
+        f"(negative) range is larger than the chin-down range: pitch reaches -{_LOOK_PITCH_UP_MAX_DEG:.1f} "
+        f"deg looking up but only +{_LOOK_PITCH_DOWN_MAX_DEG:.1f} deg looking down."
     )
     # A blocking robot.run(seconds=_NECK_SETTLE_SECONDS) call underneath (see
     # _act below), same as any other timed motion tool -- not the "instant,
@@ -749,9 +782,12 @@ class LookTool(Expressive):
 
     pitch: float = Field(
         default=0.0,
-        ge=-_LOOK_PITCH_MAX_DEG,
-        le=_LOOK_PITCH_MAX_DEG,
-        description="Vertical look angle in degrees. Positive = chin down (look down).",
+        ge=-_LOOK_PITCH_UP_MAX_DEG,
+        le=_LOOK_PITCH_DOWN_MAX_DEG,
+        description=(
+            "Vertical look angle in degrees. Positive = chin down (look down), negative = chin up "
+            "(look up). The chin-up range is larger than the chin-down range (see tool description)."
+        ),
     )
     yaw: float = Field(
         default=0.0,
@@ -769,8 +805,11 @@ class LookTool(Expressive):
         # NeckPitchDegrees/NeckYawDegrees do the real-degrees -> normalized
         # conversion inside Palmimo.look() itself (see the _LOOK_*_MAX_DEG
         # comment above).
+        ignored = _neck_guard_ignored_text(robot, "look")
         robot.look(pitch=NeckPitchDegrees(self.pitch), yaw=NeckYawDegrees(self.yaw))
         robot.run(seconds=_NECK_SETTLE_SECONDS)
+        if ignored is not None:
+            return ToolResult(text=ignored)
         return ToolResult(text=f"looking at pitch={self.pitch} deg, yaw={self.yaw} deg")
 
 

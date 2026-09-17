@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from palmimo_sdk import Motion
+from palmimo_sdk import Motion, MotionEngine
 
 
 if TYPE_CHECKING:
@@ -61,12 +61,12 @@ def test_stop_sets_engine_idle() -> None:
 
 
 def test_engine_step_feeds_full_motor_set() -> None:
-    """The engine returns all 20 motors; the teleop keeps only the 18 leg ones."""
+    """The engine returns all 21 motors; the teleop keeps only the 18 leg ones."""
     t = _teleop()
     t._move_forward()
     pos = t._engine.step()
-    assert len(pos) == 20
-    assert {"leg_1_yaw", "leg_6_pitch2", "neck_yaw"} <= set(pos)
+    assert len(pos) == 21
+    assert {"leg_1_yaw", "leg_6_pitch2", "neck_yaw", "neck_pitch2"} <= set(pos)
     assert len(t._leg_positions) == 18
 
 
@@ -118,6 +118,126 @@ def test_neck_char_keys_move_neck() -> None:
     t = _teleop()
     t._update_neck_from_keys({keys["neck_yaw_right"]})
     assert t._neck_positions["neck_yaw"] < center
+
+
+def test_neck_pitch2_follows_the_pitch_split_instead_of_staying_at_neutral() -> None:
+    """neck_pitch2 takes its share of the head pitch (oriented by the engine's sign)
+    as the pitch keys move it off center.
+
+    Before this, neck_pitch2 was hardcoded to neutral regardless of pitch1,
+    which put the full head-lift moment on pitch1 alone -- the failure mode
+    that overheated it on hardware.
+    """
+    keys = _teleop().config.teleop_keys
+    center = _teleop()._neutral
+    sign = MotionEngine.NECK_PITCH2_SIGN
+
+    t = _teleop()
+    t._update_neck_from_keys({keys["neck_pitch_up"]})
+    p1 = t._neck_positions["neck_pitch1"] - center
+    assert p1 != 0
+    assert sign * (t._neck_positions["neck_pitch2"] - center) * p1 > 0
+
+    t = _teleop()
+    t._update_neck_from_keys({keys["neck_pitch_down"]})
+    p1 = t._neck_positions["neck_pitch1"] - center
+    assert p1 != 0
+    assert sign * (t._neck_positions["neck_pitch2"] - center) * p1 > 0
+
+
+def test_neck_pitch_split_matches_engine_head_total_at_full_deflection() -> None:
+    """The teleop's combined pitch1+pitch2 head angle matches MotionEngine's own
+    NECK_PITCH2_SHARE/NECK_PITCH2_SIGN split for the same full-deflection target.
+
+    Before this, pitch1 walked the full amplitude on its own and pitch2 was
+    added on top instead of sharing it, so the combined head angle overshot the
+    engine's (1 + NECK_PITCH2_SHARE)x -- 1.5x at the default 0.5 share.
+    """
+    t = _teleop()
+    keys = t.config.teleop_keys
+    for _ in range(2 * t._neck_amplitude // t._neck_step + 2):  # saturate, like set_neck(pitch=1.0)
+        t._update_neck_from_keys({keys["neck_pitch_up"]})
+    teleop_total = (t._neck_positions["neck_pitch1"] - t._neutral) + MotionEngine.NECK_PITCH2_SIGN * (
+        t._neck_positions["neck_pitch2"] - t._neutral
+    )
+
+    engine = MotionEngine()
+    engine.neck_rest_pitch_deg = 0.0  # the teleop has no rest-trim concept; compare on equal footing
+    engine.set_neck(pitch=1.0)
+    for _ in range(400):  # plenty of steps to fully converge
+        engine.step()
+    engine_pos = engine.get_positions()
+    engine_total = (engine_pos["neck_pitch1"] - engine.NEUTRAL) + MotionEngine.NECK_PITCH2_SIGN * (
+        engine_pos["neck_pitch2"] - engine.NEUTRAL
+    )
+
+    assert teleop_total == pytest.approx(engine_total, abs=2)
+
+
+def test_neck_pitch_split_matches_engine_head_total_at_full_chin_up_deflection() -> None:
+    """The teleop's combined pitch1+pitch2 head angle on the extended chin-up side
+    (the "neck_pitch_down" key, which walks the tick total below center) matches
+    MotionEngine's own split for set_neck(pitch=-1.0).
+
+    Before the chin-up extension, this side reached only NECK_AMPLITUDE_TICKS
+    like the chin-down side; without this test, the teleop's reachable chin-up
+    ceiling could silently drift from the engine's (e.g. if only one of the two
+    was updated), leaving a recorded teleop episode's neck targets outside what
+    MotionEngine.look() can ever reproduce.
+    """
+    t = _teleop()
+    keys = t.config.teleop_keys
+    for _ in range(2 * 2 * t._neck_amplitude // t._neck_step + 2):  # saturate the (doubled) chin-up reach
+        t._update_neck_from_keys({keys["neck_pitch_down"]})
+    teleop_total = (t._neck_positions["neck_pitch1"] - t._neutral) + MotionEngine.NECK_PITCH2_SIGN * (
+        t._neck_positions["neck_pitch2"] - t._neutral
+    )
+
+    engine = MotionEngine()
+    engine.neck_rest_pitch_deg = 0.0  # the teleop has no rest-trim concept; compare on equal footing
+    engine.set_neck(pitch=-1.0)
+    for _ in range(400):  # plenty of steps to fully converge
+        engine.step()
+    engine_pos = engine.get_positions()
+    engine_total = (engine_pos["neck_pitch1"] - engine.NEUTRAL) + MotionEngine.NECK_PITCH2_SIGN * (
+        engine_pos["neck_pitch2"] - engine.NEUTRAL
+    )
+
+    assert teleop_total == pytest.approx(engine_total, abs=2)
+
+
+def test_neck_yaw_does_not_borrow_pitchs_chin_up_extended_floor() -> None:
+    """Yaw's reachable border is the ordinary +-amplitude around center, not
+    pitch2's chin-up ``up_reach`` extension -- that extension exists for
+    pitch2's own look-only wide band (see MotionEngine._apply_neck), not yaw.
+
+    Before this, yaw shared its floor with pitch's extended chin-up ``min_pos``,
+    so a held neck_yaw_right key could walk yaw down to center-600 at the
+    default share -- twice as far as MotionEngine.look(yaw=-1) itself ever
+    reaches (+-amplitude, 300 ticks).
+    """
+    t = _teleop()
+    keys = t.config.teleop_keys
+    for _ in range(2 * 2 * t._neck_amplitude // t._neck_step + 2):  # would saturate the extended floor
+        t._update_neck_from_keys({keys["neck_yaw_right"]})
+    assert t._neck_positions["neck_yaw"] == t._neutral - t._neck_amplitude
+
+
+def test_neck_pitch_split_follows_engine_instance_share_override() -> None:
+    """Overriding the owned engine's neck_pitch2_share changes the teleop's own
+    pitch1/pitch2 split.
+
+    Before this, the split read MotionEngine's class constant instead of the
+    instance attribute, so overriding share on ``t._engine`` (the documented
+    way to retune the split, same as any other instance-overridable engine
+    knob) silently kept the teleop on the shipped default.
+    """
+    t = _teleop()
+    t._engine.neck_pitch2_share = 0.0  # the "pitch1 only" sentinel
+    keys = t.config.teleop_keys
+    for _ in range(2 * t._neck_amplitude // t._neck_step + 2):  # saturate, like set_neck(pitch=1.0)
+        t._update_neck_from_keys({keys["neck_pitch_up"]})
+    assert t._neck_positions["neck_pitch2"] == t._neutral
 
 
 class _FakeKeyboard:

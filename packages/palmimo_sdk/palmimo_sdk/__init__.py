@@ -72,6 +72,7 @@ from .io import (
     PiperEngine,
     PortDetectionError,
     ServoDriver,
+    ServoPositions,
     ServoTelemetry,
     Speaker,
     SpeakerConfig,
@@ -94,6 +95,7 @@ from .robot import (
     Palmimo,
     RoutineStep,
 )
+from .thermal import NeckThermalState
 
 
 __all__ = [
@@ -122,6 +124,7 @@ __all__ = [
     "NameMatcher",
     "NeckPitchDegrees",
     "NeckPitchNormalized",
+    "NeckThermalState",
     "NeckYawDegrees",
     "NeckYawNormalized",
     "OpenAiEngine",
@@ -130,6 +133,7 @@ __all__ = [
     "PortDetectionError",
     "RoutineStep",
     "ServoDriver",
+    "ServoPositions",
     "ServoTelemetry",
     "Speaker",
     "SpeakerConfig",

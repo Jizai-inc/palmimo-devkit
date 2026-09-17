@@ -43,7 +43,7 @@ from palmimo_sdk import kinematics
 LEGS: tuple[int, ...] = kinematics.LEFT_LEGS + kinematics.RIGHT_LEGS
 # The neck's servos carry no mirroring and no neutral trim of their own, so a
 # tick above neutral is the joint's own positive direction.
-NECK_JOINTS: tuple[str, ...] = ("neck_yaw", "neck_pitch1")
+NECK_JOINTS: tuple[str, ...] = ("neck_yaw", "neck_pitch1", "neck_pitch2")
 
 
 def joint_angles(ticks: Mapping[str, int]) -> dict[str, float]:

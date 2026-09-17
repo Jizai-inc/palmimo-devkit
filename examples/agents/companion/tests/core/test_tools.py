@@ -13,7 +13,7 @@ this module adds on top of it.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Any, cast, get_args
 
 import pytest
@@ -38,9 +38,10 @@ from palmimo_companion_agent.core.tools import (
     WakeUp,
     make_look_at_face_tool,
 )
-from palmimo_sdk import MotionCancelled, Palmimo
+from palmimo_sdk import MotionCancelled, Palmimo, ServoDriver, ServoTelemetry
 from palmimo_sdk.agent.tools import FaceExpression, SetFaceTool, StopTool
 from palmimo_sdk.agent.toolset import TOOL_MODELS, AgentToolSet
+from palmimo_sdk.thermal import NECK_HOT_C, NECK_MOTORS
 
 
 @pytest.fixture(autouse=True)
@@ -539,10 +540,47 @@ class TestDanceSay:
         assert spoken == ["たのしい!"]
 
 
+class _HotNeckDriver(ServoDriver):
+    """A driver reporting every neck motor at a fixed temperature -- enough to drive the real
+    thermal guard into HOT without a real bus."""
+
+    def __init__(self, temperature_c: int) -> None:
+        self._temperature_c = temperature_c
+
+    @property
+    def is_connected(self) -> bool:
+        return True
+
+    def connect(self) -> None:
+        pass
+
+    def disconnect(self) -> None:
+        pass
+
+    def _write_positions(self, positions: dict[str, int]) -> None:
+        pass
+
+    def read_telemetry(self, motors: Sequence[str] | None = None) -> ServoTelemetry:
+        wanted = motors if motors is not None else NECK_MOTORS
+        return ServoTelemetry(temperature=dict.fromkeys(wanted, self._temperature_c))
+
+
 class TestLookSeconds:
     def test_look_and_look_center_accept_optional_seconds(self) -> None:
         assert "seconds" in Look.model_fields
         assert "seconds" in LookCenter.model_fields
+
+    def test_look_reports_the_neck_thermal_guard_ignored_it(self) -> None:
+        """Look._act is its own reimplementation of the SDK LookTool's _act (to add the gaze-hold
+        ``seconds`` field) -- without its own ignored-check, it would keep claiming "looking at ..."
+        while the neck thermal guard silently drops the look() call."""
+        robot = Palmimo(driver=cast(ServoDriver, _HotNeckDriver(NECK_HOT_C)))
+        robot.step()  # establishes HOT
+        assert robot.neck_lock_active is True
+
+        result = Look.model_validate({"pitch": 10, "reason": "glance up"}).execute(robot)
+
+        assert "ignored" in result.text
 
     async def test_look_holds_the_gaze_for_the_requested_seconds(
         self, palmimo: Palmimo, monkeypatch: pytest.MonkeyPatch

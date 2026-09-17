@@ -10,4 +10,5 @@ Third-party components are attributed in:
   - examples/agents/companion/THIRD_PARTY_NOTICES.md
   - examples/agents/openclaw/THIRD_PARTY_NOTICES.md
   - examples/agents/wakeword/THIRD_PARTY_NOTICES.md
+  - examples/teleop/THIRD_PARTY_NOTICES.md
   - integrations/lerobot/THIRD_PARTY_NOTICES.md

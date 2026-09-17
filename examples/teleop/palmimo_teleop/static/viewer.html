@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>Palmimo Teleop -- Viewer</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body data-role="viewer">
+    <div id="viewer-page">
+      <h1 id="viewer-title">Palmimo Teleop &mdash; Spectating</h1>
+      <div id="video-frame">
+        <img id="video-layer" alt="Palmimo head camera feed" />
+      </div>
+      <p id="viewer-caption">You are spectating. Press Start piloting to take control.</p>
+      <a id="pilot-link" href="/pilot">Start piloting</a>
+      <div id="status-bar"></div>
+    </div>
+    <div id="disconnected-banner" hidden>
+      <p>Disconnected.</p>
+      <button id="reload-button" type="button">Reload</button>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

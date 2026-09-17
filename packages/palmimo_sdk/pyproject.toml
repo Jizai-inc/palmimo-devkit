@@ -2,16 +2,32 @@
 name = "palmimo-sdk"
 version = "0.1.0"
 description = "Palmimo SDK — Palmimo facade, MotionEngine, and ServoDriver abstraction"
+readme = "README.md"
 authors = [{ name = "Jizai Inc.", email = "noreply@jizai.ai" }]
 license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = ["pyserial>=3.5"]
+keywords = ["robotics", "hexapod", "dynamixel", "palmimo"]
+# No License classifier: the SPDX `license` field above already declares it,
+# and hatchling/PyPI warn on the redundant pair.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Embedded Systems",
+    "Typing :: Typed",
+]
 
 [project.urls]
 Homepage = "https://palmimo.dev"
 Repository = "https://github.com/Jizai-inc/palmimo-devkit"
 Documentation = "https://docs.palmimo.dev"
 Issues = "https://github.com/Jizai-inc/palmimo-devkit/issues"
+Changelog = "https://github.com/Jizai-inc/palmimo-devkit/releases"
 
 [project.optional-dependencies]
 # Hardware backend (DynamixelDriver over the Dynamixel bus; pyserial is a base

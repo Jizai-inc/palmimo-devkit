@@ -57,7 +57,8 @@ class IdleTurn:
             return
 
         message = response.choices[0].message
-        tool_call = message.tool_calls[0] if message.tool_calls else None
+        tool_calls = dispatch.function_tool_calls(message.tool_calls)
+        tool_call = tool_calls[0] if tool_calls else None
         if tool_call is None:
             dispatch.record_no_tool_call(self.history, message.content, no_tool_call_note=_NO_TOOL_CALL_NOTE)
             return

@@ -17,6 +17,11 @@ class PalmimoTeleop(Teleoperator):
     no pygame/display window). Leg motion is delegated to ``palmimo_sdk``'s
     ``MotionEngine``; this teleop maps held keys to a motion and to neck control.
 
+    Drives ``MotionEngine`` directly, with no ``Palmimo`` facade in between --
+    so ``palmimo_sdk``'s neck thermal guard (``Palmimo.step()``-only) does NOT
+    cover this teleop. Watch neck temperature by hand during an extended
+    session.
+
     Controls (character keys; see ``config.teleop_keys``):
     - W/S: Forward / Backward    A/D: Strafe Left / Right
     - Q/Z: Rotate Left / Right   E: Dance
@@ -110,14 +115,22 @@ class PalmimoTeleop(Teleoperator):
         # neck_pitch2 (motor 20) is on the bus like every other joint, and the robot
         # lists it in action_features; a teleop action that omits it does not leave
         # it alone, it makes the action undescribable (lerobot-record builds frames
-        # from the robot's feature names and KeyErrors on the gap). Only neck_pitch1
-        # is steered, so neck_pitch2 is held at neutral -- the pose it already sat
-        # in when nothing wrote to it.
+        # from the robot's feature names and KeyErrors on the gap). The pitch keys
+        # drive a single virtual total (see _neck_pitch_total / _update_neck_from_keys)
+        # which is then split across neck_pitch1/neck_pitch2 using the same
+        # share/sign convention as palmimo_sdk.engine.MotionEngine's look() split
+        # (NECK_PITCH2_SHARE, NECK_PITCH2_SIGN) -- pitch1 alone stalled lifting the
+        # head on hardware.
         self._neck_positions = {
             "neck_pitch1": self._neutral,
             "neck_pitch2": self._neutral,
             "neck_yaw": self._neutral,
         }
+        # Virtual undivided pitch value, walked by the pitch keys with the
+        # historical pitch1-only increment/clamp rule; _update_neck_from_keys
+        # splits it across neck_pitch1/neck_pitch2 every frame so the combined
+        # head angle matches that single-joint walk regardless of share.
+        self._neck_pitch_total = self._neutral
 
         # Neck movement limits
         self._neck_amplitude = 300  # Max deviation from center
@@ -327,28 +340,73 @@ class PalmimoTeleop(Teleoperator):
         """Update neck position from held character keys (see config.teleop_keys)."""
         nk = self.config.teleop_keys
         center = self._neutral
-        min_pos = center - self._neck_amplitude
-        max_pos = center + self._neck_amplitude
+        # Read the split knobs off the owned engine INSTANCE, not the class --
+        # a caller who overrides self._engine.neck_pitch2_share/sign (same as
+        # any other instance-overridable engine knob) must see this teleop's
+        # split follow it, instead of silently staying on the shipped default.
+        share = self._engine.neck_pitch2_share
+        sign = self._engine.neck_pitch2_sign
+        # Chin-up reach, mirroring MotionEngine._apply_neck's `up_reach`: this
+        # teleop carries no rest trim (center is always NEUTRAL), so pitch1's
+        # own spare room above center simplifies to the same `amp` pitch2
+        # then covers on its own -- amp + amp -- instead of engine.py's
+        # trim-dependent (center - (NEUTRAL - amp)) + amp. Only the reachable
+        # LIMIT needs to match the engine; unlike look(), nothing here reads
+        # real degrees off this constant.
+        up_reach = self._neck_amplitude * 2 if share > 0.0 else self._neck_amplitude
+        pitch_min_pos = center - up_reach
+        pitch_max_pos = center + self._neck_amplitude
+        # Yaw shares no chin-up extension (that band exists only for pitch2's
+        # look-only up_reach, see MotionEngine._apply_neck) -- its border is
+        # the ordinary symmetric +-amplitude around center.
+        yaw_min_pos = center - self._neck_amplitude
+        yaw_max_pos = center + self._neck_amplitude
 
-        # Pitch control (up/down)
+        # Pitch control (up/down): walk the undivided total with the historical
+        # pitch1-only increment/clamp rule, then split it across neck_pitch1/
+        # neck_pitch2 -- matching MotionEngine.look()'s split (NECK_PITCH2_SHARE,
+        # NECK_PITCH2_SIGN) instead of adding pitch2 on top of a full-range
+        # pitch1, which drove the combined head angle 1.5x past a single-joint
+        # walk at the default 0.5 share.
         if nk["neck_pitch_up"] in pressed:
-            self._neck_positions["neck_pitch1"] = min(self._neck_positions["neck_pitch1"] + self._neck_step, max_pos)
+            self._neck_pitch_total = min(self._neck_pitch_total + self._neck_step, pitch_max_pos)
         elif nk["neck_pitch_down"] in pressed:
-            self._neck_positions["neck_pitch1"] = max(self._neck_positions["neck_pitch1"] - self._neck_step, min_pos)
+            self._neck_pitch_total = max(self._neck_pitch_total - self._neck_step, pitch_min_pos)
         else:
-            current = self._neck_positions["neck_pitch1"]
+            current = self._neck_pitch_total
             if abs(current - center) < self._neck_step:
-                self._neck_positions["neck_pitch1"] = center
+                self._neck_pitch_total = center
             elif current > center:
-                self._neck_positions["neck_pitch1"] -= self._neck_step
+                self._neck_pitch_total -= self._neck_step
             else:
-                self._neck_positions["neck_pitch1"] += self._neck_step
+                self._neck_pitch_total += self._neck_step
+
+        total_offset = self._neck_pitch_total - center
+        # Same split as MotionEngine._apply_neck: pitch1's own basis is always
+        # the symmetric +-amp total, UNCHANGED by the chin-up extension above
+        # -- pitch1 must never be asked to swing harder than the pre-extension
+        # split already did, or the extra chin-up reach would come at the cost
+        # of re-introducing pitch1's overheating risk. pitch2 -- unless
+        # share == 0.0, the "pitch1 only" sentinel -- picks up whatever pitch1's
+        # own clamp left uncarried from the (possibly chin-up-extended)
+        # total_offset, so the combined head angle reaches the full extended
+        # offset instead of stalling on pitch1's own band.
+        p1_basis = max(-self._neck_amplitude, min(self._neck_amplitude, total_offset))
+        p1_offset = round((1.0 - share) * p1_basis)
+        p1_offset = max(-self._neck_amplitude, min(self._neck_amplitude, p1_offset))
+        self._neck_positions["neck_pitch1"] = center + p1_offset
+        if share > 0.0:
+            p2_offset = round(sign * (total_offset - p1_offset))
+            p2_offset = max(-self._neck_amplitude, min(self._neck_amplitude, p2_offset))
+        else:
+            p2_offset = 0
+        self._neck_positions["neck_pitch2"] = center + p2_offset
 
         # Yaw control (left/right)
         if nk["neck_yaw_left"] in pressed:
-            self._neck_positions["neck_yaw"] = min(self._neck_positions["neck_yaw"] + self._neck_step, max_pos)
+            self._neck_positions["neck_yaw"] = min(self._neck_positions["neck_yaw"] + self._neck_step, yaw_max_pos)
         elif nk["neck_yaw_right"] in pressed:
-            self._neck_positions["neck_yaw"] = max(self._neck_positions["neck_yaw"] - self._neck_step, min_pos)
+            self._neck_positions["neck_yaw"] = max(self._neck_positions["neck_yaw"] - self._neck_step, yaw_min_pos)
         else:
             current = self._neck_positions["neck_yaw"]
             if abs(current - center) < self._neck_step:

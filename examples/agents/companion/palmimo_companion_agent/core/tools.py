@@ -166,7 +166,7 @@ def _capture(robot: PalmimoLike) -> ToolResult:
     return SdkCaptureTool().execute(robot)
 
 
-def _motion_and_settle(robot: PalmimoLike, start: Callable[[], None], seconds: float) -> None:
+def _motion_and_settle(robot: PalmimoLike, start: Callable[[], object], seconds: float) -> None:
     """Set a motion and stream *seconds* of it, stopping even if the run raises.
 
     The setters only switch the engine's target motion, so a bare call from
@@ -218,9 +218,19 @@ class Look(LookTool):
     )
 
     def _act(self, robot: PalmimoLike) -> ToolResult:
+        # A fully independent re-implementation of the SDK LookTool's own _act
+        # (to add the gaze-hold seconds field above), so it must report the
+        # neck thermal guard's rejection itself too -- see
+        # palmimo_sdk.agent.tools._neck_guard_ignored_text, which this mirrors
+        # rather than imports (that helper is private to the SDK module).
+        ignored = robot.neck_lock_active
+        temp = robot.neck_temperature_c
         robot.look(pitch=NeckPitchDegrees(self.pitch), yaw=NeckYawDegrees(self.yaw))
         hold = self.seconds if self.seconds is not None else _LOOK_DEFAULT_HOLD_SECONDS
         robot.run(seconds=hold)
+        if ignored:
+            temp_text = f"{temp:.0f}C" if temp is not None else "an unknown temperature"
+            return ToolResult(text=f"neck is cooling down ({temp_text}), look ignored")
         note = f" (held {self.seconds:g}s)" if self.seconds is not None else ""
         return ToolResult(text=f"looking at pitch={self.pitch:g} deg, yaw={self.yaw:g} deg{note}")
 

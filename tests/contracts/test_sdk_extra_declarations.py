@@ -76,6 +76,8 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk.robot": _NO_EXTRA,
     # signal disposition and the park -- signal, contextlib, threading, time.
     "palmimo_sdk.shutdown": _NO_EXTRA,
+    # A pure state machine over ServoTelemetry (stdlib logging/enum/time only).
+    "palmimo_sdk.thermal": _NO_EXTRA,
 }
 
 #: `module:Name` -> the extras that name needs, overriding its module's entry.
@@ -130,6 +132,7 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:MotionEngine": _NO_EXTRA,
     "palmimo_sdk:NeckPitchDegrees": _NO_EXTRA,
     "palmimo_sdk:NeckPitchNormalized": _NO_EXTRA,
+    "palmimo_sdk:NeckThermalState": _NO_EXTRA,
     "palmimo_sdk:NeckYawDegrees": _NO_EXTRA,
     "palmimo_sdk:NeckYawNormalized": _NO_EXTRA,
     "palmimo_sdk:Palmimo": _NO_EXTRA,
@@ -137,6 +140,7 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:SAFE_MAX_TICK": _NO_EXTRA,
     "palmimo_sdk:SAFE_MIN_TICK": _NO_EXTRA,
     "palmimo_sdk:ServoDriver": _NO_EXTRA,
+    "palmimo_sdk:ServoPositions": _NO_EXTRA,
     "palmimo_sdk:ServoTelemetry": _NO_EXTRA,
     "palmimo_sdk:kinematics": _NO_EXTRA,
     "palmimo_sdk:shutdown": _NO_EXTRA,
