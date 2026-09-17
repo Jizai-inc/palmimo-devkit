@@ -44,10 +44,21 @@ def main(
         "--log-path",
         help="JSONL event log file path (env: COMPANION_AGENT_LOG_PATH; default: disabled)",
     ),
+    stdin: bool | None = typer.Option(
+        None,
+        "--stdin/--no-stdin",
+        help=(
+            "Read stdin for instructions under --ui cli (default: on). --no-stdin is for a "
+            "headless launch with no stdin attached (a service manager): the session then ends "
+            "only on SIGTERM/SIGINT instead of stdin EOF. Only valid with --ui cli."
+        ),
+    ),
 ) -> None:
     """Palmimo companion agent: guarded speech + an idle/respond conductor loop, with a TUI or headless CLI front end."""
     if ui not in ("tui", "cli"):
         raise typer.BadParameter(f"--ui must be 'tui' or 'cli' (got {ui!r}).")
+    if stdin is False and ui != "cli":
+        raise typer.BadParameter("--no-stdin only applies to --ui cli.")
 
     overrides: dict[str, object] = {}
     if hardware is not None:
@@ -62,7 +73,10 @@ def main(
         if ui == "cli":
             from .pipeline.ui.cli import run_cli
 
-            asyncio.run(run_cli(settings))
+            if stdin is False:
+                asyncio.run(run_cli(settings, read_stdin=False))
+            else:
+                asyncio.run(run_cli(settings))
         else:
             from .pipeline.ui.tui import run_tui
 

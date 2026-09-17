@@ -229,6 +229,7 @@ also documented in [`.env.sample`](.env.sample).
 | `--hardware` / `--no-hardware` | `COMPANION_AGENT_HARDWARE` (`false` to disable) | on | Attach real hardware peripherals; `--no-hardware` runs fully compute-only (a bare `Palmimo`, no speech, no vision) |
 | `--port` | `COMPANION_AGENT_PORT` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0` |
 | `--log-path` | `COMPANION_AGENT_LOG_PATH` | none (disabled) | JSONL event log file path (every `History` event, same shape as the `cli` front end's stdout) |
+| `--stdin` / `--no-stdin` | (none) | on | `cli` only: `--no-stdin` keeps a headless session running with no stdin attached (a service manager) instead of exiting at once on EOF -- the session then ends on SIGTERM/SIGINT. Rejected with `--ui tui` |
 | (none) | `COMPANION_AGENT_CHAT_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for both the idle and respond turns' tool-calling chat |
 | (none) | `COMPANION_AGENT_GUARD_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for the speech-classification guard |
 | (none) | `COMPANION_AGENT_VLM_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for image-to-text description (the `capture` tool) |
