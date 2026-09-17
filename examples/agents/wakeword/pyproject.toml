@@ -51,6 +51,11 @@ testpaths = ["tests"]
 [tool.coverage.run]
 source = ["palmimo_wakeword_agent"]
 
+
+[tool.coverage.report]
+# A ratchet, like the root workspace's COVERAGE_FLOOR. Raise it when the real number rises.
+fail_under = 85
+
 [tool.uv]
 # g2p-en declares a dependency on `distance` but never imports it (verified by
 # grepping the installed package); `distance` is GPL-2.0, so override g2p-en's

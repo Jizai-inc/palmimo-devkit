@@ -53,6 +53,11 @@ testpaths = ["tests"]
 [tool.coverage.run]
 source = ["palmimo_teleop"]
 
+
+[tool.coverage.report]
+# A ratchet, like the root workspace's COVERAGE_FLOOR. Raise it when the real number rises.
+fail_under = 85
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"

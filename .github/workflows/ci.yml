@@ -106,10 +106,10 @@ jobs:
           enable-cache: true
       - run: uv lock --check
       - run: uv sync --frozen --dev --python 3.12
-      - run: uv run --with-editable ${{ github.workspace }}/packages/palmimo_sdk ruff check .
-      - run: uv run --with-editable ${{ github.workspace }}/packages/palmimo_sdk ruff format --check .
-      - run: uv run --with-editable ${{ github.workspace }}/packages/palmimo_sdk mypy
-      - run: uv run --with-editable ${{ github.workspace }}/packages/palmimo_sdk pytest --cov
+      - run: uv run --frozen --with-editable ${{ github.workspace }}/packages/palmimo_sdk ruff check .
+      - run: uv run --frozen --with-editable ${{ github.workspace }}/packages/palmimo_sdk ruff format --check .
+      - run: uv run --frozen --with-editable ${{ github.workspace }}/packages/palmimo_sdk mypy
+      - run: uv run --frozen --with-editable ${{ github.workspace }}/packages/palmimo_sdk pytest --cov
       - run: uv run --frozen --no-sync pytest --cov
 
   # Every job above runs in the dev venv, where each optional dependency is
