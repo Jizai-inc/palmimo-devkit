@@ -763,3 +763,32 @@ def test_park_ignores_signals_from_its_first_check_to_its_last_report() -> None:
     assert all(disposition is signal.SIG_IGN for disposition in stream.dispositions), (
         "a signal landing on a report line would raise out of a caller's finally"
     )
+
+
+@pytest.mark.parametrize("delivery", [interrupt_on_signals, stop_flag_on_signals])
+def test_delivery_shape_restores_what_it_installed_when_a_later_install_is_refused(
+    delivery: Any, sigterm_sentinel: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Installing outside the try leaves a partial install switched for the process's life.
+
+    Under `interrupt_on_signals` the leftover keeps converting SIGTERM into a
+    KeyboardInterrupt long after the block that wanted it; under
+    `stop_flag_on_signals` it sets a flag nobody is left to read, so the
+    operator's stop is swallowed. `signals_ignored` already handles this case
+    (see the test above) -- these two are the same shape.
+    """
+    real = signal.signal
+
+    def refuse_the_second_signum(signum: int, handler: Any) -> Any:
+        if signum == signal.SIGINT:
+            raise ValueError("interpreter refuses handler installation")
+        return real(signum, handler)
+
+    monkeypatch.setattr(signal, "signal", refuse_the_second_signum)
+    with pytest.raises(ValueError), delivery(StopRequest(), signal.SIGTERM, signal.SIGINT):
+        pass  # pragma: no cover -- the enter is what raises
+    monkeypatch.undo()
+
+    assert signal.getsignal(signal.SIGTERM) is sigterm_sentinel, (
+        "the signum switched before the refusal was never handed back"
+    )
