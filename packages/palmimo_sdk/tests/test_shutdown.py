@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import io
 import signal
 import threading
 import time
@@ -63,6 +64,35 @@ class _SlowDriver(FakeDriver):
     def disconnect(self) -> None:
         time.sleep(0.2)
         super().disconnect()
+
+
+class _SignalWatchingDriver(FakeDriver):
+    """Records the SIGINT disposition every time the connection state is read."""
+
+    def __init__(self) -> None:
+        self.dispositions: list[Any] = []
+        super().__init__()
+
+    @property
+    def is_connected(self) -> bool:
+        self.dispositions.append(signal.getsignal(signal.SIGINT))
+        return self._connected
+
+    @is_connected.setter
+    def is_connected(self, connected: bool) -> None:
+        self._connected = connected
+
+
+class _SignalWatchingStream(io.StringIO):
+    """Records the SIGINT disposition every time a line is written to it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.dispositions: list[Any] = []
+
+    def write(self, s: str, /) -> int:
+        self.dispositions.append(signal.getsignal(signal.SIGINT))
+        return super().write(s)
 
 
 class InterruptingPeripheral:
@@ -700,3 +730,36 @@ def test_with_block_reports_an_interrupt_that_landed_in_a_clean_teardown() -> No
         pass
 
     assert driver.disconnected
+
+
+def test_park_ignores_signals_from_its_first_check_to_its_last_report() -> None:
+    """The ignore has to cover the whole body, not just the disconnect.
+
+    park() is normally entered from a `finally` after the first Ctrl+C, so a
+    second one -- or a SIGTERM under `interrupt_on_signals` -- landing on the
+    connection checks unwinds before the torque-off, which is the case this
+    module exists to close. On the way out the same signal would break the
+    does-not-raise promise the entry points rely on. A blocked stderr pipe
+    widens both windows arbitrarily.
+
+    Judged by the disposition in force at each point park touches the outside
+    world, rather than by delivering a signal: a test that raced a real SIGINT
+    against a ~2.5s park would only fail some of the time.
+    """
+    driver = _SignalWatchingDriver()
+    stream = _SignalWatchingStream()
+    robot = _robot(driver)
+    robot.connect()
+    driver.dispositions.clear()  # connect() reads it too; only park's own reads count
+
+    park(robot, out=stream)
+
+    assert driver.disconnected
+    assert driver.dispositions, "park never read the connection state"
+    assert stream.dispositions, "park reported neither end of the park"
+    assert all(disposition is signal.SIG_IGN for disposition in driver.dispositions), (
+        "a signal landing on park's checks would unwind before the torque-off"
+    )
+    assert all(disposition is signal.SIG_IGN for disposition in stream.dispositions), (
+        "a signal landing on a report line would raise out of a caller's finally"
+    )
