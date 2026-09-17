@@ -403,17 +403,13 @@ async def _run(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
-    """Console-script entry point (``palmimo-realtime``).
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the ``palmimo-realtime`` argument parser, without parsing anything.
 
-    :func:`~palmimo_companion_agent.output.configure_output` runs first, for the
-    same reason it does at the chat entry point: every line this front end
-    prints today passes ``flush=True``, but that is a per-call-site guarantee
-    the next line added has to remember, and it cannot reach output produced
-    inside the SDK at all. Setting line buffering on the stream covers both.
+    Split out from :func:`main` so a test can build the parser and feed it a
+    fixed argv (e.g. a manifest's rendered ``command``) without running the
+    rest of the entry point.
     """
-    configure_output()
-
     from .settings import VOICES
 
     parser = argparse.ArgumentParser(description="Run the companion on an OpenAI Realtime voice session.")
@@ -439,7 +435,21 @@ def main() -> int:
     )
     parser.add_argument("--port", default=None, help="Servo bus serial port (env: COMPANION_AGENT_PORT)")
     parser.add_argument("--log-path", default=None, help="JSONL event log file path (env: COMPANION_AGENT_LOG_PATH)")
-    parsed = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    """Console-script entry point (``palmimo-realtime``).
+
+    :func:`~palmimo_companion_agent.output.configure_output` runs first, for the
+    same reason it does at the chat entry point: every line this front end
+    prints today passes ``flush=True``, but that is a per-call-site guarantee
+    the next line added has to remember, and it cannot reach output produced
+    inside the SDK at all. Setting line buffering on the stream covers both.
+    """
+    configure_output()
+
+    parsed = _build_parser().parse_args()
 
     defaults = load_settings()
     args = argparse.Namespace(
