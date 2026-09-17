@@ -50,6 +50,33 @@ class ServoTelemetry:
     unreached: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ServoPositions:
+    """One sweep of present servo positions, as read from the bus.
+
+    A motor missing from ``positions`` was not read this sweep — it is
+    unknown, not neutral. Callers that need to tell a dropped read apart from
+    a real reading (e.g. a 50 Hz policy loop, where a collapsed-to-neutral
+    reading would look like a real joint at the neutral tick) use this
+    instead of :meth:`ServoDriver.read_positions`, which fills a failed read
+    with a safe placeholder for callers that cannot use an absent value.
+
+    The mappings are typed read-only: a sweep is a record of what the servos
+    said, and a caller that edits it is editing evidence.
+
+    Attributes:
+        positions (Mapping[str, int]): Motor name -> present position, raw
+            Dynamixel tick.
+        silent (tuple[str, ...]): Motors that were asked and did not answer.
+        unreached (tuple[str, ...]): Motors the sweep stopped short of, which is
+            evidence about the sweep rather than about those motors.
+    """
+
+    positions: Mapping[str, int] = field(default_factory=dict)
+    silent: tuple[str, ...] = ()
+    unreached: tuple[str, ...] = ()
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -135,9 +162,25 @@ class ServoDriver(ABC):
         Optional capability. The default raises :class:`NotImplementedError`;
         backends that can sense position (e.g. a serial bus) override it.
         Callers that need it (e.g. timed return-to-neutral) should degrade
-        gracefully or surface a clear error when it is unavailable.
+        gracefully or surface a clear error when it is unavailable. A caller
+        that must tell a failed read apart from a real one (e.g. a control
+        loop feeding a trained policy) uses :meth:`read_positions_span` instead.
         """
         raise NotImplementedError(f"{type(self).__name__} does not support read_positions().")
+
+    def read_positions_span(self, motors: Sequence[str] | None = None) -> ServoPositions:
+        """Read present servo positions in one sweep, without masking a failed read.
+
+        Unlike :meth:`read_positions`, a motor that does not answer is left
+        out of the result rather than filled with a placeholder — see
+        :class:`ServoPositions`. Optional capability; the default raises
+        :class:`NotImplementedError`.
+
+        Args:
+            motors (Sequence[str], optional): Motors to sweep; ``None`` sweeps
+                every motor.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support read_positions_span().")
 
     def read_telemetry(self, motors: Sequence[str] | None = None) -> ServoTelemetry:
         """Read the servo health signals (current, voltage, temperature) in one sweep.

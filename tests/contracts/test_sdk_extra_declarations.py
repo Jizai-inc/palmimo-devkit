@@ -138,6 +138,7 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:SAFE_MAX_TICK": _NO_EXTRA,
     "palmimo_sdk:SAFE_MIN_TICK": _NO_EXTRA,
     "palmimo_sdk:ServoDriver": _NO_EXTRA,
+    "palmimo_sdk:ServoPositions": _NO_EXTRA,
     "palmimo_sdk:ServoTelemetry": _NO_EXTRA,
     "palmimo_sdk:kinematics": _NO_EXTRA,
     # -- Name matching and ALSA card resolution: stdlib only (difflib,

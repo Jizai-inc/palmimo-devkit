@@ -365,3 +365,10 @@ def test_read_telemetry_is_optional_and_names_the_driver_that_lacks_it() -> None
     driver = RecordingDriver()
     with pytest.raises(NotImplementedError, match="RecordingDriver"):
         driver.read_telemetry()
+
+
+def test_read_positions_span_is_optional_and_names_the_driver_that_lacks_it() -> None:
+    """A backend that cannot sweep positions leaves that decision to the caller."""
+    driver = RecordingDriver()
+    with pytest.raises(NotImplementedError, match="RecordingDriver"):
+        driver.read_positions_span()
