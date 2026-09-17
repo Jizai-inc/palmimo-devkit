@@ -185,19 +185,22 @@ def _accepts_parallel_tool_calls(model: str, value: bool, multiple_tools: bool) 
     LiteLLM rejects a parameter the provider does not support
     (``UnsupportedParamsError``) rather than dropping it, so sending
     ``parallel_tool_calls`` where it is unwelcome fails the completion outright
-    -- Ollama and other self-hosted backends among them, and Gemini for one
-    specific combination. Asking LiteLLM keeps the parameter where it is
-    honoured and omits it only where it would be rejected.
+    -- Ollama and other self-hosted backends among them. Asking LiteLLM keeps
+    the parameter where it is honoured and omits it where it would be rejected
+    or ignored.
 
     The question has to include the value and the tool count, not just the
     parameter name. Gemini's supported-parameter table lists
     ``parallel_tool_calls``, yet ``value is False`` with more than one tool is
-    rejected: the parameter is honoured only as ``True`` there. Asking whether
-    the provider "supports" the name answers yes and the call then fails. So
-    this runs the same ``get_optional_params`` mapping the request goes
-    through, with the value and arity actually in play, and believes the
-    result. No network, no API key: the mapping is pure, and it is where the
-    rejection comes from.
+    not honoured: depending on the LiteLLM release the mapping either raises
+    or silently leaves the parameter out. Asking whether the provider
+    "supports" the name answers yes either way. So this runs the same
+    ``get_optional_params`` mapping the request goes through, with the value
+    and arity actually in play, and counts the parameter as accepted only when
+    the mapping neither raises nor comes out the same as without it -- the
+    output is compared rather than searched for the key because a provider
+    such as Anthropic translates it into ``tool_choice``. No network, no API
+    key: the mapping is pure.
 
     Omitting it on Gemini costs nothing, because the parameter never reached
     Gemini anyway -- ``GenerationConfig`` has no such field, so the request
@@ -232,15 +235,22 @@ def _accepts_parallel_tool_calls(model: str, value: bool, multiple_tools: bool) 
     except Exception as exc:
         _log.debug("could not determine the provider for %s, omitting parallel_tool_calls: %s", model, exc)
         return False
+    tool_count = 2 if multiple_tools else 1
     try:
-        litellm.utils.get_optional_params(
+        with_value = litellm.utils.get_optional_params(
             model=target,
             custom_llm_provider=provider,
-            tools=[_PROBE_TOOL, _PROBE_TOOL] if multiple_tools else [_PROBE_TOOL],
+            tools=[_PROBE_TOOL] * tool_count,
             parallel_tool_calls=value,
+        )
+        without_value = litellm.utils.get_optional_params(
+            model=target, custom_llm_provider=provider, tools=[_PROBE_TOOL] * tool_count
         )
     except Exception as exc:
         _log.debug("%s rejects parallel_tool_calls=%s, omitting it: %s", model, value, exc)
+        return False
+    if with_value == without_value:
+        _log.debug("%s ignores parallel_tool_calls=%s, omitting it", model, value)
         return False
     return True
 

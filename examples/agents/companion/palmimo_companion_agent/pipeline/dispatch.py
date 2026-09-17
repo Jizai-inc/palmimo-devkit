@@ -18,6 +18,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
+from litellm.types.utils import ChatCompletionMessageCustomToolCall, ChatCompletionMessageToolCall
+
 from palmimo_sdk.agent.tools import ToolResult
 
 from .history import AgentThoughtEvent, CameraEvent, SystemNoteEvent, ToolExecEvent
@@ -70,6 +72,17 @@ class ToolCallLike(Protocol):
     def id(self) -> str: ...
     @property
     def function(self) -> _FunctionLike: ...
+
+
+def function_tool_calls(
+    tool_calls: list[ChatCompletionMessageToolCall | ChatCompletionMessageCustomToolCall] | None,
+) -> list[ChatCompletionMessageToolCall]:
+    """The function tool calls in a message's ``tool_calls``, in order.
+
+    Only function tools are offered, so a custom tool call (which has no
+    ``function``) is not something either turn can dispatch.
+    """
+    return [call for call in tool_calls or [] if not isinstance(call, ChatCompletionMessageCustomToolCall)]
 
 
 async def run_tool(view: ToolView, bus: Bus, name: str, args: dict[str, Any]) -> ToolResult:
@@ -260,6 +273,7 @@ __all__ = [
     "ToolCallLike",
     "describe_images",
     "execute_and_record",
+    "function_tool_calls",
     "is_interrupted_result",
     "record_empty_choices",
     "record_llm_failure",

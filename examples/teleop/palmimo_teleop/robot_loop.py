@@ -93,7 +93,7 @@ class RobotLoop:
         #: docstring. `_UNSET` (not `None`) before the first tick, so that
         #: tick's `robot.stop()` is issued even when the resolved motion is
         #: also `None`.
-        self._applied_motion: str | None | object = _UNSET
+        self._applied_motion: str | object | None = _UNSET
 
     @property
     def loop_fps(self) -> float:
