@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
+import signal
 import sys
 import time
 from typing import ClassVar, TextIO, cast
@@ -158,6 +160,28 @@ async def test_run_cli_closes_the_event_log_on_shutdown(monkeypatch: pytest.Monk
     await asyncio.wait_for(cli_module.run_cli(_settings()), timeout=5.0)
 
     assert log.closed is True
+
+
+async def test_run_cli_without_stdin_ignores_eof_and_closes_on_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Under a service manager stdin is /dev/null, so a session that read it would end at once."""
+    log = io.StringIO()
+
+    def _fake_build_runtime(settings: PipelineSettings) -> Runtime:
+        rt = _build_test_runtime()
+        rt.event_log = log
+        return rt
+
+    monkeypatch.setattr(cli_module, "build_runtime", _fake_build_runtime)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))  # EOF at once if ever read
+
+    task = asyncio.ensure_future(cli_module.run_cli(_settings(), read_stdin=False))
+    await asyncio.sleep(0.05)
+    assert not task.done()  # EOF on stdin must not end the session
+
+    os.kill(os.getpid(), signal.SIGTERM)
+    await asyncio.wait_for(task, timeout=5.0)
+
+    assert log.closed is True  # the runtime was closed via the same shutdown path
 
 
 class _NeverReturningStdin:

@@ -81,9 +81,7 @@ def build_catalog(tag: str, root: Path = REPO_ROOT) -> dict:
     for manifest_path in discover_manifests(root):
         manifest = load_manifest(manifest_path)
         if manifest.name in seen_names:
-            raise ValueError(
-                f"duplicate app name {manifest.name!r} in {manifest_path} and {seen_names[manifest.name]}"
-            )
+            raise ValueError(f"duplicate app name {manifest.name!r} in {manifest_path} and {seen_names[manifest.name]}")
         seen_names[manifest.name] = manifest_path
         entries.append(_catalog_entry(manifest_path, manifest, tag, root))
     entries.sort(key=lambda entry: entry["name"])

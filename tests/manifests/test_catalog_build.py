@@ -64,9 +64,7 @@ def test_catalog_entry_manifest_key_present_only_for_non_default_filename() -> N
 def test_build_catalog_rejects_duplicate_app_names(tmp_path: Path) -> None:
     app_dir = tmp_path / "examples" / "dup"
     app_dir.mkdir(parents=True)
-    manifest_body = (
-        'schema = 1\nname = "palmimo-dup"\ndescription = "d"\ncommand = ["true"]\n'
-    )
+    manifest_body = 'schema = 1\nname = "palmimo-dup"\ndescription = "d"\ncommand = ["true"]\n'
     (app_dir / "palmimo.toml").write_text(manifest_body)
     (app_dir / "palmimo.other.toml").write_text(manifest_body)
 

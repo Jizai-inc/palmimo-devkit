@@ -1,7 +1,7 @@
 schema = 1
 name = "palmimo-companion-agent"
 description = "Always-on companion agent: an autonomous idle loop plus speech- and vision-driven responses, with a motion and expression vocabulary."
-command = ["palmimo-companion-agent", "--ui", "cli"]
+command = ["palmimo-companion-agent", "--ui", "cli", "--no-stdin"]
 devices = ["camera", "audio", "motor_display"]
 
 [env.OPENAI_API_KEY]
