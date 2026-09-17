@@ -103,7 +103,7 @@ async def _stdin_loop(runtime: Runtime, *, stdin: TextIO | None = None) -> None:
             print(f"[stdin] failed to submit input: {exc!r}", file=sys.stderr, flush=True)
 
 
-async def run_cli(settings: PipelineSettings) -> None:
+async def run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> None:
     """Build the runtime and drive it headlessly until ``/exit``, EOF, or a signal.
 
     stdout carries JSONL history events exclusively; every log record goes to
@@ -118,9 +118,16 @@ async def run_cli(settings: PipelineSettings) -> None:
     which is what a headless run wants on stderr and what would scribble over
     the TUI's rendering. SIGTERM (and SIGINT, so Ctrl+C also goes through the
     same graceful path rather than raising ``KeyboardInterrupt`` mid-shutdown)
-    cancel the stdin loop, which then lets
+    cancel the session task, which then lets
     :meth:`~palmimo_companion_agent.pipeline.wiring.Runtime.aclose` run in the
     ``finally`` block below.
+
+    ``read_stdin=False`` skips the stdin loop entirely and waits directly on
+    the same signal-cancelled task instead: a process launched by a service
+    manager (systemd) gets ``/dev/null`` as stdin, so reading it hits EOF
+    immediately and would otherwise end the session before the agent does
+    anything (see the ``--no-stdin`` option in ``main.py`` and the
+    ``palmimo.toml`` app manifest, which launches with it).
     """
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
     logging.getLogger("palmimo_companion_agent").setLevel(logging.INFO)
@@ -129,15 +136,15 @@ async def run_cli(settings: PipelineSettings) -> None:
     runtime.history.subscribe(lambda event: emit_event(event, out=sys.stdout))
     await runtime.start()
 
-    stdin_task = asyncio.ensure_future(_stdin_loop(runtime))
+    session_task = asyncio.ensure_future(_stdin_loop(runtime) if read_stdin else asyncio.Event().wait())
     loop = asyncio.get_running_loop()
     with contextlib.suppress(NotImplementedError):  # add_signal_handler isn't available on Windows
-        loop.add_signal_handler(signal.SIGTERM, stdin_task.cancel)
-        loop.add_signal_handler(signal.SIGINT, stdin_task.cancel)
+        loop.add_signal_handler(signal.SIGTERM, session_task.cancel)
+        loop.add_signal_handler(signal.SIGINT, session_task.cancel)
 
     try:
         with contextlib.suppress(asyncio.CancelledError):
-            await stdin_task
+            await session_task
     finally:
         with contextlib.suppress(NotImplementedError):
             loop.remove_signal_handler(signal.SIGTERM)

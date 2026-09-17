@@ -116,6 +116,26 @@ def test_hardware_flag_defaults_to_settings_default_when_omitted(monkeypatch: py
     assert captured["settings"].hardware is False
 
 
+def test_no_stdin_with_tui_is_rejected() -> None:
+    result = runner.invoke(app, ["--ui", "tui", "--no-stdin"])
+
+    assert result.exit_code != 0
+
+
+def test_no_stdin_flag_reaches_run_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> None:
+        captured["read_stdin"] = read_stdin
+
+    monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)
+
+    result = runner.invoke(app, ["--ui", "cli", "--no-stdin"])
+
+    assert result.exit_code == 0, result.output
+    assert captured["read_stdin"] is False
+
+
 def test_port_and_log_path_flags_reach_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, PipelineSettings] = {}
 
