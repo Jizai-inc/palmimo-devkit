@@ -78,7 +78,7 @@ jobs:
   # 3.12 only: the companion example pins mediapipe==0.10.18, which publishes
   # cp312 wheels only.
   #
-  # Every lint/type/test step also runs once with an editable overlay of this
+  # The type and test steps also run once with an editable overlay of this
   # PR's own packages/palmimo_sdk (--with-editable), so an SDK change that
   # breaks an example fails that example's job on the same PR that made the
   # change, instead of only after the next palmimo-sdk release. pytest runs a
@@ -106,10 +106,12 @@ jobs:
           enable-cache: true
       - run: uv lock --check
       - run: uv sync --frozen --dev --python 3.12
-      - run: uv run --frozen --with-editable ${{ github.workspace }}/packages/palmimo_sdk ruff check .
-      - run: uv run --frozen --with-editable ${{ github.workspace }}/packages/palmimo_sdk ruff format --check .
-      - run: uv run --frozen --with-editable ${{ github.workspace }}/packages/palmimo_sdk mypy
-      - run: uv run --frozen --with-editable ${{ github.workspace }}/packages/palmimo_sdk pytest --cov
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+      # `python -m`, not the console scripts: a script in the project venv runs
+      # that venv's interpreter directly and never sees the overlay.
+      - run: uv run --frozen --with-editable ${{ github.workspace }}/packages/palmimo_sdk python -m mypy
+      - run: uv run --frozen --with-editable ${{ github.workspace }}/packages/palmimo_sdk python -m pytest --cov
       - run: uv run --frozen --no-sync pytest --cov
 
   # Every job above runs in the dev venv, where each optional dependency is

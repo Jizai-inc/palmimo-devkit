@@ -10,9 +10,12 @@ outside this repository. `agents/openclaw/` carries no Python at all.
 
 To try an example against local, unreleased SDK changes
 instead, run it with an editable overlay from inside the example's own
-directory, e.g. `uv run --with-editable ../../packages/palmimo_sdk <command>`
-(the relative path to `packages/palmimo_sdk` depends on how deep the example
-sits under `examples/` — two levels for `teleop/`, three for `agents/*`).
+directory, through `python -m` rather than a console script (a script in the
+example's venv runs that venv's interpreter directly and never sees the
+overlay), e.g. `uv run --with-editable ../../packages/palmimo_sdk python -m
+palmimo_teleop.main` or `... python -m pytest` (the relative path to
+`packages/palmimo_sdk` depends on how deep the example sits under `examples/`
+— two levels for `teleop/`, three for `agents/*`).
 
 - `agents/` — Standalone agent implementation examples, one uv project each;
   see [agents/README.md](agents/README.md) for what each one is.
