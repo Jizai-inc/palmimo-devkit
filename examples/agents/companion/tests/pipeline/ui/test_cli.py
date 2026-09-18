@@ -184,6 +184,31 @@ async def test_run_cli_without_stdin_ignores_eof_and_closes_on_signal(monkeypatc
     assert log.closed is True  # the runtime was closed via the same shutdown path
 
 
+async def test_run_cli_closes_runtime_on_signal_during_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A signal during a slow ``connect()`` must not skip cleanup (default Python signal handling would)."""
+    log = io.StringIO()
+    rt = _build_test_runtime()
+    rt.event_log = log
+
+    started = asyncio.Event()
+
+    async def _blocking_start() -> None:
+        started.set()
+        await asyncio.Event().wait()  # never returns on its own -- only a cancel ends it
+
+    monkeypatch.setattr(rt, "start", _blocking_start)
+    monkeypatch.setattr(cli_module, "build_runtime", lambda settings: rt)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    task = asyncio.ensure_future(cli_module.run_cli(_settings()))
+    await asyncio.wait_for(started.wait(), timeout=5.0)
+
+    os.kill(os.getpid(), signal.SIGTERM)
+    await asyncio.wait_for(task, timeout=5.0)
+
+    assert log.closed is True
+
+
 class _NeverReturningStdin:
     """readline() blocks forever -- stands in for an interactive terminal with nothing typed."""
 

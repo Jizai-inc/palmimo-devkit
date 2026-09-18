@@ -88,7 +88,7 @@ before the app can launch.
 
 | `type` | Extra keys | Substituted as |
 |---|---|---|
-| `string` | `default`, `pattern` (a regular expression, `re.fullmatch`, at most 200 characters), `max_length` (default 256) | the value itself |
+| `string` | `default`, `pattern` (a regular expression, `re.fullmatch`, at most 200 characters, rejecting a nested quantifier like `(a+)+`), `max_length` (default 256) | the value itself |
 | `int` / `float` | `default`, `min`, `max` | the value's decimal representation |
 | `enum` | `choices` (required, non-empty array of strings), `default` | the chosen value |
 | `bool` | `default`, `flag` (required) | see below |
@@ -140,6 +140,10 @@ if any of the following holds:
 - a param's `default` fails its own constraints: outside `min`/`max` for
   `int`/`float`, not one of `choices` for `enum`, or longer than
   `max_length` / not matching `pattern` for `string`
+- a `string` param's `pattern` contains a nested quantifier (a quantified
+  group whose own contents are quantified, e.g. `(a+)+` or `(\d*)*`) — a
+  catastrophic-backtracking shape, rejected even if the pattern itself
+  compiles
 - a `bool` param has no `flag`
 - a `bool` param's placeholder is mixed into a larger element instead of
   being the entire element

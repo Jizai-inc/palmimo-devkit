@@ -28,10 +28,11 @@ def test_catalog_entry_env_and_devices_match_the_source_manifest() -> None:
         manifest = load_manifest(manifest_path)
         entry = entries_by_name[manifest.name]
         assert entry["devices"] == sorted(manifest.devices)
-        assert entry["env"] == {
-            env_name: {"required": env.required, "description": env.description}
-            for env_name, env in manifest.env.items()
-        }
+        for env_name, env in manifest.env.items():
+            expected = {"required": env.required, "description": env.description}
+            if env.help_url is not None:
+                expected["help_url"] = env.help_url
+            assert entry["env"][env_name] == expected
 
 
 def test_catalog_entry_source_points_at_the_requested_tag() -> None:
@@ -59,6 +60,20 @@ def test_catalog_entry_manifest_key_present_only_for_non_default_filename() -> N
 
     pipeline = entries_by_name["palmimo-companion-agent"]
     assert "manifest" not in pipeline["source"]
+
+
+def test_catalog_entry_env_omits_help_url_when_manifest_declares_none(tmp_path: Path) -> None:
+    app_dir = tmp_path / "examples" / "no-help-url"
+    app_dir.mkdir(parents=True)
+    manifest_body = (
+        'schema = 1\nname = "palmimo-no-help-url"\ndescription = "d"\ncommand = ["true"]\n'
+        '\n[env.SOME_KEY]\nrequired = true\ndescription = "no help_url here"\n'
+    )
+    (app_dir / "palmimo.toml").write_text(manifest_body)
+
+    catalog = build_catalog("v1.2.3", root=tmp_path)
+    entry = next(app for app in catalog["apps"] if app["name"] == "palmimo-no-help-url")
+    assert "help_url" not in entry["env"]["SOME_KEY"]
 
 
 def test_build_catalog_rejects_duplicate_app_names(tmp_path: Path) -> None:
