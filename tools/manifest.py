@@ -44,6 +44,13 @@ PARAM_TYPE_EXTRA_KEYS: dict[str, frozenset[str]] = {
 }
 
 _PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
+#: Flags a group that is itself quantified and whose own contents are
+#: quantified, e.g. ``(a+)+`` or ``(\d*)*`` -- catastrophic-backtracking
+#: shapes. A simple scan, not a general parse: nested groups two levels deep
+#: aren't caught, but no manifest needs that. Mirrors Portal's own
+#: `_has_nested_quantifier` (palmimo_portal/core/manifest.py) so a pattern
+#: accepted here is never rejected at install time.
+_NESTED_QUANTIFIER_RE = re.compile(r"\([^()]*[+*][^()]*\)[+*]")
 
 # Numbers, but not bool: TOML/Python's bool is a subtype of int, and a
 # `default = true` on an int/float param would otherwise pass isinstance(x, int).
@@ -56,6 +63,10 @@ def _is_number(value: object) -> bool:
 
 def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _has_nested_quantifier(pattern: str) -> bool:
+    return _NESTED_QUANTIFIER_RE.search(pattern) is not None
 
 
 class ManifestError(Exception):
@@ -298,6 +309,9 @@ def _check_param_by_type(name: str, param_type: str, table: dict, errors: list[s
     if pattern is not None:
         if not isinstance(pattern, str) or len(pattern) > PATTERN_MAX_LENGTH:
             errors.append(f"[params.{name}] 'pattern' must be a string of at most {PATTERN_MAX_LENGTH} characters")
+            pattern = None
+        elif _has_nested_quantifier(pattern):
+            errors.append(f"[params.{name}] 'pattern' contains a nested quantifier: {pattern!r}")
             pattern = None
         else:
             try:

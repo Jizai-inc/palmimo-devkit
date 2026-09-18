@@ -20,7 +20,7 @@ import argparse
 import json
 from pathlib import Path
 
-from tools.manifest import AppManifest, load_manifest
+from tools.manifest import AppManifest, EnvVar, load_manifest
 from tools.manifest import discover_manifests as _discover_manifests_in_dir
 
 
@@ -46,6 +46,13 @@ def discover_manifests(root: Path = REPO_ROOT) -> list[Path]:
     return sorted(paths)
 
 
+def _env_entry(env: EnvVar) -> dict:
+    entry: dict = {"required": env.required, "description": env.description}
+    if env.help_url is not None:
+        entry["help_url"] = env.help_url
+    return entry
+
+
 def _catalog_entry(manifest_path: Path, manifest: AppManifest, tag: str, root: Path) -> dict:
     subdir = manifest_path.parent.relative_to(root).as_posix()
     source = {
@@ -60,10 +67,7 @@ def _catalog_entry(manifest_path: Path, manifest: AppManifest, tag: str, root: P
     return {
         "name": manifest.name,
         "description": manifest.description,
-        "env": {
-            env_name: {"required": env.required, "description": env.description}
-            for env_name, env in sorted(manifest.env.items())
-        },
+        "env": {env_name: _env_entry(env) for env_name, env in sorted(manifest.env.items())},
         "devices": sorted(manifest.devices),
         "source": source,
     }
