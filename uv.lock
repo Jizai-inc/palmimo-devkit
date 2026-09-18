@@ -919,6 +919,7 @@ voice = [
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "packaging" },
     { name = "palmimo-sdk", extra = ["agent", "face", "hardware", "mcp", "speech", "vision", "voice"] },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -943,6 +944,7 @@ provides-extras = ["voice", "vision", "mcp"]
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=1.8,<3" },
+    { name = "packaging", specifier = ">=24" },
     { name = "palmimo-sdk", extras = ["agent", "face", "hardware", "mcp", "speech", "vision", "voice"], editable = "packages/palmimo_sdk" },
     { name = "pytest", specifier = ">=8,<10" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
