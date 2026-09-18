@@ -1,0 +1,5 @@
+# undefined placeholder: {missing} names no declared param and is not reserved
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run", "{missing}"]

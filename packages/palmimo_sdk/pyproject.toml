@@ -1,6 +1,6 @@
 [project]
 name = "palmimo-sdk"
-version = "0.1.0"
+version = "0.2.0rc1"
 description = "Palmimo SDK — Palmimo facade, MotionEngine, and ServoDriver abstraction"
 readme = "README.md"
 authors = [{ name = "Jizai Inc.", email = "noreply@jizai.ai" }]

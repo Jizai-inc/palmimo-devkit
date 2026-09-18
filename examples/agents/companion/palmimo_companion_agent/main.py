@@ -44,10 +44,60 @@ def main(
         "--log-path",
         help="JSONL event log file path (env: COMPANION_AGENT_LOG_PATH; default: disabled)",
     ),
+    stdin: bool | None = typer.Option(
+        None,
+        "--stdin/--no-stdin",
+        help=(
+            "Read stdin for instructions under --ui cli (default: on). --no-stdin is for a "
+            "headless launch with no stdin attached (a service manager): the session then ends "
+            "only on SIGTERM/SIGINT instead of stdin EOF. Only valid with --ui cli."
+        ),
+    ),
+    language: str | None = typer.Option(
+        None,
+        "--language",
+        help="ISO 639-1 code driving the STT hint and the reply language (env: COMPANION_AGENT_LANGUAGE; default: ja)",
+    ),
+    chat_model: str | None = typer.Option(
+        None,
+        "--chat-model",
+        help=(
+            "LiteLLM model for the idle and respond turns' tool-calling chat "
+            "(env: COMPANION_AGENT_CHAT_MODEL; default: gemini/gemini-3.5-flash-lite)"
+        ),
+    ),
+    stt_model: str | None = typer.Option(
+        None,
+        "--stt-model",
+        help=(
+            "LiteLLM model for speech-to-text transcription "
+            "(env: COMPANION_AGENT_STT_MODEL; default: openai/gpt-4o-mini-transcribe)"
+        ),
+    ),
+    voice_backend: str | None = typer.Option(
+        None,
+        "--voice-backend",
+        help=(
+            "TTS backend: 'piper' (local) or 'openai' (hosted, needs OPENAI_API_KEY) "
+            "(env: COMPANION_AGENT_VOICE_BACKEND; default: piper)"
+        ),
+    ),
+    voice_speed: float | None = typer.Option(
+        None,
+        "--voice-speed",
+        help="Speaking rate; higher is faster (env: COMPANION_AGENT_VOICE_SPEED; default: 1.0)",
+    ),
+    voice_volume: float | None = typer.Option(
+        None,
+        "--voice-volume",
+        help="Output gain; 1.0 is the voice's own level (env: COMPANION_AGENT_VOICE_VOLUME; default: 1.0)",
+    ),
 ) -> None:
     """Palmimo companion agent: guarded speech + an idle/respond conductor loop, with a TUI or headless CLI front end."""
     if ui not in ("tui", "cli"):
         raise typer.BadParameter(f"--ui must be 'tui' or 'cli' (got {ui!r}).")
+    if stdin is False and ui != "cli":
+        raise typer.BadParameter("--no-stdin only applies to --ui cli.")
 
     overrides: dict[str, object] = {}
     if hardware is not None:
@@ -56,13 +106,28 @@ def main(
         overrides["port"] = port
     if log_path is not None:
         overrides["log_path"] = log_path
+    if language is not None:
+        overrides["language"] = language
+    if chat_model is not None:
+        overrides["chat_model"] = chat_model
+    if stt_model is not None:
+        overrides["stt_model"] = stt_model
+    if voice_backend is not None:
+        overrides["voice_backend"] = voice_backend
+    if voice_speed is not None:
+        overrides["voice_speed"] = voice_speed
+    if voice_volume is not None:
+        overrides["voice_volume"] = voice_volume
     settings = load_settings(**overrides)
 
     try:
         if ui == "cli":
             from .pipeline.ui.cli import run_cli
 
-            asyncio.run(run_cli(settings))
+            if stdin is False:
+                asyncio.run(run_cli(settings, read_stdin=False))
+            else:
+                asyncio.run(run_cli(settings))
         else:
             from .pipeline.ui.tui import run_tui
 

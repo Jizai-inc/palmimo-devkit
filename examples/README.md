@@ -8,6 +8,19 @@ backend directly. The Python ones (`teleop/`, `agents/wakeword/`,
 PyPI, not on this repository's SDK source, so a copy of one works the same
 outside this repository. `agents/openclaw/` carries no Python at all.
 
+The robot never builds a package from source on-device, so each example's
+`uv.lock` must resolve to wheels for the robot's Python on `aarch64` — a
+locked dependency with only an sdist for that platform installs fine on a
+contributor's machine and then fails at deploy time. Check this locally from
+inside the example's directory:
+`uv export --frozen --no-dev --no-emit-project --no-hashes -o
+/tmp/reqs.txt && uv pip install --dry-run --no-build --python-platform
+aarch64-unknown-linux-gnu --python-version 3.13 -r /tmp/reqs.txt` (use the
+robot's Python for the example — see
+[tests/contracts/test_example_wheels.py](../tests/contracts/test_example_wheels.py)
+for how that is picked from `requires-python`). CI runs this check for every
+example on every PR.
+
 To try an example against local, unreleased SDK changes
 instead, run it with an editable overlay from inside the example's own
 directory, through `python -m` rather than a console script (a script in the

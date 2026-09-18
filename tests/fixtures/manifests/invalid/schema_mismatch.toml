@@ -1,0 +1,5 @@
+# schema mismatch: declares schema = 2, but only schema = 1 is accepted
+schema = 2
+name = "bad-app"
+description = "test"
+command = ["run"]

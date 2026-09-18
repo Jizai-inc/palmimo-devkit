@@ -1,0 +1,64 @@
+schema = 1
+name = "palmimo-companion-realtime"
+description = "Voice conversation with the companion over the OpenAI Realtime API, with camera frames pushed to the model periodically."
+command = [
+  "palmimo-realtime",
+  "--seconds",
+  "{seconds}",
+  "--model",
+  "{model}",
+  "--voice",
+  "{voice}",
+  "--pitch",
+  "{pitch}",
+  "--reply-chars",
+  "{reply_chars}",
+  "--frame-seconds",
+  "{frame_seconds}",
+]
+devices = ["camera", "audio", "motor_display"]
+
+[params.seconds]
+type = "float"
+default = 120
+min = 10
+max = 3600
+description = "Session length in seconds."
+
+[params.model]
+type = "string"
+default = "gpt-realtime-2.1"
+pattern = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+description = "OpenAI Realtime model used for the voice session."
+
+[params.voice]
+type = "enum"
+choices = ["alloy", "ash", "ballad", "cedar", "coral", "echo", "marin", "sage", "shimmer", "verse"]
+default = "coral"
+description = "Voice for the session's spoken audio. Cannot change once a session has started speaking."
+
+[params.pitch]
+type = "float"
+default = 1.15
+min = 0.5
+max = 2.0
+description = "Playback pitch multiplier; 1.0 leaves the voice unshifted."
+
+[params.reply_chars]
+type = "int"
+default = 60
+min = 0
+max = 1000
+description = "Roughly how long a spoken reply should run, as a hint to the model. 0 leaves length to its own judgement."
+
+[params.frame_seconds]
+type = "float"
+default = 10.0
+min = 1.0
+max = 300.0
+description = "How often a camera frame is sent to the model. Lower is more responsive but costs more."
+
+[env.OPENAI_API_KEY]
+required = true
+description = "OpenAI API key for the Realtime session: speech in, spoken replies out, and tool calls."
+help_url = "https://platform.openai.com/api-keys"

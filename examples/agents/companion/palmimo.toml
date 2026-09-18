@@ -1,0 +1,70 @@
+schema = 1
+name = "palmimo-companion-agent"
+description = "Always-on companion agent: an autonomous idle loop plus speech- and vision-driven responses, with a motion and expression vocabulary."
+command = [
+  "palmimo-companion-agent",
+  "--ui",
+  "cli",
+  "--no-stdin",
+  "--language",
+  "{language}",
+  "--chat-model",
+  "{chat_model}",
+  "--stt-model",
+  "{stt_model}",
+  "--voice-backend",
+  "{voice_backend}",
+  "--voice-speed",
+  "{voice_speed}",
+  "--voice-volume",
+  "{voice_volume}",
+]
+devices = ["camera", "audio", "motor_display"]
+
+[params.language]
+type = "enum"
+choices = ["ja", "en"]
+default = "ja"
+description = "Language for speech recognition and the spoken reply."
+
+[params.chat_model]
+type = "string"
+default = "gemini/gemini-3.5-flash-lite"
+pattern = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+description = "Chat model used for tool-calling conversation."
+
+[params.stt_model]
+type = "string"
+default = "openai/gpt-4o-mini-transcribe"
+pattern = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$"
+description = "Speech-to-text model used to transcribe what was heard."
+
+[params.voice_backend]
+type = "enum"
+choices = ["piper", "openai"]
+default = "piper"
+description = "Text-to-speech backend: piper runs locally, openai is hosted and needs an OpenAI API key."
+
+[params.voice_speed]
+type = "float"
+default = 1.0
+min = 0.1
+max = 3.0
+description = "Speaking rate; higher is faster."
+
+[params.voice_volume]
+type = "float"
+default = 1.0
+min = 0.0
+max = 3.0
+description = "Output gain; 1.0 is the voice's own level."
+
+[env.OPENAI_API_KEY]
+required = true
+description = "OpenAI API key, read by LiteLLM: used by the default speech-to-text model and, when voice_backend is set to openai, for text-to-speech."
+help_url = "https://platform.openai.com/api-keys"
+
+[env.GEMINI_API_KEY]
+required = true
+description = "Google Gemini API key, read by LiteLLM: used by the default chat, guard, and vision-language models. Not needed if those are all reconfigured away from Gemini."
+help_url = "https://aistudio.google.com/apikey"

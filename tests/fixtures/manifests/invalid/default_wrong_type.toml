@@ -1,0 +1,9 @@
+# default wrong type: "8000" is a string, not an int, for an int param
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run", "--port", "{port}"]
+
+[params.port]
+type = "int"
+default = "8000"
