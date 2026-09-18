@@ -13,8 +13,13 @@ These notices cover the direct dependencies of the `palmimo-devkit-software`
 workspace root itself, plus any weak-copyleft transitive dependency reached
 from its own `uv.lock` that `packages/palmimo_sdk`'s own file does not already
 claim (`packages/*` is this workspace's only member; each example under
-`examples/` is a standalone project outside it, with its own `uv.lock` and its
-own copy of this same weak-copyleft check):
+`examples/` is a standalone project outside it, with its own `uv.lock`).
+`tests/contracts/test_notice_contracts.py` runs a curated-list check against
+that same lock for every such example — every distribution on a fixed
+weak-copyleft list (`tqdm`, `certifi`) that the example's own `uv.lock`
+resolves must have a matching section in that example's own notice file
+below — as a CI contract rather than the manual sweep this file's own list
+was built from:
 
 - [`packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](packages/palmimo_sdk/THIRD_PARTY_NOTICES.md)
 - [`examples/agents/companion/THIRD_PARTY_NOTICES.md`](examples/agents/companion/THIRD_PARTY_NOTICES.md)

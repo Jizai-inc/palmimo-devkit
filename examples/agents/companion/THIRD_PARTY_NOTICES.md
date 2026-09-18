@@ -35,9 +35,9 @@ dependencies as well and are attributed in its file above.
 
 Not declared directly; reached transitively, by two routes that both start
 from `litellm`: `litellm` -> `httpx` -> `certifi`, and `litellm` -> `tiktoken`
--> `requests` -> `certifi`. Listed here because it is weak copyleft and this
-is the only standalone project in this tree whose own `uv.lock` resolves it
-(`palmimo-sdk`'s own closure does not reach it on any path).
+-> `requests` -> `certifi`. Listed here because it is weak copyleft
+(`palmimo-sdk`'s own closure does not reach it on any path; the wakeword
+example's does too, by its own route through `openai` -> `httpx`).
 
 - License: **MPL-2.0**
 - Source: https://github.com/certifi/python-certifi
@@ -47,8 +47,34 @@ is the only standalone project in this tree whose own `uv.lock` resolves it
   `certifi` is used unmodified, so the only obligation is keeping
   `site-packages/certifi/` (including `cacert.pem`, the data the notice
   covers) and `certifi-*.dist-info/LICENSE` on any image that ships it,
-  mirroring `tqdm`'s section in
-  [`THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/THIRD_PARTY_NOTICES.md).
+  mirroring `tqdm`'s section below.
+
+### tqdm
+
+Not declared directly; reached transitively via `litellm` -> `openai` ->
+`tqdm`. Listed here because it is weak copyleft.
+
+- License: **MPL-2.0 AND MIT**
+- Source: https://github.com/tqdm/tqdm
+
+The package is licensed per file, as stated in the `LICENCE` bundled with the
+wheel and reproduced verbatim below. The paths are upstream's own and reflect
+its historical layout — `tqdm/_tqdm.py` was renamed to `tqdm/std.py` and no
+longer exists under that name:
+
+- files `*` — MPL-2.0, 2015-2024 (c) Casper da Costa-Luis
+- file `tqdm/_tqdm.py` — MIT, 2016 (c) [PR #96] on behalf of Google Inc.
+- files `tqdm/_tqdm.py`, `README.rst`, `.gitignore` — MIT, 2013 (c) Noam
+  Yorav-Raphael
+
+MPL-2.0 is a file-level (weak) copyleft: it reaches only the MPL-covered files
+themselves, not the code that imports them. tqdm is used unmodified, so §3.2's
+obligation to publish modifications never arises, and this package does not
+distribute tqdm at all — it is installed from PyPI. A pre-installed image
+must still keep `site-packages/tqdm/*.py` (Source Code Form) and
+`tqdm-*.dist-info/LICENCE` in place, the same two conditions the root
+[`THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/THIRD_PARTY_NOTICES.md#tqdm)
+spells out in full.
 
 ### pydantic-settings
 
