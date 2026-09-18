@@ -12,7 +12,7 @@ import io
 import json
 import sys
 import time
-from typing import ClassVar
+from typing import ClassVar, TextIO, cast
 
 import pytest
 
@@ -21,7 +21,7 @@ from palmimo_companion_agent.core.tools import COMPANION_TOOL_MODELS
 from palmimo_companion_agent.pipeline.bus import Bus
 from palmimo_companion_agent.pipeline.conductor import Conductor
 from palmimo_companion_agent.pipeline.history import History
-from palmimo_companion_agent.pipeline.llm import SpeechVerdict
+from palmimo_companion_agent.pipeline.llm import LlmProvider, SpeechVerdict
 from palmimo_companion_agent.pipeline.settings import PipelineSettings
 from palmimo_companion_agent.pipeline.wiring import Runtime
 from palmimo_sdk import Palmimo
@@ -64,7 +64,7 @@ def _build_test_runtime() -> Runtime:
     history = History()
     bus = Bus()
     palmimo = Palmimo()
-    conductor = Conductor(history, _toolset(), FakeLlm(), bus, event_log=None)
+    conductor = Conductor(history, _toolset(), cast(LlmProvider, FakeLlm()), bus, event_log=None)
     return Runtime(conductor=conductor, palmimo=palmimo, toolset=_toolset(), history=history, event_log=None)
 
 
@@ -170,7 +170,7 @@ class _NeverReturningStdin:
 
 async def test_stdin_loop_is_cancellable(monkeypatch: pytest.MonkeyPatch) -> None:
     rt = _build_test_runtime()
-    task = asyncio.ensure_future(cli_module._stdin_loop(rt, stdin=_NeverReturningStdin()))
+    task = asyncio.ensure_future(cli_module._stdin_loop(rt, stdin=cast(TextIO, _NeverReturningStdin())))
     await asyncio.sleep(0.05)
 
     task.cancel()

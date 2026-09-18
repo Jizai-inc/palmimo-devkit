@@ -18,19 +18,18 @@ For the Raspberry Pi build steps, see [raspberry-pi-setup.md](raspberry-pi-setup
 uv sync
 ```
 
-This installs the core dependencies (everything needed for motor control). Because
-the wake-word agent example is a regular (non-optional) workspace dependency, `uv sync`
-also pulls in `palmimo-sdk[voice,speech,hardware]` — the shared mic stream (`MicStream`),
-GTCRN noise removal (`palmimo_sdk.audio`), and piper-plus TTS all install by default.
-The companion agent example is a regular workspace dependency too, and depends on
-`palmimo-sdk[voice,vision]` plus `opencv-python`/`mediapipe` directly — its
-`--hardware` default always needs the head camera and the MediaPipe wave-back /
-face-tracking reflexes, so `cv2` installs by default as well.
+This installs the SDK with every optional extra, because `uv sync` includes
+the `dev` dependency group and that group asks for all of them: the shared mic
+stream (`MicStream`), GTCRN noise removal (`palmimo_sdk.audio`), piper-plus
+TTS, the head camera, and the MCP server. With `--no-dev` only the core
+(motor control) installs; `palmimo_sdk`'s own extras are forwarded under the
+same names at the workspace root (e.g. `uv sync --no-dev --extra voice`), the
+same way they work for anyone using `palmimo_sdk` as a standalone library.
 
-`palmimo_sdk`'s own extras (`voice`, `vision`, ...) are also exposed under the
-same names at the workspace root (e.g. `uv sync --extra voice` for
-`sounddevice` / `numpy` / `sherpa-onnx`) for anyone using `palmimo_sdk` as a
-standalone library, outside this workspace.
+The examples under `examples/` (the wake-word agent, the companion agent,
+`palmimo_teleop`) are each their own standalone uv project, not a member of
+this workspace — `uv sync` here does not install their dependencies. See
+[examples/README.md](../../examples/README.md) for how to install and run one.
 
 ### Using `palmimo_sdk` as a library, outside this clone
 
@@ -128,8 +127,8 @@ https://tyc.rei-yumesaki.net/material/corpus/ (details:
 | Error | Fix |
 |--------|------|
 | `ModuleNotFoundError: dynamixel_sdk` | `uv sync` |
-| `ModuleNotFoundError: sounddevice` / `sherpa_onnx` | `uv sync` (workspace root already pulls this in via the wake-word example); `uv sync --extra voice` when using `palmimo_sdk` standalone |
-| `ModuleNotFoundError: cv2` / `mediapipe` | `uv sync` (workspace root already pulls this in via the companion agent example); `uv sync --extra vision` when using `palmimo_sdk` standalone |
+| `ModuleNotFoundError: sounddevice` / `sherpa_onnx` | `uv sync` (inside the example's own directory if the error came from running one); `uv sync --extra voice` when using `palmimo_sdk` standalone |
+| `ModuleNotFoundError: cv2` / `mediapipe` | `uv sync` (inside the example's own directory if the error came from running one); `uv sync --extra vision` when using `palmimo_sdk` standalone |
 | `RuntimeError: piper-plus is not installed` | `uv sync`; installs piper-plus via `palmimo-sdk[speech]` |
 | `RuntimeError: failed to download piper voice model ...` | The first-run voice download could not reach the network. Connect, or copy the voice directory in as described above. |
 | `RuntimeError: no audio player available` | `Speaker` plays synthesized speech via `aplay`/`ffplay` (Linux) or `afplay` (macOS) — install one (e.g. `sudo apt install alsa-utils`) |

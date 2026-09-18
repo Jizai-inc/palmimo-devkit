@@ -8,7 +8,7 @@ the conductor, using Textual's own :class:`~textual.pilot.Pilot` test driver.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, cast
 
 import pytest
 
@@ -17,6 +17,7 @@ from palmimo_companion_agent.core.tools import COMPANION_TOOL_MODELS
 from palmimo_companion_agent.pipeline.bus import Bus
 from palmimo_companion_agent.pipeline.conductor import Conductor
 from palmimo_companion_agent.pipeline.history import History, KeyboardEvent, MicInputEvent
+from palmimo_companion_agent.pipeline.llm import LlmProvider
 from palmimo_companion_agent.pipeline.settings import PipelineSettings
 from palmimo_companion_agent.pipeline.wiring import Runtime
 from palmimo_sdk import Palmimo
@@ -61,7 +62,7 @@ def _build_test_runtime() -> Runtime:
     history = History()
     bus = Bus()
     palmimo = Palmimo()
-    conductor = Conductor(history, _toolset(palmimo), FakeLlm(), bus, event_log=None)
+    conductor = Conductor(history, _toolset(palmimo), cast(LlmProvider, FakeLlm()), bus, event_log=None)
     return Runtime(conductor=conductor, palmimo=palmimo, toolset=_toolset(palmimo), history=history, event_log=None)
 
 
@@ -136,7 +137,7 @@ def test_is_exit_command() -> None:
 def _runtime_over(palmimo: Palmimo) -> Runtime:
     history = History()
     bus = Bus()
-    conductor = Conductor(history, _toolset(palmimo), FakeLlm(), bus, event_log=None)
+    conductor = Conductor(history, _toolset(palmimo), cast(LlmProvider, FakeLlm()), bus, event_log=None)
     return Runtime(conductor=conductor, palmimo=palmimo, toolset=_toolset(palmimo), history=history, event_log=None)
 
 

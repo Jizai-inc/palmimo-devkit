@@ -8,7 +8,10 @@ input device.
 
 ## Running it
 
+From this directory (`examples/teleop/`):
+
 ```bash
+uv sync
 uv run palmimo-teleop
 ```
 
@@ -172,12 +175,18 @@ be reading from it would race the two.
 
 ## Setup
 
-This project is a member of this repository's uv workspace, so the
-workspace's regular dependency sync (see
-[Resolving Dependencies](../../doc/guides/installation.md#resolving-dependencies))
-also covers it -- no separate `.env` or extra install step. It declares
-`palmimo-sdk[hardware,vision]`, so both the servo bus and head-camera (`cv2`)
-dependencies install with the rest of the workspace.
+This project is its own standalone uv project (own `pyproject.toml`/`uv.lock`),
+not a member of the repository's root workspace: `cd` into this directory and
+`uv sync` -- no separate `.env` or extra install step. It declares
+`palmimo-sdk[hardware,vision]` from PyPI, so both the servo bus and
+head-camera (`cv2`) dependencies install with it.
+
+To try it against local, unreleased SDK changes instead of the published
+`palmimo-sdk`, run from this directory:
+
+```bash
+uv run --with-editable ../../packages/palmimo_sdk python -m palmimo_teleop.main
+```
 
 ## Options
 

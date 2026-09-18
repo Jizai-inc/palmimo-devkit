@@ -204,7 +204,11 @@ async def test_run_continues_past_a_malformed_middle_call(
 
 
 async def test_run_stops_the_remainder_when_cancel_is_set_mid_plan(
-    toolset: AgentToolSet, fake_llm_provider: type, plan_turn: Callable, events_of_type: Callable
+    toolset: AgentToolSet,
+    fake_llm_provider: type,
+    plan_turn: Callable,
+    events_of_type: Callable,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # set_face is deliberately NOT long-running, so run_tool's dispatch never
     # races it against bus.cancel and never clears the flag on its own --
@@ -230,7 +234,7 @@ async def test_run_stops_the_remainder_when_cancel_is_set_mid_plan(
         bus.cancel.set()  # simulate new input arriving right after the first call
         return await original_call(name, args)
 
-    view.call = _fake_call
+    monkeypatch.setattr(view, "call", _fake_call)
     turn = RespondTurn(history, view, llm, bus)
 
     await turn.run()
@@ -365,7 +369,11 @@ async def test_run_on_empty_choices_records_a_note_and_backs_off(
 
 
 async def test_a_tool_result_with_images_is_described_and_recorded_as_a_camera_event(
-    toolset: AgentToolSet, fake_llm_provider: type, plan_turn: Callable, events_of_type: Callable
+    toolset: AgentToolSet,
+    fake_llm_provider: type,
+    plan_turn: Callable,
+    events_of_type: Callable,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     history = History()
     llm = fake_llm_provider([plan_turn([("capture", {"reason": "curious"})])])
@@ -380,7 +388,7 @@ async def test_a_tool_result_with_images_is_described_and_recorded_as_a_camera_e
             return ToolResult(text="captured image from head camera", images=result_images)
         return await original_call(name, args)
 
-    view.call = _fake_call
+    monkeypatch.setattr(view, "call", _fake_call)
     turn = RespondTurn(history, view, llm, Bus())
 
     await turn.run()

@@ -15,7 +15,7 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import numpy as np
 import pytest
@@ -284,6 +284,10 @@ class _SlowPitch:
         return pcm
 
 
+def _pitch(fake: _SlowPitch | _RaisingPitch) -> PitchShifter:
+    return cast(PitchShifter, fake)
+
+
 def test_interrupt_mid_pitch_processing_drops_the_stale_chunk_without_spawning(fake_popen: type[_FakePopen]) -> None:
     """A chunk the writer dequeued just before interrupt() must not spawn/write once interrupt() has moved on.
 
@@ -293,7 +297,7 @@ def test_interrupt_mid_pitch_processing_drops_the_stale_chunk_without_spawning(f
     audio that should have been dropped -- playing it over the user
     mid-interruption. The generation counter is what closes this window.
     """
-    playback = Playback(pitch=_SlowPitch(0.2))
+    playback = Playback(pitch=_pitch(_SlowPitch(0.2)))
     playback.write(b"\x00\x00")
     time.sleep(0.05)  # let the writer dequeue the chunk and enter (slow) pitch processing
     playback.interrupt()
@@ -484,7 +488,7 @@ def test_close_supervises_a_pending_interrupt_kill_thread_that_has_not_finished(
     stub_thread = threading.Thread(target=_still_running, daemon=True)
     with playback._process_lock:
         playback._process = None
-        playback._pending_kills.append((stub_thread, process))
+        playback._pending_kills.append((stub_thread, cast("subprocess.Popen[bytes]", process)))
     stub_thread.start()
 
     playback.close()
@@ -618,7 +622,7 @@ def test_a_pitch_processing_failure_is_counted_and_does_not_kill_the_writer_thre
     the thread survives means checking its identity stays the same, not
     just that playback keeps working.
     """
-    playback = Playback(pitch=_RaisingPitch())
+    playback = Playback(pitch=_pitch(_RaisingPitch()))
 
     playback.write(b"\x00\x00")
     _wait_until(lambda: playback._write_failures >= 1)

@@ -3,10 +3,11 @@ and `shutdown()` -- never through the real background thread or real time."""
 
 import threading
 import time
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+from palmimo_sdk import Palmimo
 from palmimo_teleop.robot_loop import FAILURE_LOG_INTERVAL_S, NECK_PITCH_SIGN, NECK_YAW_SIGN, RobotLoop
 from palmimo_teleop.session import PilotSession
 
@@ -50,8 +51,12 @@ def _no_sleep(_: float) -> None:
     return None
 
 
+def _robot(fake: FakeRobot) -> Palmimo:
+    return cast(Palmimo, fake)
+
+
 def _loop(robot: FakeRobot, session: PilotSession, *, fps: int = 60) -> RobotLoop:
-    return RobotLoop(robot, session, fps=fps, now=FakeClock(), sleep=_no_sleep)
+    return RobotLoop(_robot(robot), session, fps=fps, now=FakeClock(), sleep=_no_sleep)
 
 
 def test_tick_with_no_pilot_input_stops_the_robot() -> None:
@@ -186,7 +191,7 @@ def test_shutdown_skips_settle_when_the_thread_does_not_stop_in_time() -> None:
     # `robot` -- breaking the "only one thread ever touches the robot" invariant.
     robot = FakeRobot()
     session = PilotSession(now=FakeClock())
-    loop = RobotLoop(robot, session, now=FakeClock(), sleep=_no_sleep, settle_timeout=0.05)
+    loop = RobotLoop(_robot(robot), session, now=FakeClock(), sleep=_no_sleep, settle_timeout=0.05)
     loop._thread = threading.Thread(target=lambda: time.sleep(1.0), daemon=True)
     loop._thread.start()
     assert loop.shutdown() is False
@@ -201,7 +206,7 @@ def test_start_refuses_a_second_thread_after_a_timed_out_shutdown() -> None:
     # still alive.
     robot = FakeRobot()
     session = PilotSession(now=FakeClock())
-    loop = RobotLoop(robot, session, now=FakeClock(), sleep=_no_sleep, settle_timeout=0.05)
+    loop = RobotLoop(_robot(robot), session, now=FakeClock(), sleep=_no_sleep, settle_timeout=0.05)
     stuck_thread = threading.Thread(target=lambda: time.sleep(1.0), name="palmimo-teleop-robot-loop", daemon=True)
     loop._thread = stuck_thread
     stuck_thread.start()
@@ -230,7 +235,7 @@ def test_tick_recovering_after_a_failure_sets_robot_ok_true_again() -> None:
     session = PilotSession(now=FakeClock())
     loop = _loop(FailingRobot(), session)
     loop.tick()
-    loop.robot = FakeRobot()
+    loop.robot = _robot(FakeRobot())
     assert loop.tick() is True
     assert loop.robot_ok is True
 
@@ -241,7 +246,7 @@ def test_tick_failure_logging_is_throttled(caplog: pytest.LogCaptureFixture) -> 
     import logging
 
     clock = FakeClock()
-    loop = RobotLoop(FailingRobot(), PilotSession(now=clock), now=clock, sleep=_no_sleep)
+    loop = RobotLoop(_robot(FailingRobot()), PilotSession(now=clock), now=clock, sleep=_no_sleep)
     with caplog.at_level(logging.ERROR, logger="palmimo_teleop.robot_loop"):
         loop.tick()  # logged immediately (first failure)
         clock.now += FAILURE_LOG_INTERVAL_S / 2
@@ -255,7 +260,7 @@ def test_loop_fps_excludes_failed_ticks() -> None:
     # Without this, a servo bus failing most cycles would still report a
     # near-target fps instead of reflecting how few ticks actually succeeded.
     clock = FakeClock()
-    loop = RobotLoop(FailingRobot(), PilotSession(now=clock), fps=10, now=clock, sleep=_no_sleep)
+    loop = RobotLoop(_robot(FailingRobot()), PilotSession(now=clock), fps=10, now=clock, sleep=_no_sleep)
     loop._window_start = 0.0
     for _ in range(5):
         loop._update_loop_fps(loop.tick(), clock.now)

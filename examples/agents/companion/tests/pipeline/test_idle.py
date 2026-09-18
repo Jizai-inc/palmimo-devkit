@@ -179,7 +179,11 @@ async def test_tick_with_missing_reason_falls_back_to_message_content(
 
 
 async def test_a_tool_result_with_images_is_described_and_recorded_as_a_camera_event(
-    toolset: AgentToolSet, fake_llm_provider: type, tool_call_turn: Callable, events_of_type: Callable
+    toolset: AgentToolSet,
+    fake_llm_provider: type,
+    tool_call_turn: Callable,
+    events_of_type: Callable,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     history = History()
     llm = fake_llm_provider([tool_call_turn("capture", {"reason": "curious"})])
@@ -194,7 +198,7 @@ async def test_a_tool_result_with_images_is_described_and_recorded_as_a_camera_e
             return ToolResult(text="captured image from head camera", images=result_images)
         return await original_call(name, args)
 
-    view.call = _fake_call
+    monkeypatch.setattr(view, "call", _fake_call)
     turn = IdleTurn(history, view, llm, Bus())
 
     await turn.tick()

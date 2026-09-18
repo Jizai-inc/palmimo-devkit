@@ -97,7 +97,31 @@ def _workspace_member_dirs() -> list[Path]:
     return sorted(members)
 
 
-PYPROJECT_FILES = [SOFTWARE_ROOT / "pyproject.toml", *(d / "pyproject.toml" for d in _workspace_member_dirs())]
+def _example_project_dirs() -> list[Path]:
+    """Standalone uv projects under examples/, each with its own uv.lock.
+
+    Not reachable via `[tool.uv.workspace]` members -- the workspace only
+    covers packages/* -- so identified the way test_layering_contracts.py
+    identifies them: a pyproject.toml directly inside a directory under
+    examples/, skipping venvs and caches. Each one resolves its own PyPI
+    dependencies independently of the root uv.lock, so the checks below scan
+    every such lockfile rather than only the root one.
+    """
+    examples_root = SOFTWARE_ROOT / "examples"
+    return sorted(
+        path.parent
+        for path in examples_root.rglob("pyproject.toml")
+        if not any(part.startswith(".") or part == "__pycache__" for part in path.relative_to(examples_root).parts)
+    )
+
+
+EXAMPLE_PROJECT_DIRS = _example_project_dirs()
+PYPROJECT_FILES = [
+    SOFTWARE_ROOT / "pyproject.toml",
+    *(d / "pyproject.toml" for d in _workspace_member_dirs()),
+    *(d / "pyproject.toml" for d in EXAMPLE_PROJECT_DIRS),
+]
+LOCK_FILES = [SOFTWARE_ROOT / "uv.lock", *(d / "uv.lock" for d in EXAMPLE_PROJECT_DIRS)]
 
 
 def _every_pyproject_file() -> list[Path]:
@@ -289,13 +313,17 @@ def test_no_unscanned_project_entry_is_stale() -> None:
 
 
 def test_the_lockfile_resolves_no_lerobot_package() -> None:
-    lock = _load(SOFTWARE_ROOT / "uv.lock")
-    offenders = [pkg.get("name", "") for pkg in lock.get("package", []) if pkg.get("name", "").lower() == "lerobot"]
+    offenders = [
+        f"{lock_path.relative_to(SOFTWARE_ROOT).as_posix()}: {pkg['name']}"
+        for lock_path in LOCK_FILES
+        for pkg in _load(lock_path).get("package", [])
+        if pkg.get("name", "").lower() == "lerobot"
+    ]
 
     assert offenders == [], (
-        "The root uv.lock must resolve no lerobot package — this is the only check "
-        "that catches a transitive reintroduction (lerobot pulled in by some other "
-        f"dependency) rather than a direct declaration: {offenders}"
+        "No uv.lock in this tree (root, or any standalone example) may resolve a "
+        "lerobot package — this is the only check that catches a transitive "
+        f"reintroduction (lerobot pulled in by some other dependency) rather than a direct declaration: {offenders}"
     )
 
 
@@ -303,14 +331,19 @@ def test_the_lockfile_resolves_no_gpl_distance_package() -> None:
     """``distance`` (0.1.3, GPL-2.0) is a declared dependency of g2p-en, which
     piper-plus pulls in for the speech extra — but current g2p-en never imports
     it (dead, pre-2013 edit-distance utility). It is dropped via a
-    ``[[tool.uv.dependency-metadata]]`` override on g2p-en in pyproject.toml
-    (its declared deps replaced with the ones it actually uses) so it never
-    resolves into this GPL-clean tree's lockfile.
+    ``[[tool.uv.dependency-metadata]]`` override on g2p-en in each pyproject.toml
+    whose resolution reaches piper-plus (its declared deps replaced with the
+    ones it actually uses) so it never resolves into any GPL-clean lockfile in
+    this tree.
     """
-    lock = _load(SOFTWARE_ROOT / "uv.lock")
-    offenders = [pkg.get("name", "") for pkg in lock.get("package", []) if pkg.get("name", "").lower() == "distance"]
+    offenders = [
+        f"{lock_path.relative_to(SOFTWARE_ROOT).as_posix()}: {pkg['name']}"
+        for lock_path in LOCK_FILES
+        for pkg in _load(lock_path).get("package", [])
+        if pkg.get("name", "").lower() == "distance"
+    ]
 
     assert offenders == [], (
-        "The root uv.lock must resolve no distance package (GPL-2.0, unused "
+        "No uv.lock in this tree may resolve a distance package (GPL-2.0, unused "
         f"transitive dep of g2p-en) — see [[tool.uv.dependency-metadata]] for g2p-en: {offenders}"
     )

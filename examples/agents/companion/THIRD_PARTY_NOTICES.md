@@ -2,19 +2,20 @@
 
 What these lists are, how they were built, and what they deliberately do not
 cover is declared at the top of
-[`../../../THIRD_PARTY_NOTICES.md`](../../../THIRD_PARTY_NOTICES.md). This file travels on its own, so read that
-first.
+[`THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/THIRD_PARTY_NOTICES.md). This file travels on its own
+(a copied example has no parent tree), so those links point at the published
+repository; read that first.
 
 These notices apply to `palmimo-companion-agent` itself, in addition to
 whatever the `palmimo_sdk` extras it depends on already require (see
-[`../../../packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](../../../packages/palmimo_sdk/THIRD_PARTY_NOTICES.md)
+[`packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/packages/palmimo_sdk/THIRD_PARTY_NOTICES.md)
 for the `voice`/`vision`/`agent` extras it selects). Nothing below is vendored
 or distributed with this package — the dependencies are installed from PyPI,
 and each model weights entry is downloaded automatically at runtime into a
 local cache directory.
 
-This package is an unconditional dependency of the workspace root, so
-everything here lands in a default install of the tree, with no extra selected.
+This package is its own standalone uv project, so everything here lands in an
+ordinary install of this project's own directory, with no extra selected.
 `numpy` and `opencv-python` are declared here too, but they are `palmimo-sdk`
 dependencies as well and are attributed in its file above.
 
@@ -29,6 +30,51 @@ dependencies as well and are attributed in its file above.
   separate license "if that directory exists". It does not exist in the
   published wheel (no `litellm/enterprise/*` entries in its `RECORD`), so what
   is installed here is MIT in full.
+
+### certifi
+
+Not declared directly; reached transitively, by two routes that both start
+from `litellm`: `litellm` -> `httpx` -> `certifi`, and `litellm` -> `tiktoken`
+-> `requests` -> `certifi`. Listed here because it is weak copyleft
+(`palmimo-sdk`'s own closure does not reach it on any path; the wakeword
+example's does too, by its own route through `openai` -> `httpx`).
+
+- License: **MPL-2.0**
+- Source: https://github.com/certifi/python-certifi
+- Also bundles the Mozilla CA root store as data, so the notice covers that
+  bundle as well as the code.
+- MPL-2.0 applies per file and does not reach the code that imports it.
+  `certifi` is used unmodified, so the only obligation is keeping
+  `site-packages/certifi/` (including `cacert.pem`, the data the notice
+  covers) and `certifi-*.dist-info/LICENSE` on any image that ships it,
+  mirroring `tqdm`'s section below.
+
+### tqdm
+
+Not declared directly; reached transitively via `litellm` -> `openai` ->
+`tqdm`. Listed here because it is weak copyleft.
+
+- License: **MPL-2.0 AND MIT**
+- Source: https://github.com/tqdm/tqdm
+
+The package is licensed per file, as stated in the `LICENCE` bundled with the
+wheel and reproduced verbatim below. The paths are upstream's own and reflect
+its historical layout — `tqdm/_tqdm.py` was renamed to `tqdm/std.py` and no
+longer exists under that name:
+
+- files `*` — MPL-2.0, 2015-2024 (c) Casper da Costa-Luis
+- file `tqdm/_tqdm.py` — MIT, 2016 (c) [PR #96] on behalf of Google Inc.
+- files `tqdm/_tqdm.py`, `README.rst`, `.gitignore` — MIT, 2013 (c) Noam
+  Yorav-Raphael
+
+MPL-2.0 is a file-level (weak) copyleft: it reaches only the MPL-covered files
+themselves, not the code that imports them. tqdm is used unmodified, so §3.2's
+obligation to publish modifications never arises, and this package does not
+distribute tqdm at all — it is installed from PyPI. A pre-installed image
+must still keep `site-packages/tqdm/*.py` (Source Code Form) and
+`tqdm-*.dist-info/LICENCE` in place, the same two conditions the root
+[`THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/THIRD_PARTY_NOTICES.md#tqdm)
+spells out in full.
 
 ### pydantic-settings
 
@@ -108,7 +154,7 @@ third-party binaries that its own declared license does not describe.
   `LICENSE-3RD-PARTY.txt` in the installed `opencv_contrib_python` dist-info
   for the full list and license texts. This is the same bundled FFmpeg noted
   under `opencv-python` in
-  [`../../../packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](../../../packages/palmimo_sdk/THIRD_PARTY_NOTICES.md),
+  [`packages/palmimo_sdk/THIRD_PARTY_NOTICES.md`](https://github.com/Jizai-inc/palmimo-devkit/blob/main/packages/palmimo_sdk/THIRD_PARTY_NOTICES.md),
   reaching the install a second way.
 
 ### matplotlib

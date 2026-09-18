@@ -9,7 +9,10 @@ used directly), no TUI.
 Say the wake word and a command together in one breath, and it is executed via
 LLM tool-calling.
 
+From this directory (`examples/agents/wakeword/`):
+
 ```bash
+uv sync
 uv run palmimo-wakeword-agent
 ```
 
@@ -63,9 +66,10 @@ voice.
 
 ## Setup
 
-This project is a member of this repository's uv workspace, so the workspace's
-regular dependency sync (see [Resolving Dependencies](../../../doc/guides/installation.md#resolving-dependencies))
-also covers it. Settings are loaded through `WakewordAgentSettings`
+This project is its own standalone uv project (own `pyproject.toml`/`uv.lock`),
+not a member of the repository's root workspace: `cd` into this directory and
+`uv sync` to install it -- it declares `palmimo-sdk[voice,speech,hardware,agent]`
+from PyPI. Settings are loaded through `WakewordAgentSettings`
 (pydantic-settings) — copy the sample env file and fill in your keys:
 
 ```bash

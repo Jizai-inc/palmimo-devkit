@@ -21,6 +21,15 @@ nothing satisfies every other test here. That check is what catches the case
 this suite was written for -- a dependency whose environment marker keeps it
 off the machine the author develops on, and on the machine the product ships
 on.
+
+A declared dependency is not the only way a weak-copyleft distribution reaches
+a project, though: `tqdm` and `certifi` both arrive transitively, through
+whichever direct dependency happens to need them. Each example under
+`examples/` is a standalone project with its own `uv.lock`, so the resolved
+lock -- not the declared dependencies -- is what decides whether that example
+ships one of them. The last contract below reads each example's own lock
+against a curated weak-copyleft list and requires a matching section in that
+example's own notice file.
 """
 
 import re
@@ -43,6 +52,17 @@ _MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 # marker, or whitespace: "sherpa-onnx-core>=1.13.0 ; platform_machine == ..."
 # and "palmimo-sdk[voice]" both name a single distribution.
 _REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+# Distributions whose own declared license is weak copyleft, checked against
+# every standalone example's resolved lock regardless of whether that
+# distribution is declared directly. This is the curated list the root
+# THIRD_PARTY_NOTICES.md refers to as its "weak-copyleft check" -- keep the
+# two in sync by hand; there is no machine-readable source for "every dist on
+# PyPI whose declared license is a weak copyleft" to derive it from.
+WEAK_COPYLEFT_DISTRIBUTIONS: dict[str, str] = {
+    "tqdm": "MPL-2.0",
+    "certifi": "MPL-2.0",
+}
 
 
 def _load(path: Path) -> dict:
@@ -79,14 +99,24 @@ def _notice_files() -> list[Path]:
 
 
 def _project_dirs() -> list[Path]:
-    """Every directory in this workspace holding a `pyproject.toml`.
+    """Every directory in this tree holding a `pyproject.toml`, workspace or not.
 
     The workspace root is included deliberately. It is not a member of its own
     `members` globs, so a contract written only against members leaves the root
     project's own dependencies -- and the root notice file that covers them --
-    unguarded.
+    unguarded. Each example under examples/ is a standalone project outside
+    the workspace (its own uv.lock), not reachable via `[tool.uv.workspace]`
+    at all, so it is derived separately the same way
+    test_layering_contracts.py and test_self_containment.py derive it -- a
+    pyproject.toml directly inside a directory under examples/.
     """
-    return [SOFTWARE_ROOT, *_workspace_member_dirs()]
+    examples_root = SOFTWARE_ROOT / "examples"
+    example_dirs = sorted(
+        path.parent
+        for path in examples_root.rglob("pyproject.toml")
+        if not any(part.startswith(".") or part == "__pycache__" for part in path.relative_to(examples_root).parts)
+    )
+    return [SOFTWARE_ROOT, *_workspace_member_dirs(), *example_dirs]
 
 
 def _workspace_member_dirs() -> list[Path]:
@@ -269,4 +299,54 @@ def test_every_relative_link_in_a_notice_file_resolves_inside_this_tree() -> Non
     assert offenders == [], (
         f"every relative link in a {NOTICE_FILENAME} must resolve inside this tree -- these files "
         f"defer to each other for shared dependencies, so a broken link drops the attribution: {offenders}"
+    )
+
+
+def _example_project_dirs() -> list[Path]:
+    """Standalone uv projects under examples/, each resolving its own `uv.lock`.
+
+    Derived the same way `tests/contracts/test_self_containment.py` derives
+    it: a `pyproject.toml` directly inside a directory under `examples/`.
+    Not `[tool.uv.workspace]` members, so their dependencies never reach the
+    root `uv.lock` -- each has to be read on its own.
+    """
+    examples_root = SOFTWARE_ROOT / "examples"
+    return sorted(
+        path.parent
+        for path in examples_root.rglob("pyproject.toml")
+        if not any(part.startswith(".") or part == "__pycache__" for part in path.relative_to(examples_root).parts)
+    )
+
+
+def _locked_distribution_names(lock_path: Path) -> set[str]:
+    return {_normalize(package["name"]) for package in _load(lock_path).get("package", [])}
+
+
+def _notice_heading_text(path: Path) -> str:
+    headings = "\n".join(
+        line for line in path.read_text(encoding="utf-8").splitlines() if line.lstrip().startswith("#")
+    )
+    return re.sub(r"[-_.]+", "-", headings).lower()
+
+
+def test_every_example_notice_file_attributes_its_locked_weak_copyleft_dependencies() -> None:
+    # A declared dependency can pull in a weak-copyleft package transitively
+    # (tqdm via openai, certifi via httpx) without the example ever declaring
+    # it itself, so this reads the resolved lock rather than pyproject.toml.
+    offenders = []
+    for project_dir in _example_project_dirs():
+        relative = project_dir.relative_to(SOFTWARE_ROOT).as_posix()
+        locked = _locked_distribution_names(project_dir / "uv.lock")
+        notice_path = project_dir / NOTICE_FILENAME
+        headings = _notice_heading_text(notice_path) if notice_path.is_file() else ""
+
+        for name in WEAK_COPYLEFT_DISTRIBUTIONS:
+            if _normalize(name) not in locked:
+                continue
+            if not re.search(rf"(?<![a-z0-9-]){re.escape(name)}(?![a-z0-9-])", headings):
+                offenders.append(f"{relative}: uv.lock resolves {name}, no matching section in {NOTICE_FILENAME}")
+
+    assert offenders == [], (
+        "every standalone example's own uv.lock is what decides whether it ships a weak-copyleft "
+        f"dependency, so its own {NOTICE_FILENAME} must carry a section for each one resolved: {offenders}"
     )

@@ -19,9 +19,9 @@ uv add "palmimo-sdk[mcp]"
 ```
 
 From this workspace root you rarely need either line: `uv sync --dev` (what CI
-runs, and what `uv sync` does by default) already pulls `mcp` in through the
-`dev` dependency group, and `vision` (head camera, `capture`) and `voice` (the
-microphone-side stack) arrive with the example agents. The `--extra` flags
+runs, and what `uv sync` does by default) already pulls in `mcp`, `vision`
+(head camera, `capture`), and `voice` (the microphone-side stack) through the
+`dev` dependency group. The `--extra` flags
 matter when using `palmimo_sdk` standalone, outside this workspace, where none
 of that applies.
 

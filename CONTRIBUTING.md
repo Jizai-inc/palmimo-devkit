@@ -53,10 +53,14 @@ By participating you also agree to uphold our
 
 ## Development setup
 
-All Python work happens at the repository root — a **uv** workspace, so
-use `uv`, never `pip` or a bare `python`. The SDK core lives in
-`packages/palmimo_sdk`; the demo apps and the agent runtime live under
-`examples/`. Follow the [installation guide](doc/guides/installation.md) for the
+SDK work happens at the repository root — a **uv** workspace, so use `uv`,
+never `pip` or a bare `python`. The SDK core lives in `packages/palmimo_sdk`
+and is the workspace's only member. The demo apps and the agent runtime live
+under `examples/`, each as its own standalone uv project with its own
+`pyproject.toml`/`uv.lock` (depending on the published `palmimo-sdk` package,
+not this workspace's source) — see [examples/README.md](examples/README.md)
+for how to install and run one; the checks below cover the SDK core, not the
+examples. Follow the [installation guide](doc/guides/installation.md) for the
 exact install commands, then add the dev dependencies:
 
 ```bash
@@ -71,10 +75,14 @@ documentation, and comment-language ratchets in `contracts/`, and the tests for
 `scripts/` in `scripts/`.
 
 ```bash
-uv run pytest                                  # whole workspace
+uv run pytest                                  # whole workspace (SDK core + tests/)
 uv run pytest packages/palmimo_sdk/tests       # SDK only
 uv run pytest --cov                            # with a coverage report
 ```
+
+This workspace holds only the SDK core, so these commands do not run an
+example's own tests; run those from inside the example's own directory
+instead (see [examples/README.md](examples/README.md)).
 
 CI holds the whole-workspace run to a coverage floor, so a change that adds
 code without tests can pass locally and fail there. `--cov` locally reports the
@@ -123,10 +131,8 @@ installs it into a venv holding nothing else, and imports it: the checks above
 all run in the dev environment, where every optional dependency is present, so
 only that job can catch a top-level `import` of one. It runs on 3.13 as well as
 3.12, which is what holds the SDK to the `requires-python = ">=3.12"` it
-publishes -- the workspace itself cannot be installed on 3.13 today, because the
-companion example pins mediapipe 0.10.18 and it ships cp312 wheels only. The
-other builds the documentation site, which is the one part of this tree that is
-not Python.
+publishes. The other builds the documentation site, which is the one part of
+this tree that is not Python.
 
 When you change the SDK core (`palmimo_sdk`), update the co-located docs under
 [doc/](doc/) — `reference/api-reference.md`, `explanation/architecture.md`, and

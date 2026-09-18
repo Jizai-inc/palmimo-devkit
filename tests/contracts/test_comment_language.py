@@ -75,6 +75,10 @@ UNCHECKED_BY_DESIGN: Mapping[str, str] = {
             "uv.lock",
             # The nested LeRobot workspace resolves its own.
             "integrations/lerobot/uv.lock",
+            # Each standalone example project resolves its own.
+            "examples/teleop/uv.lock",
+            "examples/agents/wakeword/uv.lock",
+            "examples/agents/companion/uv.lock",
         ),
         "resolved by uv — a failure here could not be fixed by translating",
     ),

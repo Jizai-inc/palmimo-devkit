@@ -12,7 +12,10 @@ tracking) for immediate, low-latency reactions vision alone can drive.
 
 ## Running it
 
+From this directory (`examples/agents/companion/`):
+
 ```bash
+uv sync
 uv run palmimo-companion-agent
 ```
 
@@ -166,9 +169,11 @@ already opened and the whole startup fails -- see Hardware notes below.
 
 ## Setup
 
-This project is a member of this repository's uv workspace, so the workspace's
-regular dependency sync (see [Resolving Dependencies](../../../doc/guides/installation.md#resolving-dependencies))
-also covers it. Settings (including the LLM API keys) are loaded through
+This project is its own standalone uv project (own `pyproject.toml`/`uv.lock`),
+not a member of the repository's root workspace: `cd` into this directory and
+`uv sync` to install it -- it declares
+`palmimo-sdk[voice,vision,agent,speech,hardware,face]` from PyPI.
+Settings (including the LLM API keys) are loaded through
 `PipelineSettings` (pydantic-settings; the shared `CompanionSettings` base plus
 this runtime's own chat/guard/VLM/STT/voice knobs) -- copy the sample env file
 and fill in your key(s):

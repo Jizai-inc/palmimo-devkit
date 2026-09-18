@@ -4,10 +4,11 @@ encoder -- no `cv2`, no real device, no real time."""
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+from palmimo_sdk import HeadCamera
 from palmimo_teleop.video import FAILURE_LOG_INTERVAL_S, VideoStream
 
 
@@ -28,6 +29,10 @@ class FakeCamera:
 
     def latest(self, *, timeout: float) -> Any | None:
         return self._frames[0] if self._frames else None
+
+
+def _camera(fake: FakeCamera) -> HeadCamera:
+    return cast(HeadCamera, fake)
 
 
 def _fake_encode(frame: Any) -> bytes:
@@ -59,7 +64,7 @@ def test_start_with_failing_camera_open_degrades_without_raising() -> None:
     # Without this, a camera that fails to open (missing device, missing
     # `vision` extra) would crash the whole server instead of starting
     # compute-only with video disabled.
-    video = VideoStream(FakeCamera(fail_open=True))
+    video = VideoStream(_camera(FakeCamera(fail_open=True)))
     video.start()
     assert video.has_camera is False
 
@@ -68,7 +73,7 @@ def test_start_with_working_camera_populates_the_jpeg_buffer() -> None:
     # Without this, `/video.mjpeg` would have nothing to serve even with a
     # working camera attached.
     camera = FakeCamera(frames=["a"])
-    video = VideoStream(camera, encode=_fake_encode, sleep=_no_sleep)
+    video = VideoStream(_camera(camera), encode=_fake_encode, sleep=_no_sleep)
     video.start()
     try:
         deadline = time.monotonic() + 2.0
@@ -93,7 +98,7 @@ def test_capture_failure_marks_camera_not_ok_without_stopping_the_thread() -> No
         return _fake_encode(frame)
 
     camera = FakeCamera(frames=["a"])
-    video = VideoStream(camera, encode=flaky_encode, sleep=_no_sleep)
+    video = VideoStream(_camera(camera), encode=flaky_encode, sleep=_no_sleep)
     video.start()
     try:
         deadline = time.monotonic() + 2.0
@@ -109,7 +114,7 @@ def test_stop_closes_the_camera() -> None:
     # Without this, the camera device would stay open (and its background
     # drain thread running) after the server shuts down.
     camera = FakeCamera()
-    video = VideoStream(camera, encode=_fake_encode, sleep=_no_sleep)
+    video = VideoStream(_camera(camera), encode=_fake_encode, sleep=_no_sleep)
     video.start()
     video.stop()
     assert camera.closed is True
@@ -127,7 +132,7 @@ def test_stop_skips_closing_the_camera_when_the_thread_does_not_stop_in_time() -
     # Without this, `stop()` could close the camera device out from under a
     # still-running capture thread, racing the close against a read in flight.
     camera = FakeCamera()
-    video = VideoStream(camera, stop_timeout=0.05)
+    video = VideoStream(_camera(camera), stop_timeout=0.05)
     video._thread = threading.Thread(target=lambda: time.sleep(1.0), daemon=True)
     video._thread.start()
     video.stop()
@@ -139,7 +144,7 @@ def test_stop_marks_the_camera_unavailable_when_the_thread_does_not_stop_in_time
     # buffer (via `has_camera`) after a stuck stop(), even though nothing is
     # refreshing that buffer any more and the camera was never actually closed.
     camera = FakeCamera()
-    video = VideoStream(camera, encode=_fake_encode, sleep=_no_sleep, stop_timeout=0.05)
+    video = VideoStream(_camera(camera), encode=_fake_encode, sleep=_no_sleep, stop_timeout=0.05)
     video.start()
     assert video.has_camera is True
     video._thread = threading.Thread(target=lambda: time.sleep(1.0), daemon=True)
@@ -154,7 +159,7 @@ def test_start_refuses_a_second_thread_after_a_timed_out_stop() -> None:
     # the stop-timeout branch used to clear the thread handle, leaving
     # start() no way to tell the old thread was still alive.
     camera = FakeCamera()
-    video = VideoStream(camera, stop_timeout=0.05)
+    video = VideoStream(_camera(camera), stop_timeout=0.05)
     stuck_thread = threading.Thread(target=lambda: time.sleep(1.0), name="palmimo-teleop-video", daemon=True)
     video._thread = stuck_thread
     video._available = True
@@ -172,7 +177,7 @@ def test_capture_failure_logging_is_throttled(caplog: pytest.LogCaptureFixture) 
     # Without this, a persistently failing camera would log one line per
     # capture attempt (up to 15/s) instead of roughly once per FAILURE_LOG_INTERVAL_S.
     clock = FakeClock()
-    video = VideoStream(FakeCamera(), now=clock)
+    video = VideoStream(_camera(FakeCamera()), now=clock)
     with caplog.at_level(logging.ERROR, logger="palmimo_teleop.video"):
         video._log_capture_failure()  # logged immediately (first failure)
         clock.now += FAILURE_LOG_INTERVAL_S / 2
@@ -186,7 +191,7 @@ def test_start_is_idempotent_while_running() -> None:
     # Without this, a duplicate `start()` call could spawn a second capture
     # thread racing the first over the same camera device.
     camera = FakeCamera(frames=["a"])
-    video = VideoStream(camera, encode=_fake_encode, sleep=_no_sleep)
+    video = VideoStream(_camera(camera), encode=_fake_encode, sleep=_no_sleep)
     video.start()
     threads_before = threading.active_count()
     video.start()

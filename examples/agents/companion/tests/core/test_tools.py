@@ -26,6 +26,7 @@ from palmimo_companion_agent.core.tools import (
     Dance,
     Discover,
     EyeContact,
+    FaceLocatorLike,
     HeadShake,
     Investigate,
     Look,
@@ -42,6 +43,10 @@ from palmimo_sdk import MotionCancelled, Palmimo, ServoDriver, ServoTelemetry
 from palmimo_sdk.agent.tools import FaceExpression, SetFaceTool, StopTool
 from palmimo_sdk.agent.toolset import TOOL_MODELS, AgentToolSet
 from palmimo_sdk.thermal import NECK_HOT_C, NECK_MOTORS
+
+
+def _locator(fake: object) -> FaceLocatorLike | None:
+    return cast(FaceLocatorLike | None, fake)
 
 
 @pytest.fixture(autouse=True)
@@ -467,22 +472,22 @@ class TestMakeLookAtFaceTool:
 
     def test_returns_a_subclass_with_the_same_name_and_tool_name(self) -> None:
         locator = object()
-        cls = make_look_at_face_tool(locator)
+        cls = make_look_at_face_tool(_locator(locator))
         assert issubclass(cls, LookAtFaceTool)
         assert cls.name == "look_at_face"
         assert cls.__name__ == "LookAtFaceTool"
 
     def test_binds_the_locator_without_touching_the_base_class(self) -> None:
         locator = object()
-        cls = make_look_at_face_tool(locator)
+        cls = make_look_at_face_tool(_locator(locator))
         assert cls._face_locator is locator
         assert LookAtFaceTool._face_locator is None
 
     def test_two_factory_built_classes_do_not_share_a_locator(self) -> None:
         locator_a = object()
         locator_b = object()
-        cls_a = make_look_at_face_tool(locator_a)
-        cls_b = make_look_at_face_tool(locator_b)
+        cls_a = make_look_at_face_tool(_locator(locator_a))
+        cls_b = make_look_at_face_tool(_locator(locator_b))
         assert cls_a._face_locator is locator_a
         assert cls_b._face_locator is locator_b  # building cls_b must not overwrite cls_a
 

@@ -90,7 +90,7 @@ async def test_a_closed_socket_ends_the_session_cleanly_and_still_parks() -> Non
         palmimo=cast(Palmimo, recorder),
         sleeping=Sleeping(),
         usage=cast(Any, app_module.Usage("gpt-realtime-2.1")),
-        frame=cast(LiveFrame, LiveFrame(camera=None)),
+        frame=LiveFrame(camera=None),
     )
 
     await session.run(30.0)  # must return normally, not raise, and not wait out the 30s timeout
@@ -233,7 +233,7 @@ async def test_signal_handlers_are_removed_before_shutdown_runs() -> None:
         palmimo=cast(Palmimo, recorder),
         sleeping=Sleeping(),
         usage=cast(Any, app_module.Usage("gpt-realtime-2.1")),
-        frame=cast(LiveFrame, LiveFrame(camera=None)),
+        frame=LiveFrame(camera=None),
     )
 
     loop = asyncio.get_running_loop()
