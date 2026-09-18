@@ -896,7 +896,7 @@ wheels = [
 
 [[package]]
 name = "palmimo-devkit-software"
-version = "0.1.0"
+version = "0.2.0rc1"
 source = { virtual = "." }
 dependencies = [
     { name = "dynamixel-sdk" },
@@ -954,7 +954,7 @@ dev = [
 
 [[package]]
 name = "palmimo-sdk"
-version = "0.1.0"
+version = "0.2.0rc1"
 source = { editable = "packages/palmimo_sdk" }
 dependencies = [
     { name = "pyserial" },
