@@ -177,8 +177,7 @@ scripts/                                # Supported user diagnostics (diagnose_s
   `face` (`pyserial`, for `FaceDisplay`), `speech` (`piper-plus` TTS), `voice`
   (mic streaming plus denoise/AEC — `sounddevice`, `numpy`, `sherpa-onnx`,
   `ai-edge-litert`), `agent` (`pydantic`, the LLM tool-calling layer), `vision`
-  (`opencv-python-headless`, for `HeadCamera`; applications using MediaPipe may
-  additionally install GUI-enabled OpenCV and require `libgl1`), and `mcp` (`mcp`, `mcp-types`, `starlette`,
+  (`opencv-python`, for `HeadCamera`), and `mcp` (`mcp`, `mcp-types`, `starlette`,
   `uvicorn`, plus `agent`)
 - `tqdm>=4.66.0` — a dependency of this repository's own `scripts/`, not of the
   SDK package

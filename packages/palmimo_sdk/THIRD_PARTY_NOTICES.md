@@ -201,26 +201,20 @@ command by hand.
 
 Applies to head camera capture (`palmimo_sdk.io.camera`).
 
-### opencv-python-headless
+### opencv-python
 
-- License: Apache-2.0 (the `opencv-python-headless` wheel's own code)
+- License: Apache-2.0 (the `opencv-python` wheel's own code)
 - Source: https://github.com/opencv/opencv-python
 - The published wheel bundles third-party binaries alongside the Apache-2.0
   code, most notably **FFmpeg under LGPL-2.1** (plus several other
   LGPL-licensed libraries on some platforms — libbluray, libgnutls,
   libnettle, libhogweed, libintl, libmp3lame, libp11, librtmp, libsoxr,
   libtasn1 on macOS wheels). See `LICENSE-3RD-PARTY.txt` in the installed
-  `opencv_python_headless` dist-info for the full list and license texts.
+  `opencv_python` dist-info for the full list and license texts.
 - Beyond that file the wheel ships no `NOTICE`, so Apache-2.0 §4(d) propagates
   nothing further. The same FFmpeg binaries also arrive through
   `opencv-contrib-python` — see
   [`../../examples/agents/companion/THIRD_PARTY_NOTICES.md`](../../examples/agents/companion/THIRD_PARTY_NOTICES.md).
-
-### opencv-python
-
-Used by the companion example. Its Apache-2.0 wheel also bundles FFmpeg under
-LGPL-2.1; see the `opencv-python-headless` entry above for the corresponding
-`LICENSE-3RD-PARTY.txt` attribution.
 
 ## `hardware` extra
 
