@@ -58,7 +58,7 @@ voice = [
 agent = ["pydantic>=2"]
 # Head camera (HeadCamera over cv2.VideoCapture). Lazy-imported, so
 # `import palmimo_sdk` stays dependency-free without it.
-vision = ["opencv-python-headless>=4"]
+vision = ["opencv-python-headless>=4,<5"]
 # MCP server (palmimo_sdk.mcp) exposing the agent toolset over the Model
 # Context Protocol. Builds on the [agent] extra's Tool / AgentToolSet layer.
 # Pinned below 3 -- the 2.x line is the current major; a 3.x bump would need

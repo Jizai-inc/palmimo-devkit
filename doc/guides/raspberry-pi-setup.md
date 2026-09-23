@@ -138,21 +138,25 @@ dependency sync does not install. Which ones you need depends on the app:
 
 | App and dependency | Records / captures via | OS dependency |
 |---|---|---|
-| the SDK's `HeadCamera` | `opencv-python` | `v4l-utils` |
+| the SDK's `HeadCamera` | `opencv-python-headless` | `v4l-utils` |
 | the SDK's TTS (`palmimo_sdk.io.speaker`) | the `piper` binary | none beyond the voice models |
 | the SDK's `MicStream` / the wake-word agent example | `sounddevice` | `libportaudio2` |
 
-The camera path is the one every camera-using app shares. `opencv-python` needs a
-V4L2 driver, read permission on `/dev/video<id>`, and — on a Lite image — the
-OpenGL runtime its wheel links against. Without `libgl1` the import itself
-fails with `ImportError: libGL.so.1: cannot open shared object file`, which
-disables the MCP server's `capture` tool and stops the companion agent from
-starting at all:
+The SDK camera path uses `opencv-python-headless`, so it needs a V4L2 driver
+and read permission on `/dev/video<id>`, but not `libgl1`. Apps such as the
+companion example that install MediaPipe may also install
+`opencv-contrib-python`; that GUI-enabled wheel still needs `libgl1` on a Lite
+image. Install it only for those apps:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y v4l-utils libgl1
+sudo apt-get install -y v4l-utils
 v4l2-ctl --list-devices                 # list connected cameras
+```
+
+```bash
+# Needed by MediaPipe / opencv-contrib-python applications, not by HeadCamera.
+sudo apt-get install -y libgl1
 ```
 
 Apps that use the SDK's `sounddevice`-based microphone capture (`MicStream`,

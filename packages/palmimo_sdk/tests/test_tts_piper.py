@@ -56,8 +56,8 @@ class _FakeDownloads:
         self.calls.append((url, path))
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.suffix == ".zip":
-            with ZipFile(path, "w"):
-                pass
+            with ZipFile(path, "w") as archive:
+                archive.writestr(f"{path.stem}/", "")
         else:
             path.write_text(f'{{"phoneme_type": "openjtalk", "source": "{url}"}}' if path.suffix == ".json" else url)
 
@@ -263,12 +263,12 @@ def test_preflight_downloads_nltk_data_for_an_english_capable_voice(
     PiperEngine(model_en="en_X", data_dir=str(tmp_path)).preflight("en")
 
     for resource in (
-        "taggers/averaged_perceptron_tagger.zip",
-        "taggers/averaged_perceptron_tagger_eng.zip",
-        "corpora/cmudict.zip",
+        "taggers/averaged_perceptron_tagger",
+        "taggers/averaged_perceptron_tagger_eng",
+        "corpora/cmudict",
     ):
-        assert nltk.data.find(resource)
-        assert (cache_home / "palmimo" / "models" / "nltk_data" / resource).is_file()
+        assert nltk.data.find(f"{resource}/")
+        assert (cache_home / "palmimo" / "models" / "nltk_data" / f"{resource}.zip").is_file()
 
 
 def test_preflight_uses_existing_nltk_data_without_downloading(
@@ -278,14 +278,12 @@ def test_preflight_uses_existing_nltk_data_without_downloading(
 
     existing = tmp_path / "existing"
     for resource in (
-        "taggers/averaged_perceptron_tagger.zip",
-        "taggers/averaged_perceptron_tagger_eng.zip",
-        "corpora/cmudict.zip",
+        "taggers/averaged_perceptron_tagger",
+        "taggers/averaged_perceptron_tagger_eng",
+        "corpora/cmudict",
     ):
         path = existing / resource
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with ZipFile(path, "w"):
-            pass
+        path.mkdir(parents=True)
     nltk.data.path.append(str(existing))
     _touch_multilingual_voice(tmp_path / "en_X", "en_X")
 
@@ -322,7 +320,24 @@ def test_preflight_retries_nltk_data_after_a_download_failure(
     downloads.error = None
     engine.preflight("en")
 
-    assert nltk.data.find("taggers/averaged_perceptron_tagger.zip")
+    assert nltk.data.find("taggers/averaged_perceptron_tagger/")
+
+
+def test_preflight_replaces_a_corrupted_nltk_archive_in_the_sdk_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, downloads: _FakeDownloads, isolated_nltk_paths: None
+) -> None:
+    import nltk
+
+    cache_home = tmp_path / "cache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache_home))
+    corrupted = cache_home / "palmimo" / "models" / "nltk_data" / "taggers" / "averaged_perceptron_tagger.zip"
+    corrupted.parent.mkdir(parents=True)
+    corrupted.write_bytes(b"")
+    _touch_multilingual_voice(tmp_path / "en_X", "en_X")
+
+    PiperEngine(model_en="en_X", data_dir=str(tmp_path)).preflight("en")
+
+    assert nltk.data.find("taggers/averaged_perceptron_tagger/")
 
 
 def test_preflight_downloads_the_voice_when_it_is_missing(tmp_path: Path, downloads: _FakeDownloads) -> None:
