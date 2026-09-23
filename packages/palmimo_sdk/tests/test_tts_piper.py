@@ -30,6 +30,12 @@ CATALOGUE_EN = "ja_JP-css10-6lang-medium"
 #: PIPER_PLUS_VOICES in last, so a file cannot redefine the two above.
 UPSTREAM_VOICE = "ca_ES-upc_ona-medium"
 
+NLTK_RESOURCE_FILES = {
+    "averaged_perceptron_tagger": "averaged_perceptron_tagger/averaged_perceptron_tagger.pickle",
+    "averaged_perceptron_tagger_eng": "averaged_perceptron_tagger_eng/averaged_perceptron_tagger_eng.weights.json",
+    "cmudict": "cmudict/cmudict",
+}
+
 
 def _touch_voice_model(data_dir: Path, name: str) -> None:
     """Create dummy files satisfying piper's standard voice-file naming
@@ -57,7 +63,7 @@ class _FakeDownloads:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.suffix == ".zip":
             with ZipFile(path, "w") as archive:
-                archive.writestr(f"{path.stem}/", "")
+                archive.writestr(NLTK_RESOURCE_FILES[path.stem], "")
         else:
             path.write_text(f'{{"phoneme_type": "openjtalk", "source": "{url}"}}' if path.suffix == ".json" else url)
 
@@ -284,6 +290,7 @@ def test_preflight_uses_existing_nltk_data_without_downloading(
     ):
         path = existing / resource
         path.mkdir(parents=True)
+        (path / NLTK_RESOURCE_FILES[path.name].removeprefix(f"{path.name}/")).write_text("")
     nltk.data.path.append(str(existing))
     _touch_multilingual_voice(tmp_path / "en_X", "en_X")
 
@@ -338,6 +345,26 @@ def test_preflight_replaces_a_corrupted_nltk_archive_in_the_sdk_cache(
     PiperEngine(model_en="en_X", data_dir=str(tmp_path)).preflight("en")
 
     assert nltk.data.find("taggers/averaged_perceptron_tagger/")
+
+
+def test_preflight_reports_an_incomplete_unpacked_nltk_directory_without_downloading(
+    tmp_path: Path, downloads: _FakeDownloads, isolated_nltk_paths: None
+) -> None:
+    import nltk
+
+    existing = tmp_path / "existing"
+    for resource in ("averaged_perceptron_tagger", "averaged_perceptron_tagger_eng"):
+        directory = existing / "taggers" / resource
+        directory.mkdir(parents=True)
+        (directory / NLTK_RESOURCE_FILES[resource].removeprefix(f"{resource}/")).write_text("")
+    (existing / "corpora" / "cmudict").mkdir(parents=True)
+    nltk.data.path.append(str(existing))
+    _touch_multilingual_voice(tmp_path / "en_X", "en_X")
+
+    with pytest.raises(RuntimeError, match="incomplete"):
+        PiperEngine(model_en="en_X", data_dir=str(tmp_path)).preflight("en")
+
+    assert downloads.calls == []
 
 
 def test_preflight_downloads_the_voice_when_it_is_missing(tmp_path: Path, downloads: _FakeDownloads) -> None:

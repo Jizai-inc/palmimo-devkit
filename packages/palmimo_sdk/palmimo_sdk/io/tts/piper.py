@@ -45,16 +45,19 @@ _NLTK_RESOURCES = {
         "averaged_perceptron_tagger",
         "https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/taggers/averaged_perceptron_tagger.zip",
         "e1f13cf2532daadfd6f3bc481a49859f0b8ea6432ccdcd83e6a49a5f19008de9",
+        "averaged_perceptron_tagger.pickle",
     ),
     "taggers/averaged_perceptron_tagger_eng.zip": (
         "averaged_perceptron_tagger_eng",
         "https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/taggers/averaged_perceptron_tagger_eng.zip",
         "6025f530624335c67d6547d44757b357b4e79bae030a0383e9887a92c1718f0b",
+        "averaged_perceptron_tagger_eng.weights.json",
     ),
     "corpora/cmudict.zip": (
         "cmudict",
         "https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/corpora/cmudict.zip",
         "d07cca47fd72ad32ea9d8ad1219f85301eeaf4568f8b6b73747506a71fb5afd6",
+        "cmudict",
     ),
 }
 
@@ -91,7 +94,7 @@ def _nltk_data_dir() -> Path:
 
 def _nltk_download_hint() -> str:
     """Return the manual counterpart of :func:`ensure_nltk_data`."""
-    packages = " ".join(package for package, _, _ in _NLTK_RESOURCES.values())
+    packages = " ".join(package for package, _, _, _ in _NLTK_RESOURCES.values())
     return f"uv run python -m nltk.downloader --download-dir {_nltk_data_dir()} {packages}"
 
 
@@ -122,10 +125,11 @@ def ensure_nltk_data(*, fetch: bool = True) -> None:
     if cache_text not in nltk.data.path:
         nltk.data.path.append(cache_text)
 
-    for archive, (package, url, sha256) in _NLTK_RESOURCES.items():
+    for archive, (package, url, sha256, member) in _NLTK_RESOURCES.items():
         # NLTK finds an unpacked directory with this name and falls back to
         # the same-name archive when it is absent.
-        resource = f"{archive.removesuffix('.zip')}/"
+        directory = archive.removesuffix(".zip")
+        resource = f"{directory}/{member}"
         try:
             nltk.data.find(resource)
         except BadZipFile as exc:
@@ -142,7 +146,12 @@ def ensure_nltk_data(*, fetch: bool = True) -> None:
                     f"NLTK resource {package!r} is corrupted at {corrupt_archive}; run: {_nltk_download_hint()}"
                 ) from exc
         except LookupError:
-            pass
+            incomplete_dir = _find_nltk_directory(nltk.data.path, directory)
+            if incomplete_dir is not None:
+                raise RuntimeError(
+                    f"NLTK resource {package!r} is incomplete at {incomplete_dir}; "
+                    f"delete it or install it again, then run: {_nltk_download_hint()}"
+                ) from None
         else:
             continue
         if not fetch:
@@ -173,6 +182,15 @@ def _find_nltk_archive(search_paths: list[str], archive: str) -> Path:
         if candidate.is_file():
             return candidate
     return Path(archive)
+
+
+def _find_nltk_directory(search_paths: list[str], directory: str) -> Path | None:
+    """Return an unpacked NLTK directory that shadows an archive lookup."""
+    for search_path in search_paths:
+        candidate = Path(search_path) / directory
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 def _voice_may_phonemize_english(config_path: Path) -> bool:
