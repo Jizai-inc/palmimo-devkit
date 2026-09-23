@@ -21,6 +21,7 @@ import os
 import re
 import wave
 from collections.abc import Callable
+from json import JSONDecodeError, load
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,26 @@ logger = logging.getLogger(__name__)
 
 #: Subdirectory of the shared model cache holding piper's voices.
 _VOICE_CACHE_SUBDIR = "piper"
+
+#: Directory in the shared model cache where English phonemization data lives.
+_NLTK_CACHE_SUBDIR = "nltk_data"
+
+#: Resources g2p_en and nltk.pos_tag require, indexed by their nltk lookup
+#: name and the official NLTK data archive URL.
+_NLTK_RESOURCES = {
+    "taggers/averaged_perceptron_tagger.zip": (
+        "averaged_perceptron_tagger",
+        "https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/taggers/averaged_perceptron_tagger.zip",
+    ),
+    "taggers/averaged_perceptron_tagger_eng.zip": (
+        "averaged_perceptron_tagger_eng",
+        "https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/taggers/averaged_perceptron_tagger_eng.zip",
+    ),
+    "corpora/cmudict.zip": (
+        "cmudict",
+        "https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/corpora/cmudict.zip",
+    ),
+}
 
 #: What one voice-model file (~38 MB each) may spend connecting, and waiting
 #: for any single read. It does NOT bound the transfer: a slow but live link
@@ -57,6 +78,80 @@ def _voice_root(data_dir: str | None) -> Path:
     if data_dir is not None:
         return Path(os.path.expanduser(data_dir))
     return default_model_dir() / _VOICE_CACHE_SUBDIR
+
+
+def _nltk_data_dir() -> Path:
+    """Return the shared NLTK data directory used by English phonemization."""
+    return default_model_dir() / _NLTK_CACHE_SUBDIR
+
+
+def _nltk_download_hint() -> str:
+    """Return the manual counterpart of :func:`ensure_nltk_data`."""
+    packages = " ".join(package for package, _ in _NLTK_RESOURCES.values())
+    return f"uv run python -m nltk.downloader --download-dir {_nltk_data_dir()} {packages}"
+
+
+def _nltk_module() -> Any:
+    """Import NLTK only when an English-capable voice is being prepared."""
+    import nltk
+
+    return nltk
+
+
+def ensure_nltk_data(*, fetch: bool = True) -> None:
+    """Make English phonemization data available in the shared model cache.
+
+    Existing NLTK search paths are honored before fetching.  The SDK cache is
+    also added to ``nltk.data.path`` before g2p_en can be imported.
+
+    Args:
+        fetch: When ``False``, report missing data without downloading it.
+
+    Raises:
+        RuntimeError: A required resource is absent while fetching is disabled,
+            or it could not be fetched.  The message includes the command for
+            preparing the cache on a networked machine.
+    """
+    nltk = _nltk_module()
+    cache_dir = _nltk_data_dir()
+    cache_text = str(cache_dir)
+    if cache_text not in nltk.data.path:
+        nltk.data.path.append(cache_text)
+
+    for resource, (package, url) in _NLTK_RESOURCES.items():
+        try:
+            nltk.data.find(resource)
+        except LookupError:
+            if not fetch:
+                raise RuntimeError(
+                    f"NLTK resource {package!r} for English phonemization is not available; "
+                    f"run: {_nltk_download_hint()}"
+                ) from None
+            try:
+                download_atomic(url, cache_dir / resource, timeout=_DOWNLOAD_TIMEOUT_S)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"failed to download NLTK resource {package!r} from {url} to {cache_dir}: {exc}. "
+                    f"In an offline environment, run this on a networked machine and copy {cache_dir}, "
+                    f"or run: {_nltk_download_hint()}"
+                ) from exc
+            try:
+                nltk.data.find(resource)
+            except LookupError:
+                raise RuntimeError(
+                    f"NLTK resource {package!r} was downloaded to {cache_dir}, but NLTK cannot find it; "
+                    f"run: {_nltk_download_hint()}"
+                ) from None
+
+
+def _voice_may_phonemize_english(config_path: Path) -> bool:
+    """Return whether a piper voice config can dispatch text to g2p_en."""
+    try:
+        with config_path.open(encoding="utf-8") as config_file:
+            phoneme_type = load(config_file).get("phoneme_type", "multilingual")
+    except (JSONDecodeError, OSError, AttributeError):
+        return True
+    return phoneme_type in {"multilingual", "bilingual"}
 
 
 def _voice_dir(model: str, data_dir: str | None) -> Path:
@@ -115,8 +210,8 @@ def _probe_failure_hint(error_text: str, model: str, data_dir: str | None) -> st
     """
     if "nltk_data" in error_text:
         return (
-            " Missing NLTK data for English phonemization; run: "
-            "uv run python -m nltk.downloader averaged_perceptron_tagger_eng cmudict"
+            " Missing NLTK data for English phonemization; cache it at "
+            f"{_nltk_data_dir()} by running: {_nltk_download_hint()}"
         )
     if "VoiceNotFoundError" in error_text or "No such file" in error_text:
         return f" Voice model not found; run: {_download_model_hint(model, data_dir)}"
@@ -384,7 +479,9 @@ class PiperEngine(TtsEngine):
         """
         if _find_piper_find_voice() is None:
             return
-        ensure_piper_voice(self._model_for(lang), self._data_dir, fetch=fetch)
+        _, config_path = ensure_piper_voice(self._model_for(lang), self._data_dir, fetch=fetch)
+        if _voice_may_phonemize_english(config_path):
+            ensure_nltk_data(fetch=fetch)
 
     def load_voice(self, lang: str) -> TtsVoice:
         """Resolve *lang*'s on-disk model files, load them via ``voice_loader``,
