@@ -13,7 +13,7 @@ version; a future incompatible change to this format raises it.
 
 ```toml
 schema = 1
-name = "palmimo-teleop"
+name = "teleop"
 description = "Drive Palmimo from a phone or laptop browser over WebSocket, with live MJPEG camera video, on the same LAN."
 command = ["palmimo-teleop", "--port", "{port}", "{no_camera}"]
 url = "http://{host}:{port}/"
@@ -46,12 +46,28 @@ example: the same directory's `palmimo.toml` is the cascaded pipeline app,
 and `palmimo.realtime.toml` is the OpenAI Realtime voice runtime, because the
 two need different env vars and devices.
 
+## App identity
+
+On the device, an app is identified by an ID of the form `<namespace>.<name>`.
+A host derives the namespace itself from where the app was installed from —
+an install from the official catalog gets `palmimo`, a GitHub install gets
+the repository owner, a zip upload gets `zip`, and so on — nothing in the
+manifest sets it.
+
+`name` is only the default for the ID's name part, and the app's display
+name in the catalog. It does not need to be unique across every possible
+install source: if installing it would collide with an app already on the
+device, a host appends `-2`, `-3`, and so on to the name part, and the
+person installing it can rename it before install completes. Because the
+namespace already carries the organization or vendor, avoid putting one in
+`name` — no `palmimo-` or similar prefix.
+
 ## Fields
 
 | Key | Type | Required | Rule |
 |---|---|---|---|
 | `schema` | int | yes | Only `1` is accepted today |
-| `name` | string | yes | Must match `^[a-z][a-z0-9-]{0,39}$` — used as-is for the app's on-device directory name, service instance name, and API path, so it has to be safe in all three |
+| `name` | string | yes | Must match `^[a-z][a-z0-9-]{0,39}$` — see [App identity](#app-identity) for what it is used for |
 | `description` | string | yes | 1-200 characters. The catalog's one-line summary |
 | `command` | array of strings | yes | The argv to execute. An array, not a shell string, so no shell ever parses it; an element may contain one or more `{param}` placeholders |
 | `url` | string | no | A page to open once the app is running. May contain `{host}` and param placeholders. Must start with `http://` or `https://` (`javascript:` and similar are rejected) |
@@ -67,8 +83,9 @@ deliberately unused extension.
 
 `[env.<NAME>]` declares one environment variable the app reads at startup.
 `<NAME>` must match `^[A-Z][A-Z0-9_]{0,63}$`; names starting with `PALMIMO_`
-are reserved for variables the host injects itself (e.g. the app's own name)
-and cannot be declared here.
+are reserved for variables the host injects itself (e.g. `PALMIMO_APP_ID`,
+the app's own ID — see [App identity](#app-identity)) and cannot be declared
+here.
 
 | Key | Type | Required | Rule |
 |---|---|---|---|

@@ -1,5 +1,5 @@
 schema = 1
-name = "palmimo-companion-realtime"
+name = "companion-realtime"
 description = "Voice conversation with the companion over the OpenAI Realtime API, with camera frames pushed to the model periodically."
 command = [
   "palmimo-realtime",

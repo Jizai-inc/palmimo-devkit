@@ -1,5 +1,5 @@
 schema = 1
-name = "palmimo-wakeword-agent"
+name = "wakeword"
 description = "One-shot wake-word voice agent: hear the wake word and a command in one breath, execute it, and speak the reply."
 command = [
   "palmimo-wakeword-agent",

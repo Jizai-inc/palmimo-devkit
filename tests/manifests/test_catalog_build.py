@@ -55,10 +55,10 @@ def test_catalog_entry_manifest_key_present_only_for_non_default_filename() -> N
     catalog = build_catalog("v1.2.3")
     entries_by_name = {app["name"]: app for app in catalog["apps"]}
 
-    realtime = entries_by_name["palmimo-companion-realtime"]
+    realtime = entries_by_name["companion-realtime"]
     assert realtime["source"]["manifest"] == "palmimo.realtime.toml"
 
-    pipeline = entries_by_name["palmimo-companion-agent"]
+    pipeline = entries_by_name["companion"]
     assert "manifest" not in pipeline["source"]
 
 

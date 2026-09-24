@@ -1,5 +1,5 @@
 schema = 1
-name = "palmimo-teleop"
+name = "teleop"
 description = "Drive Palmimo from a phone or laptop browser over WebSocket, with live MJPEG camera video, on the same LAN."
 command = ["palmimo-teleop", "--port", "{port}", "--fps", "{fps}", "--gait-speed", "{gait_speed}", "{no_camera}", "{dry_run}"]
 url = "http://{host}:{port}/"

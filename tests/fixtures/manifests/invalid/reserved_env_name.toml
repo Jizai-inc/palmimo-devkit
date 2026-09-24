@@ -4,6 +4,6 @@ name = "bad-app"
 description = "test"
 command = ["run"]
 
-[env.PALMIMO_APP_NAME]
+[env.PALMIMO_APP_ID]
 required = false
 description = "collides with the runtime-injected variable"
