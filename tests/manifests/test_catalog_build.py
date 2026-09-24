@@ -36,9 +36,9 @@ def test_catalog_entry_env_and_devices_match_the_source_manifest() -> None:
 
 
 def test_catalog_entry_source_points_at_the_requested_tag() -> None:
-    catalog = build_catalog("v9.9.9")
+    catalog = build_catalog("examples-v9.9.9")
     for entry in catalog["apps"]:
-        assert entry["source"]["ref"] == "v9.9.9"
+        assert entry["source"]["ref"] == "examples-v9.9.9"
         assert entry["source"]["ref_kind"] == "tag"
         assert entry["source"]["type"] == "git"
 

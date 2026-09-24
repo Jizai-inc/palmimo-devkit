@@ -1,8 +1,7 @@
 # Publishes palmimo-sdk to PyPI via Trusted Publishing (OIDC -- no stored
-# token) when a maintainer publishes the draft release that release.yml
-# created. release.yml's own asset is the app catalog
-# (palmimo-catalog-<tag>.json), not a PyPI distribution; this workflow is
-# what turns a published release into one.
+# token) when a maintainer publishes an SDK (`vX.Y.Z`) release. Catalog
+# (`examples-vX.Y.Z`) releases do not run this workflow. See
+# doc/guides/releasing.md.
 #
 # A pre-release (a tag with a hyphen, e.g. v1.2.0-rc1) and a manual
 # workflow_dispatch run both stop after the testpypi/smoke jobs -- neither
@@ -27,6 +26,7 @@ permissions:
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}

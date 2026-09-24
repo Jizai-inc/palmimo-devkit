@@ -1,24 +1,11 @@
-# Cuts a GitHub Release for a pushed `vX.Y.Z` tag: a draft with
-# auto-generated notes (shaped by .github/release.yml), for a maintainer to
-# review and publish by hand -- see doc/guides/releasing.md.
-#
-# This release carries exactly one asset pair of its own:
-# palmimo-catalog-<tag>.json (and its .sha256) -- the official-apps catalog
-# Palmimo Portal reads to list this repository's example apps (see
-# doc/reference/app-manifest.md and tools/build_catalog.py). There is
-# nothing else on this repository's tag for a device to install: the
-# Palmimo Portal itself (the thing that used to be built and attached here)
-# now lives, and self-updates, from its own repository. A palmimo-devkit
-# release otherwise exists to mark a validated SDK revision with
-# human-readable notes; a user on a cloned devkit updates with plain git
-# (fetch + checkout the tag, or pull). Publishing the draft this workflow
-# creates does trigger a separate workflow, publish.yml, which builds and
-# uploads palmimo-sdk to PyPI.
+# Cuts draft GitHub Releases for SDK tags (`vX.Y.Z`) and example-catalog tags
+# (`examples-vX.Y.Z`). Only catalog tags attach a catalog asset; publishing
+# only SDK releases invokes publish.yml to upload palmimo-sdk to PyPI. See
+# doc/guides/releasing.md.
 #
 # The release is created as a **draft** on purpose: a maintainer reads and
-# edits the auto-generated notes and publishes by hand. The catalog asset is
-# attached before the release is left in that draft state, so a maintainer
-# publishing early never exposes a release with notes but no catalog.
+# edits the auto-generated notes and publishes by hand. For catalog releases,
+# the asset is attached before the release is left in that draft state.
 #
 # A tag with a hyphen (e.g. v1.2.0-rc1) is a pre-release build by SemVer
 # convention, so it is created with `--prerelease`. `GET
@@ -39,6 +26,7 @@ on:
   push:
     tags:
       - "v*"
+      - "examples-v*"
 
 permissions:
   contents: write
@@ -56,12 +44,6 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          # A pre-release tag (hyphenated) may point at a PR branch: it is
-          # created as a draft pre-release, never becomes releases/latest,
-          # and only devices opted into the prerelease channel see it.
-          case "$TAG" in
-            *-*) echo "pre-release tag $TAG: not required to be on main"; exit 0 ;;
-          esac
           git fetch origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "tag $TAG does not point at a commit on main" >&2
@@ -95,6 +77,7 @@ jobs:
           enable-cache: true
 
       - name: Build the app catalog
+        if: startsWith(github.ref_name, 'examples-v')
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -106,6 +89,7 @@ jobs:
           sha256sum "palmimo-catalog-$TAG.json" > "palmimo-catalog-$TAG.json.sha256"
 
       - name: Attach the catalog asset to the draft release
+        if: startsWith(github.ref_name, 'examples-v')
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}

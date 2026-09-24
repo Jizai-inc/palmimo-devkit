@@ -1,8 +1,8 @@
-"""Build `palmimo-catalog-<tag>.json`, the official-apps catalog Portal reads from a devkit Release.
+"""Build `palmimo-catalog-<tag>.json`, the official-apps catalog Portal reads from an examples Release.
 
 Scans every manifest file (`palmimo.toml` or `palmimo.<variant>.toml`) in
 `examples/*` and `examples/agents/*` (the same example directories
-`.github/workflows/release.yml` ships in the catalog asset) -- one app per
+`.github/workflows/release.yml` ships in an examples-tagged release) -- one app per
 manifest file, so a directory may ship several -- validates each against
 doc/reference/app-manifest.md, and writes one catalog entry per app: name,
 description, its env/devices exactly as declared (so the catalog never
@@ -102,7 +102,7 @@ def write_catalog(tag: str, output_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("tag", help="Release tag the generated 'source.ref' points at, e.g. v0.3.0")
+    parser.add_argument("tag", help="Examples release tag the generated 'source.ref' points at, e.g. examples-v0.3.0")
     parser.add_argument("output", type=Path, help="Path to write the catalog JSON to")
     args = parser.parse_args()
     write_catalog(args.tag, args.output)
