@@ -38,10 +38,9 @@ FAILURE_LOG_INTERVAL_S: float = 5.0
 
 #: Sign applied to the pilot's raw stick value before `Palmimo.look()`.
 #: `Palmimo.look`'s sign-to-direction mapping is itself unspecified (see its
-#: docstring); these were verified against a real neck (2026-09): pitch
-#: tracks the stick as-is, yaw comes out mirrored and needs the flip.
+#: docstring); on a real neck both axes track the stick as-is.
 NECK_PITCH_SIGN: float = 1.0
-NECK_YAW_SIGN: float = -1.0
+NECK_YAW_SIGN: float = 1.0
 
 
 class RobotLoop:
