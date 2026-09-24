@@ -14,11 +14,11 @@ releases.
 
 ## 1. SDK releases
 
-- SDK tags are SemVer: `vX.Y.Z`, optionally with a pre-release suffix like
-  `vX.Y.Z-rc1`.
+- SDK tags are `vX.Y.Z`, optionally with an `-rcN` pre-release suffix
+  (`vX.Y.Z-rc1`). The release workflow rejects any other shape.
 - **Never delete or move a published tag** — publish a newer tag instead of
   correcting an old one in place.
-- An SDK tag with a `-` suffix (e.g. `v1.2.0-rc1`) is created as a GitHub
+- An SDK tag with an `-rcN` suffix (e.g. `v1.2.0-rc1`) is created as a GitHub
   pre-release automatically (see [What CI does](#what-ci-does) below).
   `GET repos/{repo}/releases/latest` ignores both drafts and pre-releases,
   so a pre-release build can never become "the latest release" by accident.
@@ -50,20 +50,21 @@ releases.
 Who may do this: every member of the GitHub organization has write access
 to this repository, and write access is all it takes to push a tag, run
 the release workflow, and publish the resulting draft. There is no
-separate release role on purpose. The workflow refuses a tag that is not
-on `main`, and the human gate is reading the draft before publishing it.
+separate release role on purpose. The workflow refuses a final tag that is
+not on `main`, and the human gate is reading the draft before publishing it.
 
 ### What CI does
 
 Pushing a `v*` tag triggers `.github/workflows/release.yml`:
 
-1. Verifies the tagged commit is actually an ancestor of `main` — refuses to
-   build a release from a tag pushed at a stray commit.
+1. Verifies the tag's shape, and for a final tag that the tagged commit is
+   an ancestor of `main` — refuses to build a release from a tag pushed at a
+   stray commit. An `-rcN` tag may point at a pull request's branch, so a
+   candidate can be verified on a device before the pull request merges.
 2. Creates the release as a **draft**, with GitHub's auto-generated notes
    (shaped by `.github/release.yml` — see [Labels](#3-labels-that-drive-the-notes)
-   below). If the tag name contains a `-` (a pre-release build), the release
-   is created with `--prerelease` so it can never surface as
-   `releases/latest`.
+   below). An `-rcN` tag is created with `--prerelease` so it can never
+   surface as `releases/latest`.
 Re-running the workflow for a tag that already has a release does nothing
 if that release already exists — draft or published. Re-running it for a
 tag whose release has already been **published** still refuses to touch it:
@@ -93,8 +94,8 @@ patch version instead.
 
 ## 2. Examples catalog releases
 
-Catalog tags are `examples-vX.Y.Z`, optionally with a pre-release suffix such
-as `examples-vX.Y.Z-rc1`. Use an examples tag for a catalog change even when
+Catalog tags are `examples-vX.Y.Z`, optionally with an `-rcN` pre-release
+suffix (`examples-vX.Y.Z-rc1`). Use an examples tag for a catalog change even when
 the SDK version does not change. Never delete or move a published tag; publish
 a newer tag instead.
 
@@ -107,11 +108,13 @@ a newer tag instead.
    ```
 
 3. Open the draft release on GitHub, review its generated notes, then publish
-   it. For a non-pre-release, set it as the latest release.
+   it. Leave "Set as the latest release" unticked: the repository's latest
+   release is the SDK's, and Portal finds the catalog by its `examples-v`
+   tag, not by `releases/latest`.
 
-Pushing either kind of tag runs `.github/workflows/release.yml`. It verifies
-the tagged commit is an ancestor of `main` and creates a draft release with
-generated notes. A tag containing `-` is marked as a GitHub pre-release. For
+Pushing either kind of tag runs `.github/workflows/release.yml`, with the
+same tag-shape and `main` checks as an SDK tag, and creates a draft release
+with generated notes. An `-rcN` tag is marked as a GitHub pre-release. For
 an `examples-v*` tag only, it also builds
 `palmimo-catalog-<tag>.json` and its `.sha256` from every example manifest
 (see [App Manifest](../reference/app-manifest.md)), then attaches both to the
