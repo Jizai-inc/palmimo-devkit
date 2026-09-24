@@ -21,8 +21,10 @@ import os
 import re
 import wave
 from collections.abc import Callable
+from json import JSONDecodeError, load
 from pathlib import Path
 from typing import Any
+from zipfile import BadZipFile
 
 from ...download import default_model_dir, download_atomic
 from .base import TtsEngine, TtsVoice
@@ -32,6 +34,32 @@ logger = logging.getLogger(__name__)
 
 #: Subdirectory of the shared model cache holding piper's voices.
 _VOICE_CACHE_SUBDIR = "piper"
+
+#: Directory in the shared model cache where English phonemization data lives.
+_NLTK_CACHE_SUBDIR = "nltk_data"
+
+#: Resources g2p_en and nltk.pos_tag require, indexed by their nltk lookup
+#: name and the official NLTK data archive URL.
+_NLTK_RESOURCES = {
+    "taggers/averaged_perceptron_tagger.zip": (
+        "averaged_perceptron_tagger",
+        "https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/taggers/averaged_perceptron_tagger.zip",
+        "e1f13cf2532daadfd6f3bc481a49859f0b8ea6432ccdcd83e6a49a5f19008de9",
+        "averaged_perceptron_tagger.pickle",
+    ),
+    "taggers/averaged_perceptron_tagger_eng.zip": (
+        "averaged_perceptron_tagger_eng",
+        "https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/taggers/averaged_perceptron_tagger_eng.zip",
+        "6025f530624335c67d6547d44757b357b4e79bae030a0383e9887a92c1718f0b",
+        "averaged_perceptron_tagger_eng.weights.json",
+    ),
+    "corpora/cmudict.zip": (
+        "cmudict",
+        "https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/corpora/cmudict.zip",
+        "d07cca47fd72ad32ea9d8ad1219f85301eeaf4568f8b6b73747506a71fb5afd6",
+        "cmudict",
+    ),
+}
 
 #: What one voice-model file (~38 MB each) may spend connecting, and waiting
 #: for any single read. It does NOT bound the transfer: a slow but live link
@@ -57,6 +85,122 @@ def _voice_root(data_dir: str | None) -> Path:
     if data_dir is not None:
         return Path(os.path.expanduser(data_dir))
     return default_model_dir() / _VOICE_CACHE_SUBDIR
+
+
+def _nltk_data_dir() -> Path:
+    """Return the shared NLTK data directory used by English phonemization."""
+    return default_model_dir() / _NLTK_CACHE_SUBDIR
+
+
+def _nltk_download_hint() -> str:
+    """Return the manual counterpart of :func:`ensure_nltk_data`."""
+    packages = " ".join(package for package, _, _, _ in _NLTK_RESOURCES.values())
+    return f"uv run python -m nltk.downloader --download-dir {_nltk_data_dir()} {packages}"
+
+
+def _nltk_module() -> Any:
+    """Import NLTK only when an English-capable voice is being prepared."""
+    import nltk
+
+    return nltk
+
+
+def ensure_nltk_data(*, fetch: bool = True) -> None:
+    """Make English phonemization data available in the shared model cache.
+
+    Existing NLTK search paths are honored before fetching.  The SDK cache is
+    also added to ``nltk.data.path`` before g2p_en can be imported.
+
+    Args:
+        fetch: When ``False``, report missing data without downloading it.
+
+    Raises:
+        RuntimeError: A required resource is absent while fetching is disabled,
+            or it could not be fetched.  The message includes the command for
+            preparing the cache on a networked machine.
+    """
+    nltk = _nltk_module()
+    cache_dir = _nltk_data_dir()
+    cache_text = str(cache_dir)
+    if cache_text not in nltk.data.path:
+        nltk.data.path.append(cache_text)
+
+    for archive, (package, url, sha256, member) in _NLTK_RESOURCES.items():
+        # NLTK finds an unpacked directory with this name and falls back to
+        # the same-name archive when it is absent.
+        directory = archive.removesuffix(".zip")
+        resource = f"{directory}/{member}"
+        try:
+            nltk.data.find(resource)
+        except BadZipFile as exc:
+            corrupt_archive = _find_nltk_archive(nltk.data.path, archive)
+            cache_archive = cache_dir / archive
+            if corrupt_archive == cache_archive:
+                if not fetch:
+                    raise RuntimeError(
+                        f"NLTK resource {package!r} is corrupted at {cache_archive}; run: {_nltk_download_hint()}"
+                    ) from exc
+                cache_archive.unlink()
+            else:
+                raise RuntimeError(
+                    f"NLTK resource {package!r} is corrupted at {corrupt_archive}; run: {_nltk_download_hint()}"
+                ) from exc
+        except LookupError:
+            incomplete_dir = _find_nltk_directory(nltk.data.path, directory)
+            if incomplete_dir is not None:
+                raise RuntimeError(
+                    f"NLTK resource {package!r} is incomplete at {incomplete_dir}; "
+                    f"delete it or install it again, then run: {_nltk_download_hint()}"
+                ) from None
+        else:
+            continue
+        if not fetch:
+            raise RuntimeError(
+                f"NLTK resource {package!r} for English phonemization is not available; run: {_nltk_download_hint()}"
+            ) from None
+        try:
+            download_atomic(url, cache_dir / archive, timeout=_DOWNLOAD_TIMEOUT_S, sha256=sha256)
+        except OSError as exc:
+            raise RuntimeError(
+                f"failed to download NLTK resource {package!r} from {url} to {cache_dir}: {exc}. "
+                f"In an offline environment, run this on a networked machine and copy {cache_dir}, "
+                f"or run: {_nltk_download_hint()}"
+            ) from exc
+        try:
+            nltk.data.find(resource)
+        except (BadZipFile, LookupError) as exc:
+            raise RuntimeError(
+                f"NLTK resource {package!r} was downloaded to {cache_dir}, but NLTK cannot find it; "
+                f"run: {_nltk_download_hint()}"
+            ) from exc
+
+
+def _find_nltk_archive(search_paths: list[str], archive: str) -> Path:
+    """Return the archive NLTK could not open from its configured search paths."""
+    for search_path in search_paths:
+        candidate = Path(search_path) / archive
+        if candidate.is_file():
+            return candidate
+    return Path(archive)
+
+
+def _find_nltk_directory(search_paths: list[str], directory: str) -> Path | None:
+    """Return an unpacked NLTK directory that shadows an archive lookup."""
+    for search_path in search_paths:
+        candidate = Path(search_path) / directory
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _voice_may_phonemize_english(config_path: Path) -> bool:
+    """Return whether a piper voice config can dispatch text to g2p_en."""
+    try:
+        with config_path.open(encoding="utf-8") as config_file:
+            phoneme_type = load(config_file).get("phoneme_type", "multilingual")
+    except (JSONDecodeError, OSError, AttributeError):
+        return True
+    return phoneme_type in {"multilingual", "bilingual"}
 
 
 def _voice_dir(model: str, data_dir: str | None) -> Path:
@@ -115,8 +259,8 @@ def _probe_failure_hint(error_text: str, model: str, data_dir: str | None) -> st
     """
     if "nltk_data" in error_text:
         return (
-            " Missing NLTK data for English phonemization; run: "
-            "uv run python -m nltk.downloader averaged_perceptron_tagger_eng cmudict"
+            " Missing NLTK data for English phonemization; cache it at "
+            f"{_nltk_data_dir()} by running: {_nltk_download_hint()}"
         )
     if "VoiceNotFoundError" in error_text or "No such file" in error_text:
         return f" Voice model not found; run: {_download_model_hint(model, data_dir)}"
@@ -384,7 +528,9 @@ class PiperEngine(TtsEngine):
         """
         if _find_piper_find_voice() is None:
             return
-        ensure_piper_voice(self._model_for(lang), self._data_dir, fetch=fetch)
+        _, config_path = ensure_piper_voice(self._model_for(lang), self._data_dir, fetch=fetch)
+        if _voice_may_phonemize_english(config_path):
+            ensure_nltk_data(fetch=fetch)
 
     def load_voice(self, lang: str) -> TtsVoice:
         """Resolve *lang*'s on-disk model files, load them via ``voice_loader``,

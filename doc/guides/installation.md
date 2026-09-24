@@ -57,16 +57,19 @@ voice on disk.
 
 ### First-Time Setup for Voice Output
 
-Voice models auto-download on first use, so no manual step is needed for them.
-One step is still manual, because it is not a piper voice model:
+Voice models and the NLTK data needed for English phonemization auto-download
+on first use, so no manual step is needed on a networked machine. They are
+cached together under `$XDG_CACHE_HOME/palmimo/models` (or
+`~/.cache/palmimo/models` when `XDG_CACHE_HOME` is unset). This works with the
+restricted home directory used by the Palmimo Portal service.
+
+For an offline machine, run the NLTK downloader on a networked machine and
+copy the resulting `nltk_data` directory to the same cache location:
 
 ```bash
-# Fetch the NLTK data needed for g2p so English can be spoken without espeak.
-# All three are needed: g2p-en looks for the legacy `averaged_perceptron_tagger`
-# at import time, while NLTK's own `pos_tag` loads `averaged_perceptron_tagger_eng`.
-# Anything missing here is downloaded on first use instead, which fails on a
-# host with no network at run time.
-uv run python -m nltk.downloader averaged_perceptron_tagger averaged_perceptron_tagger_eng cmudict
+uv run python -m nltk.downloader \
+  --download-dir ~/.cache/palmimo/models/nltk_data \
+  averaged_perceptron_tagger averaged_perceptron_tagger_eng cmudict
 ```
 
 For an offline machine, fetch a voice on a networked one and copy its whole
@@ -84,6 +87,7 @@ Voices are cached outside the repository, one directory per voice:
 ```
 ~/.cache/palmimo/models/piper/ja_JP-tsukuyomi-chan-medium/   # $XDG_CACHE_HOME is honored
 ~/.cache/palmimo/models/piper/ja_JP-css10-6lang-medium/      # (English uses the multilingual model)
+~/.cache/palmimo/models/nltk_data/                            # English phonemization data
 ```
 
 The directory per voice is load-bearing: piper-plus's catalogue voices all

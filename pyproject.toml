@@ -1,6 +1,6 @@
 [project]
 name = "palmimo-devkit-software"
-version = "0.1.0"
+version = "0.1.1"
 description = "Palmimo DevKit software utilities"
 authors = [{ name = "Jizai Inc.", email = "noreply@jizai.ai" }]
 license = "Apache-2.0"
