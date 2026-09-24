@@ -676,14 +676,14 @@ wheels = [
 
 [[package]]
 name = "palmimo-sdk"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyserial" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ce/06/4717ccd79f701333a4ea7c656cbbd232175a9426954f68076af79d947242/palmimo_sdk-0.1.0.tar.gz", hash = "sha256:08e3d2dff90fa5f39d7db7079519f188fcc6c9bb8bf62e9f091d8d95842f2b15", size = 359701, upload-time = "2026-09-14T00:08:15.862Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/92/ca/f25c6403f71f197531ed64fc661d40cb55b7e1d2a399eb5a78fa95d5dfd5/palmimo_sdk-0.1.1.tar.gz", hash = "sha256:83948e2feea3f7a9cb7f0f73e58d8afa56d01b0b03b64217eae78c63e6e70ee4", size = 363439, upload-time = "2026-09-24T08:33:43.026Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/38/32c7ad235de97a2aea3acff983ccc1dcde7e95c9d1bd3c25e0fa06b5187e/palmimo_sdk-0.1.0-py3-none-any.whl", hash = "sha256:933267d20c8aa8cd570e1a2f4542eacc6aea253063dafbdeeab03ff4dbd13417", size = 237067, upload-time = "2026-09-14T00:08:14.302Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/bf/c22de0fc12a33500cc35ff8b69edda03230d1eb120015570566a6580449c/palmimo_sdk-0.1.1-py3-none-any.whl", hash = "sha256:deccf0b263d9897978c2cf5978281a2e1a25bfd1251139adb14fbfd24fdaf797", size = 239260, upload-time = "2026-09-24T08:33:41.263Z" },
 ]
 
 [package.optional-dependencies]
@@ -719,7 +719,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
-    { name = "palmimo-sdk", extras = ["hardware", "vision"], specifier = ">=0.1,<0.2" },
+    { name = "palmimo-sdk", extras = ["hardware", "vision"], specifier = ">=0.1.1,<0.2" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
