@@ -18,6 +18,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from palmimo_companion_agent.main import app
@@ -116,6 +117,26 @@ def test_hardware_flag_defaults_to_settings_default_when_omitted(monkeypatch: py
     assert captured["settings"].hardware is False
 
 
+def test_no_stdin_with_tui_is_rejected() -> None:
+    result = runner.invoke(app, ["--ui", "tui", "--no-stdin"])
+
+    assert result.exit_code != 0
+
+
+def test_no_stdin_flag_reaches_run_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> None:
+        captured["read_stdin"] = read_stdin
+
+    monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)
+
+    result = runner.invoke(app, ["--ui", "cli", "--no-stdin"])
+
+    assert result.exit_code == 0, result.output
+    assert captured["read_stdin"] is False
+
+
 def test_port_and_log_path_flags_reach_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, PipelineSettings] = {}
 
@@ -130,6 +151,51 @@ def test_port_and_log_path_flags_reach_settings(monkeypatch: pytest.MonkeyPatch)
     settings = captured["settings"]
     assert settings.port == "/dev/ttyACM0"
     assert settings.log_path == Path("/tmp/companion-events.jsonl")
+
+
+@pytest.mark.parametrize(
+    ("flag", "value", "setting", "expected"),
+    [
+        ("--language", "en", "language", "en"),
+        ("--chat-model", "openai/gpt-4o-mini", "chat_model", "openai/gpt-4o-mini"),
+        ("--stt-model", "openai/gpt-4o-mini-transcribe", "stt_model", "openai/gpt-4o-mini-transcribe"),
+        ("--voice-backend", "openai", "voice_backend", "openai"),
+        ("--voice-speed", "1.5", "voice_speed", 1.5),
+        ("--voice-volume", "0.5", "voice_volume", 0.5),
+    ],
+)
+def test_new_flags_reach_settings_overrides(
+    monkeypatch: pytest.MonkeyPatch, flag: str, value: str, setting: str, expected: object
+) -> None:
+    captured: dict[str, PipelineSettings] = {}
+
+    async def fake_run_cli(settings: PipelineSettings) -> None:
+        captured["settings"] = settings
+
+    monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)
+
+    result = runner.invoke(app, ["--ui", "cli", flag, value])
+
+    assert result.exit_code == 0, result.output
+    assert getattr(captured["settings"], setting) == expected
+
+
+def test_an_invalid_voice_backend_fails_via_settings_validation_not_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Without the Literal type on PipelineSettings.voice_backend, this value
+    # would sail through settings construction and only blow up later, deep
+    # inside wiring._build_engine, as a bare ValueError instead of a
+    # consistent settings-validation error.
+    def fail_if_called(settings: PipelineSettings) -> None:
+        raise AssertionError("run_cli must not be reached with an invalid voice_backend")
+
+    monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fail_if_called)
+
+    result = runner.invoke(app, ["--ui", "cli", "--voice-backend", "nope"])
+
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValidationError)
 
 
 def test_a_runtime_error_from_run_cli_exits_nonzero_with_a_clear_message(monkeypatch: pytest.MonkeyPatch) -> None:

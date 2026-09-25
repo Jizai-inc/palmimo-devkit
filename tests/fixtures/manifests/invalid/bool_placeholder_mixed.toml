@@ -1,0 +1,10 @@
+# bool placeholder mixed into an element: {verbose} must be its own element, not mixed with other text
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run", "--x={verbose}"]
+
+[params.verbose]
+type = "bool"
+default = false
+flag = "--verbose"

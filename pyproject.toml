@@ -44,6 +44,7 @@ dev = [
     # line those modules fail to import in CI's `uv sync --dev` + pytest.
     "palmimo-sdk[agent,face,hardware,mcp,speech,vision,voice]",
     "pytest-cov>=5",
+    "packaging>=24",
 ]
 
 [tool.pytest.ini_options]
@@ -101,6 +102,7 @@ include = [
     "packages/palmimo_sdk/**/*.py",
     "scripts/**/*.py",
     "tests/**/*.py",
+    "tools/**/*.py",
 ]
 exclude = [
     ".venv",
@@ -196,6 +198,7 @@ files = [
     "packages/palmimo_sdk/",
     "scripts/",
     "tests/",
+    "tools/",
 ]
 exclude = [
     "\\.venv",

@@ -1,21 +1,16 @@
-# Cuts a GitHub Release for a pushed `vX.Y.Z` tag: a draft with
-# auto-generated notes (shaped by .github/release.yml), for a maintainer to
-# review and publish by hand -- see doc/guides/releasing.md.
-#
-# This release carries no asset of its own. There is nothing on this
-# repository's tag for a device to install: the Palmimo Portal (the thing
-# that used to be built and attached here) now lives, and self-updates, from
-# its own repository. A palmimo-devkit release exists to
-# mark a validated SDK revision with human-readable notes; a user on a
-# cloned devkit updates with plain git (fetch + checkout the tag, or pull).
-# Publishing the draft this workflow creates does trigger a separate
-# workflow, publish.yml, which builds and uploads palmimo-sdk to PyPI.
+# Cuts draft GitHub Releases for SDK tags (`vX.Y.Z`) and example-catalog tags
+# (`examples-vX.Y.Z`). Only catalog tags attach a catalog asset; publishing
+# only SDK releases invokes publish.yml to upload palmimo-sdk to PyPI. See
+# doc/guides/releasing.md.
 #
 # The release is created as a **draft** on purpose: a maintainer reads and
-# edits the auto-generated notes and publishes by hand.
+# edits the auto-generated notes and publishes by hand. For catalog releases,
+# the asset is attached before the release is left in that draft state.
 #
-# A tag with a hyphen (e.g. v1.2.0-rc1) is a pre-release build by SemVer
-# convention, so it is created with `--prerelease`. `GET
+# Only `vX.Y.Z`, `examples-vX.Y.Z`, and either with an `-rcN` suffix are
+# accepted. An `-rcN` tag is a pre-release: it is created with
+# `--prerelease` and may point at a PR branch, so a candidate can be
+# verified on a device before its pull request merges. `GET
 # .../releases/latest` ignores both drafts and pre-releases, so an rc can
 # never become the answer to "what should I be running" for someone who
 # just asks for the latest release.
@@ -33,6 +28,7 @@ on:
   push:
     tags:
       - "v*"
+      - "examples-v*"
 
 permissions:
   contents: write
@@ -50,6 +46,11 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          class="$(.github/scripts/classify_release_tag.sh "$TAG")"
+          if [ "$class" = "prerelease" ]; then
+            echo "pre-release tag $TAG: not required to be on main"
+            exit 0
+          fi
           git fetch origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "tag $TAG does not point at a commit on main" >&2
@@ -72,8 +73,38 @@ jobs:
             exit 0
           fi
           prerelease_flag=()
-          case "$TAG" in
-            *-*) prerelease_flag=(--prerelease) ;;
-          esac
+          if [ "$(.github/scripts/classify_release_tag.sh "$TAG")" = "prerelease" ]; then
+            prerelease_flag=(--prerelease)
+          fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "$TAG" \
             "${prerelease_flag[@]}"
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Build the app catalog
+        if: startsWith(github.ref_name, 'examples-v')
+        env:
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # --no-project: tools/build_catalog.py only reads palmimo.toml
+          # files with the standard library (tomllib), so it needs no
+          # workspace dependency resolved.
+          uv run --no-project python -m tools.build_catalog "$TAG" "$COMMIT" "palmimo-catalog-$TAG.json"
+          sha256sum "palmimo-catalog-$TAG.json" > "palmimo-catalog-$TAG.json.sha256"
+
+      - name: Attach the catalog asset to the draft release
+        if: startsWith(github.ref_name, 'examples-v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # --clobber: re-running this workflow for a tag that already has a
+          # release (see the idempotency note above) must refresh the asset
+          # rather than fail on "already exists".
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "palmimo-catalog-$TAG.json" "palmimo-catalog-$TAG.json.sha256"

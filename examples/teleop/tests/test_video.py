@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 
 from palmimo_sdk import HeadCamera
-from palmimo_teleop.video import FAILURE_LOG_INTERVAL_S, VideoStream
+from palmimo_teleop.video import FAILURE_LOG_INTERVAL_S, FIRST_FRAME_GRACE_S, VideoStream
 
 
 class FakeCamera:
@@ -177,6 +177,7 @@ def test_capture_failure_logging_is_throttled(caplog: pytest.LogCaptureFixture) 
     # Without this, a persistently failing camera would log one line per
     # capture attempt (up to 15/s) instead of roughly once per FAILURE_LOG_INTERVAL_S.
     clock = FakeClock()
+    clock.now = FIRST_FRAME_GRACE_S  # past the startup grace, where failures are reported
     video = VideoStream(_camera(FakeCamera()), now=clock)
     with caplog.at_level(logging.ERROR, logger="palmimo_teleop.video"):
         video._log_capture_failure()  # logged immediately (first failure)
@@ -199,3 +200,22 @@ def test_start_is_idempotent_while_running() -> None:
         assert threading.active_count() == threads_before
     finally:
         video.stop()
+
+
+def test_no_failure_is_logged_while_the_first_frame_is_still_arriving(caplog: pytest.LogCaptureFixture) -> None:
+    # The head camera's first frame takes several capture intervals to arrive, so every start
+    # would otherwise log a traceback for a camera that is working.
+    clock = FakeClock()
+    video = VideoStream(_camera(FakeCamera(frames=[])), encode=_fake_encode, sleep=_no_sleep, now=clock)
+    with caplog.at_level("ERROR", logger="palmimo_teleop.video"):
+        video.start()
+        try:
+            time.sleep(0.05)  # many frameless capture attempts, all inside the grace period
+            assert caplog.records == []
+            clock.now = FIRST_FRAME_GRACE_S + 1.0
+            deadline = time.monotonic() + 2.0
+            while not caplog.records and time.monotonic() < deadline:
+                pass
+            assert len(caplog.records) == 1  # still no frame after the grace period: reported
+        finally:
+            video.stop()

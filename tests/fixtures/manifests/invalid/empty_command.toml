@@ -1,0 +1,5 @@
+# empty command: "command" must be a non-empty array
+schema = 1
+name = "bad-app"
+description = "test"
+command = []

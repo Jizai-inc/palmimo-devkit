@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import os
+import signal
 import sys
 import time
 from typing import ClassVar, TextIO, cast
@@ -156,6 +158,53 @@ async def test_run_cli_closes_the_event_log_on_shutdown(monkeypatch: pytest.Monk
     monkeypatch.setattr(sys, "stdin", io.StringIO("/exit\n"))
 
     await asyncio.wait_for(cli_module.run_cli(_settings()), timeout=5.0)
+
+    assert log.closed is True
+
+
+async def test_run_cli_without_stdin_ignores_eof_and_closes_on_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Under a service manager stdin is /dev/null, so a session that read it would end at once."""
+    log = io.StringIO()
+
+    def _fake_build_runtime(settings: PipelineSettings) -> Runtime:
+        rt = _build_test_runtime()
+        rt.event_log = log
+        return rt
+
+    monkeypatch.setattr(cli_module, "build_runtime", _fake_build_runtime)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))  # EOF at once if ever read
+
+    task = asyncio.ensure_future(cli_module.run_cli(_settings(), read_stdin=False))
+    await asyncio.sleep(0.05)
+    assert not task.done()  # EOF on stdin must not end the session
+
+    os.kill(os.getpid(), signal.SIGTERM)
+    await asyncio.wait_for(task, timeout=5.0)
+
+    assert log.closed is True  # the runtime was closed via the same shutdown path
+
+
+async def test_run_cli_closes_runtime_on_signal_during_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A signal during a slow ``connect()`` must not skip cleanup (default Python signal handling would)."""
+    log = io.StringIO()
+    rt = _build_test_runtime()
+    rt.event_log = log
+
+    started = asyncio.Event()
+
+    async def _blocking_start() -> None:
+        started.set()
+        await asyncio.Event().wait()  # never returns on its own -- only a cancel ends it
+
+    monkeypatch.setattr(rt, "start", _blocking_start)
+    monkeypatch.setattr(cli_module, "build_runtime", lambda settings: rt)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    task = asyncio.ensure_future(cli_module.run_cli(_settings()))
+    await asyncio.wait_for(started.wait(), timeout=5.0)
+
+    os.kill(os.getpid(), signal.SIGTERM)
+    await asyncio.wait_for(task, timeout=5.0)
 
     assert log.closed is True
 
