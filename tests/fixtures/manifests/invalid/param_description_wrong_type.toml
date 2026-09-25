@@ -1,0 +1,9 @@
+# Parameter descriptions must be strings.
+schema = 1
+name = "fixture"
+description = "Fixture"
+command = ["fixture"]
+
+[params.value]
+type = "string"
+description = 1

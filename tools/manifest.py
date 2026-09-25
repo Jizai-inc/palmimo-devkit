@@ -29,7 +29,7 @@ PARAM_TYPES = frozenset({"string", "int", "float", "enum", "bool"})
 RESERVED_PLACEHOLDERS = frozenset({"host", "app_dir"})
 DESCRIPTION_MAX_LENGTH = 200
 DEFAULT_MAX_LENGTH = 256
-PATTERN_MAX_LENGTH = 200
+PATTERN_MAX_LENGTH = 256
 TOP_LEVEL_KEYS = frozenset({"schema", "name", "description", "command", "url", "devices", "env", "params"})
 ENV_TABLE_KEYS = frozenset({"required", "description", "help_url"})
 # Extra keys each param type accepts beyond {type, default, description} (both
@@ -44,14 +44,6 @@ PARAM_TYPE_EXTRA_KEYS: dict[str, frozenset[str]] = {
 }
 
 _PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
-#: Flags a group that is itself quantified and whose own contents are
-#: quantified, e.g. ``(a+)+`` or ``(\d*)*`` -- catastrophic-backtracking
-#: shapes. A simple scan, not a general parse: nested groups two levels deep
-#: aren't caught, but no manifest needs that. Mirrors Portal's own
-#: `_has_nested_quantifier` (palmimo_portal/core/manifest.py) so a pattern
-#: accepted here is never rejected at install time.
-_NESTED_QUANTIFIER_RE = re.compile(r"\([^()]*[+*][^()]*\)[+*]")
-
 # Numbers, but not bool: TOML/Python's bool is a subtype of int, and a
 # `default = true` on an int/float param would otherwise pass isinstance(x, int).
 _NUMBER_TYPES = (int, float)
@@ -65,8 +57,61 @@ def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _has_nested_quantifier(pattern: str) -> bool:
-    return _NESTED_QUANTIFIER_RE.search(pattern) is not None
+def _is_allowed_pattern(pattern: str) -> bool:
+    """Whether *pattern* uses the restricted manifest pattern grammar."""
+    index = 0
+    while index < len(pattern):
+        character = pattern[index]
+        if character == "^":
+            if index != 0:
+                return False
+            index += 1
+            continue
+        if character == "$":
+            if index != len(pattern) - 1:
+                return False
+            index += 1
+            continue
+        if character == "\\":
+            if index + 1 == len(pattern) or pattern[index + 1].isdigit():
+                return False
+            index += 2
+        elif character == "[":
+            index += 1
+            class_start = index
+            while index < len(pattern) and pattern[index] != "]":
+                if pattern[index] == "\\":
+                    if index + 1 == len(pattern) or pattern[index + 1].isdigit():
+                        return False
+                    index += 2
+                else:
+                    index += 1
+            if index == len(pattern) or index == class_start:
+                return False
+            index += 1
+        elif character in "[]()|?*+{}.":
+            return False
+        else:
+            index += 1
+
+        if index < len(pattern) and pattern[index] in "?*+":
+            index += 1
+        elif index < len(pattern) and pattern[index] == "{":
+            quantifier_end = pattern.find("}", index + 1)
+            if quantifier_end == -1:
+                return False
+            bounds = pattern[index + 1 : quantifier_end].split(",")
+            if len(bounds) not in (1, 2) or not bounds[0].isdigit() or (len(bounds) == 2 and not bounds[1].isdigit()):
+                return False
+            if len(bounds) == 2 and int(bounds[1]) < int(bounds[0]):
+                return False
+            index = quantifier_end + 1
+
+    try:
+        re.compile(pattern)
+    except re.error:
+        return False
+    return True
 
 
 class ManifestError(Exception):
@@ -231,8 +276,8 @@ def _check_env(raw: dict, errors: list[str]) -> dict[str, EnvVar]:
             errors.append(f"[env.{name}] 'required' must be a bool, got {required!r}")
             required = True
         help_url = table.get("help_url")
-        if help_url is not None and not isinstance(help_url, str):
-            errors.append(f"[env.{name}] 'help_url' must be a string, got {help_url!r}")
+        if help_url is not None and (not isinstance(help_url, str) or not help_url.startswith(("http://", "https://"))):
+            errors.append(f"[env.{name}] 'help_url' must start with http:// or https://")
             help_url = None
         result[name] = EnvVar(required=required, description=description, help_url=help_url)
     return result
@@ -258,6 +303,8 @@ def _check_params(raw: dict, errors: list[str]) -> dict[str, Param]:
         unknown = set(table) - allowed
         if unknown:
             errors.append(f"[params.{name}] has unknown key(s) for type {param_type!r}: {sorted(unknown)}")
+        if "description" in table and not isinstance(table["description"], str):
+            errors.append(f"[params.{name}] 'description' must be a string, got {table['description']!r}")
         result[name] = _check_param_by_type(name, param_type, table, errors)
     return result
 
@@ -310,15 +357,9 @@ def _check_param_by_type(name: str, param_type: str, table: dict, errors: list[s
         if not isinstance(pattern, str) or len(pattern) > PATTERN_MAX_LENGTH:
             errors.append(f"[params.{name}] 'pattern' must be a string of at most {PATTERN_MAX_LENGTH} characters")
             pattern = None
-        elif _has_nested_quantifier(pattern):
-            errors.append(f"[params.{name}] 'pattern' contains a nested quantifier: {pattern!r}")
+        elif not _is_allowed_pattern(pattern):
+            errors.append(f"[params.{name}] 'pattern' uses unsupported syntax: {pattern!r}")
             pattern = None
-        else:
-            try:
-                re.compile(pattern)
-            except re.error as exc:
-                errors.append(f"[params.{name}] 'pattern' is not a valid regular expression: {exc}")
-                pattern = None
     max_length = table.get("max_length", DEFAULT_MAX_LENGTH)
     if not _is_int(max_length) or max_length <= 0:
         errors.append(f"[params.{name}] 'max_length' must be a positive int, got {max_length!r}")

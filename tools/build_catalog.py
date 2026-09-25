@@ -11,7 +11,7 @@ repository's git subdir, pinned to *tag*, plus a `manifest` filename when the
 app's file isn't the default `palmimo.toml`.
 
 Usage:
-    uv run python -m tools.build_catalog <tag> <output-path>
+    uv run python -m tools.build_catalog <tag> <commit> <output-path>
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _env_entry(env: EnvVar) -> dict:
     return entry
 
 
-def _catalog_entry(manifest_path: Path, manifest: AppManifest, tag: str, root: Path) -> dict:
+def _catalog_entry(manifest_path: Path, manifest: AppManifest, tag: str, commit: str, root: Path) -> dict:
     subdir = manifest_path.parent.relative_to(root).as_posix()
     source = {
         "type": "git",
@@ -61,6 +61,7 @@ def _catalog_entry(manifest_path: Path, manifest: AppManifest, tag: str, root: P
         "subdir": subdir,
         "ref_kind": "tag",
         "ref": tag,
+        "commit": commit,
     }
     if manifest_path.name != "palmimo.toml":
         source["manifest"] = manifest_path.name
@@ -73,7 +74,7 @@ def _catalog_entry(manifest_path: Path, manifest: AppManifest, tag: str, root: P
     }
 
 
-def build_catalog(tag: str, root: Path = REPO_ROOT) -> dict:
+def build_catalog(tag: str, commit: str, root: Path = REPO_ROOT) -> dict:
     """Build the catalog document for *tag* from every example manifest under *root*.
 
     Raises:
@@ -87,13 +88,13 @@ def build_catalog(tag: str, root: Path = REPO_ROOT) -> dict:
         if manifest.name in seen_names:
             raise ValueError(f"duplicate app name {manifest.name!r} in {manifest_path} and {seen_names[manifest.name]}")
         seen_names[manifest.name] = manifest_path
-        entries.append(_catalog_entry(manifest_path, manifest, tag, root))
+        entries.append(_catalog_entry(manifest_path, manifest, tag, commit, root))
     entries.sort(key=lambda entry: entry["name"])
     return {"schema": 1, "apps": entries}
 
 
-def write_catalog(tag: str, output_path: Path) -> None:
-    catalog = build_catalog(tag)
+def write_catalog(tag: str, commit: str, output_path: Path) -> None:
+    catalog = build_catalog(tag, commit)
     # Trailing newline, sorted keys off (insertion order is already
     # deterministic -- see _catalog_entry) so a re-run over the same tag
     # produces byte-identical output.
@@ -103,9 +104,10 @@ def write_catalog(tag: str, output_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tag", help="Examples release tag the generated 'source.ref' points at, e.g. examples-v0.3.0")
+    parser.add_argument("commit", help="Commit SHA the examples release tag points at")
     parser.add_argument("output", type=Path, help="Path to write the catalog JSON to")
     args = parser.parse_args()
-    write_catalog(args.tag, args.output)
+    write_catalog(args.tag, args.commit, args.output)
 
 
 if __name__ == "__main__":

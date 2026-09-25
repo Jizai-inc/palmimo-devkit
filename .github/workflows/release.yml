@@ -92,12 +92,13 @@ jobs:
         if: startsWith(github.ref_name, 'examples-v')
         env:
           TAG: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
           # --no-project: tools/build_catalog.py only reads palmimo.toml
           # files with the standard library (tomllib), so it needs no
           # workspace dependency resolved.
-          uv run --no-project python -m tools.build_catalog "$TAG" "palmimo-catalog-$TAG.json"
+          uv run --no-project python -m tools.build_catalog "$TAG" "$COMMIT" "palmimo-catalog-$TAG.json"
           sha256sum "palmimo-catalog-$TAG.json" > "palmimo-catalog-$TAG.json.sha256"
 
       - name: Attach the catalog asset to the draft release

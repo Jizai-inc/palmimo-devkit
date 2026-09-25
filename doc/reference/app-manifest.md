@@ -91,7 +91,7 @@ here.
 |---|---|---|---|
 | `required` | bool | no (default `true`) | Whether the app must have this variable to run |
 | `description` | string | yes | 1-200 characters — what the key is for, shown next to it in the catalog |
-| `help_url` | string | no | Where to obtain a value (an API key signup page, say) |
+| `help_url` | string | no | An `http://` or `https://` page where to obtain a value (an API key signup page, say) |
 
 A `required = false` variable that has no value assigned is left entirely
 unset — never an empty string.
@@ -105,10 +105,10 @@ before the app can launch.
 
 | `type` | Extra keys | Substituted as |
 |---|---|---|
-| `string` | `default`, `pattern` (a regular expression, `re.fullmatch`, at most 200 characters, rejecting a nested quantifier like `(a+)+`), `max_length` (default 256) | the value itself |
-| `int` / `float` | `default`, `min`, `max` | the value's decimal representation |
-| `enum` | `choices` (required, non-empty array of strings), `default` | the chosen value |
-| `bool` | `default`, `flag` (required) | see below |
+| `string` | `default`, `description` (a string), `pattern` (a restricted regular expression, `re.fullmatch`, at most 256 characters), `max_length` (default 256) | the value itself |
+| `int` / `float` | `default`, `description` (a string), `min`, `max` | the value's decimal representation |
+| `enum` | `choices` (required, non-empty array of strings), `default`, `description` (a string) | the chosen value |
+| `bool` | `default`, `description` (a string), `flag` (required) | see below |
 
 A `bool` parameter does not have a substituted value — when true, the whole
 `command`/`url` element equal to `{name}` is replaced with `flag`; when
@@ -144,8 +144,8 @@ if any of the following holds:
   `required`, `description`, `help_url`)
 - an `[env.<NAME>]` name collides with the reserved `PALMIMO_` prefix
 - an `[env.<NAME>]` table has no `description`
-- an `[env.<NAME>]`'s `required` is not a bool, or its `help_url` is not a
-  string
+- an `[env.<NAME>]`'s `required` is not a bool, or its `help_url` is not an
+  `http://` or `https://` URL
 - a `[params.<name>]` table has an unrecognized key for its `type` (e.g.
   `choices` on a `string` param, or `flag` on an `int` one)
 - a param's `min`, `max`, or `max_length` is the wrong type (`min`/`max` must
@@ -157,13 +157,25 @@ if any of the following holds:
 - a param's `default` fails its own constraints: outside `min`/`max` for
   `int`/`float`, not one of `choices` for `enum`, or longer than
   `max_length` / not matching `pattern` for `string`
-- a `string` param's `pattern` contains a nested quantifier (a quantified
-  group whose own contents are quantified, e.g. `(a+)+` or `(\d*)*`) — a
-  catastrophic-backtracking shape, rejected even if the pattern itself
-  compiles
+- a param's `description`, when present, is not a string
+- a `string` param's `pattern` is longer than 256 characters or uses anything
+  other than anchors (`^`, `$`), literal characters, escapes, character
+  classes (`[...]`), and one quantifier (`?`, `*`, `+`, `{m}`, or `{m,n}`)
+  applied to one character, escape, or character class. Groups, alternatives,
+  backreferences, and lookahead or lookbehind assertions are not supported.
 - a `bool` param has no `flag`
 - a `bool` param's placeholder is mixed into a larger element instead of
   being the entire element
+
+## Official catalog
+
+An examples release includes a generated catalog for hosts that list official
+apps. Each entry's `source` identifies the app's Git repository, `subdir`,
+manifest (when it is not `palmimo.toml`), and release tag. It also includes
+`commit`, the commit SHA the release tag pointed to when the catalog was
+generated. A host must confirm that the tag checkout resolves to that SHA
+before installing an official app; this rejects a tag that was moved after
+release.
 
 ## Files in this repository
 

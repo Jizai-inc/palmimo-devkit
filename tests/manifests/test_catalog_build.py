@@ -8,20 +8,23 @@ from tools.build_catalog import build_catalog, discover_manifests
 from tools.manifest import load_manifest
 
 
+COMMIT = "0" * 40
+
+
 def test_catalog_build_is_deterministic() -> None:
-    first = build_catalog("v1.2.3")
-    second = build_catalog("v1.2.3")
+    first = build_catalog("v1.2.3", COMMIT)
+    second = build_catalog("v1.2.3", COMMIT)
     assert first == second
 
 
 def test_catalog_apps_are_sorted_by_name() -> None:
-    catalog = build_catalog("v1.2.3")
+    catalog = build_catalog("v1.2.3", COMMIT)
     names = [app["name"] for app in catalog["apps"]]
     assert names == sorted(names)
 
 
 def test_catalog_entry_env_and_devices_match_the_source_manifest() -> None:
-    catalog = build_catalog("v1.2.3")
+    catalog = build_catalog("v1.2.3", COMMIT)
     entries_by_name = {app["name"]: app for app in catalog["apps"]}
 
     for manifest_path in discover_manifests():
@@ -36,15 +39,17 @@ def test_catalog_entry_env_and_devices_match_the_source_manifest() -> None:
 
 
 def test_catalog_entry_source_points_at_the_requested_tag() -> None:
-    catalog = build_catalog("examples-v9.9.9")
+    commit = "a" * 40
+    catalog = build_catalog("examples-v9.9.9", commit)
     for entry in catalog["apps"]:
         assert entry["source"]["ref"] == "examples-v9.9.9"
+        assert entry["source"]["commit"] == commit
         assert entry["source"]["ref_kind"] == "tag"
         assert entry["source"]["type"] == "git"
 
 
 def test_catalog_covers_every_example_manifest() -> None:
-    catalog = build_catalog("v1.2.3")
+    catalog = build_catalog("v1.2.3", COMMIT)
     catalog_names = {app["name"] for app in catalog["apps"]}
     manifest_names = {load_manifest(path).name for path in discover_manifests()}
     assert catalog_names == manifest_names
@@ -52,7 +57,7 @@ def test_catalog_covers_every_example_manifest() -> None:
 
 
 def test_catalog_entry_manifest_key_present_only_for_non_default_filename() -> None:
-    catalog = build_catalog("v1.2.3")
+    catalog = build_catalog("v1.2.3", COMMIT)
     entries_by_name = {app["name"]: app for app in catalog["apps"]}
 
     realtime = entries_by_name["companion-realtime"]
@@ -71,7 +76,7 @@ def test_catalog_entry_env_omits_help_url_when_manifest_declares_none(tmp_path: 
     )
     (app_dir / "palmimo.toml").write_text(manifest_body)
 
-    catalog = build_catalog("v1.2.3", root=tmp_path)
+    catalog = build_catalog("v1.2.3", COMMIT, root=tmp_path)
     entry = next(app for app in catalog["apps"] if app["name"] == "palmimo-no-help-url")
     assert "help_url" not in entry["env"]["SOME_KEY"]
 
@@ -84,7 +89,7 @@ def test_build_catalog_rejects_duplicate_app_names(tmp_path: Path) -> None:
     (app_dir / "palmimo.other.toml").write_text(manifest_body)
 
     with pytest.raises(ValueError, match="palmimo-dup"):
-        build_catalog("v1.2.3", root=tmp_path)
+        build_catalog("v1.2.3", COMMIT, root=tmp_path)
 
 
 def test_write_catalog_writes_deterministic_bytes(tmp_path: Path) -> None:
@@ -92,6 +97,6 @@ def test_write_catalog_writes_deterministic_bytes(tmp_path: Path) -> None:
 
     out_a = tmp_path / "a.json"
     out_b = tmp_path / "b.json"
-    write_catalog("v1.0.0", out_a)
-    write_catalog("v1.0.0", out_b)
+    write_catalog("v1.0.0", COMMIT, out_a)
+    write_catalog("v1.0.0", COMMIT, out_b)
     assert out_a.read_bytes() == out_b.read_bytes()
