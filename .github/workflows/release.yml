@@ -46,13 +46,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          # The `examples-` prefix itself contains a hyphen, so a pre-release
-          # is recognized by its exact `-rcN` suffix, never by "has a hyphen".
-          if [[ ! "$TAG" =~ ^(v|examples-v)[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
-            echo "tag $TAG is not vX.Y.Z or examples-vX.Y.Z, optionally with -rcN" >&2
-            exit 1
-          fi
-          if [[ "$TAG" =~ -rc[0-9]+$ ]]; then
+          class="$(.github/scripts/classify_release_tag.sh "$TAG")"
+          if [ "$class" = "prerelease" ]; then
             echo "pre-release tag $TAG: not required to be on main"
             exit 0
           fi
@@ -78,7 +73,7 @@ jobs:
             exit 0
           fi
           prerelease_flag=()
-          if [[ "$TAG" =~ -rc[0-9]+$ ]]; then
+          if [ "$(.github/scripts/classify_release_tag.sh "$TAG")" = "prerelease" ]; then
             prerelease_flag=(--prerelease)
           fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "$TAG" \

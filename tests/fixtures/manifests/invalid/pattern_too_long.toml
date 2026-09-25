@@ -1,0 +1,9 @@
+# pattern exceeds the 256-character limit (doc/reference/app-manifest.md)
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run", "--tag", "{tag}"]
+
+[params.tag]
+type = "string"
+pattern = "^aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$"

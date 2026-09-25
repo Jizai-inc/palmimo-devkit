@@ -8,6 +8,7 @@ manifests and invalid fixtures agree with the published spec.
 
 from __future__ import annotations
 
+import math
 import re
 import tomllib
 from dataclasses import dataclass
@@ -50,7 +51,15 @@ _NUMBER_TYPES = (int, float)
 
 
 def _is_number(value: object) -> bool:
-    return isinstance(value, _NUMBER_TYPES) and not isinstance(value, bool)
+    # TOML's float grammar allows inf/-inf/nan literals (tomllib parses them
+    # to the matching Python float); a manifest default/min/max carrying one
+    # of those is not a usable bound or clamp target, so it is rejected here
+    # rather than propagated to Portal's on-device implementation.
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return isinstance(value, _NUMBER_TYPES)
 
 
 def _is_int(value: object) -> bool:
