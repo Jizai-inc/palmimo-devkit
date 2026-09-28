@@ -443,7 +443,11 @@ park commands alongside the glide. An asyncio program that cancels an
 cleanup's `disconnect()` relies on this wait. The wait is bounded at 30s: a
 `connect()` wedged after arming the driver (a peripheral open that never
 returns) would otherwise keep torque on indefinitely, so past the bound
-`disconnect()` logs a warning and parks alongside it.
+`disconnect()` logs a warning and parks alongside it. The steps that can run
+that long (a camera open, a first-run voice download) issue no servo traffic,
+so the park does not race a servo write; the `connect()` it overtook then
+raises `RuntimeError` and closes what it opened, instead of returning a robot
+with no driver.
 
 A `BaseException` raised by a teardown step — a `KeyboardInterrupt` from a
 mashed Ctrl+C landing in a peripheral close — does not end the teardown early.

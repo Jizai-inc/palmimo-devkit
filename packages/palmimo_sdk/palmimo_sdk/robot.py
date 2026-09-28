@@ -170,9 +170,11 @@ _CANCEL_POLL_INTERVAL_S = 0.05
 _CANCEL_SETTLE_S = 0.5
 
 # How long disconnect() waits for a connect() running on another thread before
-# parking anyway. Covers the bus open, every peripheral open and the ~1.5s wake
-# glide with a wide margin; past it, a wedged connect() is the lesser risk than
-# a torque-off that never happens.
+# parking anyway: a torque-safety ceiling, not an estimate of how long connect()
+# takes. The steps that can legitimately run past it -- a camera open with no
+# timeout, a first-run voice download (see io/tts/piper.py) -- come after the
+# driver opens and issue no servo traffic, so parking alongside them does not
+# race a servo write. Every driver transaction in connect() is itself bounded.
 _LIFECYCLE_WAIT_S = 30.0
 
 
@@ -657,6 +659,12 @@ class Palmimo:
                 # Inside the try block so a wake failure rolls back every resource
                 # already opened (same as any other connect failure) instead of
                 # leaving the robot half-connected.
+                # A disconnect() on another thread that stopped waiting (see
+                # _LIFECYCLE_WAIT_S) may have torn the driver down under us;
+                # failing here rolls back the peripherals opened since, instead of
+                # returning a "connected" robot with no driver.
+                if driver_connected and self._driver is not None and not self._driver.is_connected:
+                    raise RuntimeError("connect() was torn down by a concurrent disconnect()")
                 if self._auto_wake:
                     self.wake()
             except BaseException:
@@ -761,9 +769,8 @@ class Palmimo:
 
         with _deferred_interrupts():
             # Bounded: a connect() wedged after arming the driver (a peripheral
-            # open that never returns) must not hold the torque-off forever.
-            # Past the bound the park runs alongside it, as it did before the
-            # lock existed.
+            # open that never returns) must not hold the torque-off forever --
+            # see _LIFECYCLE_WAIT_S for why parking alongside it is safe.
             acquired = self._lifecycle_lock.acquire(timeout=_LIFECYCLE_WAIT_S)
             if not acquired:
                 logger.warning(

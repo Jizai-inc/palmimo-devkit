@@ -1473,27 +1473,44 @@ def test_disconnect_parks_anyway_when_a_connect_on_another_thread_never_returns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(robot_module, "_LIFECYCLE_WAIT_S", 0.1)
-    connect_entered_wake = threading.Event()
-    release_wake = threading.Event()
+    camera_opening = threading.Event()
+    release_open = threading.Event()
 
-    class WedgedWakeFace(FakeFace):
-        def wake(self) -> str:
-            connect_entered_wake.set()
-            release_wake.wait(timeout=5)
-            return super().wake()
+    class WedgedCamera(FakeCamera):
+        def open(self) -> None:
+            camera_opening.set()
+            release_open.wait(timeout=5)
+            super().open()
 
     driver = RecordingDriver()
-    robot = Palmimo(driver=cast(ServoDriver, driver), display=cast(FaceDisplay, WedgedWakeFace()))
-    connecting = threading.Thread(target=robot.connect)
+    camera = WedgedCamera()
+    robot = Palmimo(driver=cast(ServoDriver, driver), camera=cast(HeadCamera, camera))
+    outcome: list[BaseException | None] = []
+
+    def connect() -> None:
+        try:
+            robot.connect()
+            outcome.append(None)
+        except BaseException as exc:
+            outcome.append(exc)
+
+    connecting = threading.Thread(target=connect)
     connecting.start()
-    assert connect_entered_wake.wait(timeout=5)
+    assert camera_opening.wait(timeout=5)
     try:
         robot.disconnect()
         assert connecting.is_alive()
         assert driver.events == ["connect", "disconnect"]
     finally:
-        release_wake.set()
+        release_open.set()
         connecting.join(timeout=5)
+
+    assert isinstance(outcome[0], RuntimeError)
+    # The rollback's own driver disconnect is idempotent on a real driver; what
+    # matters is that the torn-down connect never re-arms it.
+    assert driver.events.count("connect") == 1
+    assert driver.is_connected is False
+    assert camera.is_open is False
 
 
 def test_connect_rolls_back_driver_when_display_connect_times_out() -> None:
