@@ -9,6 +9,8 @@ mirrors.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from ..settings import PROJECT_ROOT, CompanionSettings
@@ -38,7 +40,11 @@ class PipelineSettings(CompanionSettings):
     #: TTS backend for the chat agent: ``"piper"`` (synthesizes locally; needs
     #: the network once, to download its voice) or
     #: ``"openai"`` (the speech API, faster and clearer, needs the network).
-    voice_backend: str = "piper"
+    #: A ``Literal`` (not a plain ``str``) so a bad value -- from a CLI flag
+    #: or from ``COMPANION_AGENT_VOICE_BACKEND`` alike -- fails at settings
+    #: construction with a `pydantic.ValidationError` instead of surfacing
+    #: later as a bare `ValueError` out of `wiring._build_engine`.
+    voice_backend: Literal["piper", "openai"] = "piper"
 
     #: Voice for the chosen backend; ``None`` uses that backend's default.
     #: For openai an API voice name; for piper a catalogue voice key, not a

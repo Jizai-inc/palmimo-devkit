@@ -1,0 +1,9 @@
+# reserved env name: the PALMIMO_ prefix is reserved for runtime-injected variables
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run"]
+
+[env.PALMIMO_APP_ID]
+required = false
+description = "collides with the runtime-injected variable"

@@ -1,0 +1,11 @@
+# min is not finite: same rule as a non-finite default, but on the bound
+# rather than the value itself -- nan/inf is not a usable clamp target.
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run", "--rate", "{rate}"]
+
+[params.rate]
+type = "float"
+min = nan
+max = 100

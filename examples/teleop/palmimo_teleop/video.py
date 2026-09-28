@@ -37,6 +37,11 @@ MJPEG_BOUNDARY: str = "palmimoframe"
 #: this rate instead of once per capture attempt (up to 15/s).
 FAILURE_LOG_INTERVAL_S: float = 5.0
 
+#: How long after `start()` a frameless capture is not yet a failure: the head
+#: camera's first frame takes several capture intervals to arrive (about 0.5 s
+#: measured on a Pi 5).
+FIRST_FRAME_GRACE_S: float = 3.0
+
 #: Default `stop()` join timeout before skipping `camera.close()`.
 STOP_TIMEOUT_S: float = 2.0
 
@@ -99,6 +104,8 @@ class VideoStream:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._last_failure_log_at: float | None = None
+        self._started_at = 0.0
+        self._had_frame = False
 
     @property
     def has_camera(self) -> bool:
@@ -174,6 +181,8 @@ class VideoStream:
 
     def _log_capture_failure(self) -> None:
         now = self._now()
+        if not self._had_frame and now - self._started_at < FIRST_FRAME_GRACE_S:
+            return
         if self._last_failure_log_at is None or now - self._last_failure_log_at >= FAILURE_LOG_INTERVAL_S:
             _LOG.exception("head camera capture failed")
             self._last_failure_log_at = now
@@ -181,6 +190,8 @@ class VideoStream:
     def _run(self) -> None:
         camera = self._camera
         assert camera is not None
+        self._started_at = self._now()
+        self._had_frame = False
         while not self._stop_event.is_set():
             try:
                 frame = camera.latest(timeout=self._capture_interval)
@@ -193,6 +204,7 @@ class VideoStream:
                 self._log_capture_failure()
                 self._sleep(self._capture_interval)
                 continue
+            self._had_frame = True
             with self._lock:
                 self._latest_jpeg = encoded
                 self._camera_ok = True

@@ -229,16 +229,17 @@ also documented in [`.env.sample`](.env.sample).
 | `--hardware` / `--no-hardware` | `COMPANION_AGENT_HARDWARE` (`false` to disable) | on | Attach real hardware peripherals; `--no-hardware` runs fully compute-only (a bare `Palmimo`, no speech, no vision) |
 | `--port` | `COMPANION_AGENT_PORT` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0` |
 | `--log-path` | `COMPANION_AGENT_LOG_PATH` | none (disabled) | JSONL event log file path (every `History` event, same shape as the `cli` front end's stdout) |
-| (none) | `COMPANION_AGENT_CHAT_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for both the idle and respond turns' tool-calling chat |
+| `--stdin` / `--no-stdin` | (none) | on | `cli` only: `--no-stdin` keeps a headless session running with no stdin attached (a service manager) instead of exiting at once on EOF -- the session then ends on SIGTERM/SIGINT. Rejected with `--ui tui` |
+| `--chat-model` | `COMPANION_AGENT_CHAT_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for both the idle and respond turns' tool-calling chat |
 | (none) | `COMPANION_AGENT_GUARD_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for the speech-classification guard |
 | (none) | `COMPANION_AGENT_VLM_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for image-to-text description (the `capture` tool) |
-| (none) | `COMPANION_AGENT_STT_MODEL` | `openai/gpt-4o-mini-transcribe` | LiteLLM model for speech-to-text transcription |
-| (none) | `COMPANION_AGENT_LANGUAGE` | `ja` | ISO 639-1 code driving the STT hint and the reply language |
+| `--stt-model` | `COMPANION_AGENT_STT_MODEL` | `openai/gpt-4o-mini-transcribe` | LiteLLM model for speech-to-text transcription |
+| `--language` | `COMPANION_AGENT_LANGUAGE` | `ja` | ISO 639-1 code driving the STT hint and the reply language |
 | (none) | `COMPANION_AGENT_SILENCE_SECONDS` | none (segmenter default) | How long the talker must stop before the utterance is treated as finished |
-| (none) | `COMPANION_AGENT_VOICE_BACKEND` | `piper` | TTS backend: `piper` (local once its voice has been downloaded) or `openai` (hosted; needs `OPENAI_API_KEY` and a network) |
+| `--voice-backend` | `COMPANION_AGENT_VOICE_BACKEND` | `piper` | TTS backend: `piper` (local once its voice has been downloaded) or `openai` (hosted; needs `OPENAI_API_KEY` and a network) |
 | (none) | `COMPANION_AGENT_VOICE_NAME` | none (backend default) | Voice name (openai) or Japanese catalogue voice key (piper) |
-| (none) | `COMPANION_AGENT_VOICE_SPEED` | `1.0` | Speaking rate; higher is faster (inverted for piper's own `length_scale`) |
-| (none) | `COMPANION_AGENT_VOICE_VOLUME` | `1.0` | Output gain; `1.0` is the voice's own level |
+| `--voice-speed` | `COMPANION_AGENT_VOICE_SPEED` | `1.0` | Speaking rate; higher is faster (inverted for piper's own `length_scale`) |
+| `--voice-volume` | `COMPANION_AGENT_VOICE_VOLUME` | `1.0` | Output gain; `1.0` is the voice's own level |
 | (none) | `COMPANION_AGENT_VOICE_DIR` | none (the SDK's model cache) | Root holding one directory per piper voice model |
 | (none) | `COMPANION_AGENT_SPEAKER_DEVICE` | `ReSpeaker` | Substring naming the ALSA playback card (id or long name, never an index); empty or unmatched uses ALSA's default |
 | (none) | `COMPANION_AGENT_ECHO_CANCEL` | `true` | Cancel the robot's own speech out of the capture |
@@ -269,6 +270,11 @@ A second runtime, alongside the `tui` / `cli` pipeline ones:
 ```bash
 uv run palmimo-realtime --seconds 360
 ```
+
+To the Portal, this runtime is a separate app from `palmimo-companion-agent`
+because it needs different env vars and devices — it ships as its own
+manifest, `palmimo.realtime.toml` (see
+[doc/reference/app-manifest.md](../../../doc/reference/app-manifest.md)).
 
 Requires `OPENAI_API_KEY`, from the environment or from the same `.env` the
 chat front ends read — this front end ships inside the companion project and

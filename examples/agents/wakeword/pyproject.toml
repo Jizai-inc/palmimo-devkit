@@ -9,7 +9,7 @@ dependencies = [
     # Pinned to the 0.1 line of the released PyPI package: this example is a
     # standalone uv project (like a third-party Palmimo app), not a workspace
     # member, so it resolves the SDK from PyPI rather than from ../../../packages.
-    "palmimo-sdk[voice,speech,hardware,agent]>=0.1,<0.2",
+    "palmimo-sdk[voice,speech,hardware,agent]>=0.1.1,<0.2",
     "numpy>=1.24",
     "onnxruntime>=1.17",
     "openai>=1.40",

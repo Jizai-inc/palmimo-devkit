@@ -175,6 +175,7 @@ class Runtime:
     hearing_watch: NameCallWatch | None = None
     reflexes: ReflexEngine | None = None
     _tasks: list[asyncio.Task] = field(default_factory=list, repr=False)
+    _connect_task: asyncio.Task[Palmimo] | None = field(default=None, repr=False)
     _connected: bool = field(default=False, repr=False)
     _started: bool = field(default=False, repr=False)
 
@@ -193,7 +194,22 @@ class Runtime:
             return
         self._connected = True
         if self.palmimo.has_connectable_resource:
-            await asyncio.to_thread(self.palmimo.connect)
+            self._connect_task = asyncio.create_task(asyncio.to_thread(self.palmimo.connect))
+            await asyncio.shield(self._connect_task)
+
+    async def _wait_for_connect(self) -> None:
+        """Wait for a connect worker that continues after its caller is cancelled."""
+        if self._connect_task is None:
+            return
+        while not self._connect_task.done():
+            try:
+                await asyncio.shield(self._connect_task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        with contextlib.suppress(BaseException):
+            self._connect_task.result()
 
     async def start(self) -> None:
         """Connect the robot (if not already) and launch every background task this runtime owns.
@@ -233,6 +249,7 @@ class Runtime:
             with contextlib.suppress(BaseException):
                 await task
         self._tasks.clear()
+        await self._wait_for_connect()
         with contextlib.suppress(Exception):
             await asyncio.to_thread(self.palmimo.disconnect)
         if self.event_log is not None:

@@ -1,0 +1,9 @@
+# `help_url` must use HTTP(S).
+schema = 1
+name = "fixture"
+description = "Fixture"
+command = ["fixture"]
+
+[env.API_KEY]
+description = "API key"
+help_url = "ftp://example.com/key"

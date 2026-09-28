@@ -1,0 +1,9 @@
+# pattern nested quantifier: (a+)+ is a catastrophic-backtracking shape
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run", "--tag", "{tag}"]
+
+[params.tag]
+type = "string"
+pattern = "(a+)+$"

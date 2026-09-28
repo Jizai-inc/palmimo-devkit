@@ -1,0 +1,11 @@
+# default outside range: 99999 is above the declared max
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run", "--port", "{port}"]
+
+[params.port]
+type = "int"
+default = 99999
+min = 1024
+max = 65535

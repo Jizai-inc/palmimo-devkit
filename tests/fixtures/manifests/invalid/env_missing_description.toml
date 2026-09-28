@@ -1,0 +1,8 @@
+# env without description: every [env.<NAME>] table requires a description
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run"]
+
+[env.API_KEY]
+required = true

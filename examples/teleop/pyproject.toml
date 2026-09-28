@@ -9,7 +9,7 @@ dependencies = [
     # Pinned to the 0.1 line of the released PyPI package: this example is a
     # standalone uv project (like a third-party Palmimo app), not a workspace
     # member, so it resolves the SDK from PyPI rather than from ../../packages.
-    "palmimo-sdk[hardware,vision]>=0.1,<0.2",
+    "palmimo-sdk[hardware,vision]>=0.1.1,<0.2",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "typer>=0.12",

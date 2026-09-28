@@ -1,0 +1,10 @@
+# enum default not in choices: "none" is not one of the declared choices
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run", "--camera", "{camera}"]
+
+[params.camera]
+type = "enum"
+choices = ["head", "wide"]
+default = "none"

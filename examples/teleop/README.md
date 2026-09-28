@@ -218,11 +218,11 @@ the same `bus:`/`servo:` state. Neither page silently runs compute-only
 without saying so on screen.
 
 **Neck axis signs are hardware-verified.**
-`robot_loop.NECK_PITCH_SIGN` (`1.0`) and `robot_loop.NECK_YAW_SIGN` (`-1.0`)
-were confirmed against a physical robot (2026-09): pitch tracks the stick
-as-is, raw yaw comes out mirrored. If a future neck revision changes either
-direction, flip the constant there (the one place both axes are applied)
-rather than inverting the axis anywhere else.
+`robot_loop.NECK_PITCH_SIGN` and `robot_loop.NECK_YAW_SIGN` (both `1.0`)
+were confirmed against a physical robot: both axes track the stick as-is.
+If a future neck revision changes either direction, flip the constant there
+(the one place both axes are applied) rather than inverting the axis
+anywhere else.
 
 As with any live motion: keep the robot in the air on first run, or after
 changing `--gait-speed`, the same as any other motion in this SDK.

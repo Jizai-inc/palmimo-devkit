@@ -1,0 +1,9 @@
+# required wrong type: "yes" is a string, not a bool
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run"]
+
+[env.API_KEY]
+description = "an api key"
+required = "yes"

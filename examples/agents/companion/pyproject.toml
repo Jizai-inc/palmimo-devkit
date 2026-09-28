@@ -23,7 +23,7 @@ dependencies = [
     # Pinned to the 0.1 line of the released PyPI package: this example is a
     # standalone uv project (like a third-party Palmimo app), not a workspace
     # member, so it resolves the SDK from PyPI rather than from ../../../packages.
-    "palmimo-sdk[voice,vision,agent,speech,hardware,face]>=0.1,<0.2",
+    "palmimo-sdk[voice,vision,agent,speech,hardware,face]>=0.1.1,<0.2",
     "numpy>=1.24",
     # Silero VAD v5 ONNX inference (see palmimo_companion_agent.pipeline.vad), same
     # runtime the wakeword example uses for the same model.

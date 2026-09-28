@@ -1,0 +1,9 @@
+# `pattern` does not permit groups.
+schema = 1
+name = "fixture"
+description = "Fixture"
+command = ["fixture"]
+
+[params.value]
+type = "string"
+pattern = "^(abc)$"

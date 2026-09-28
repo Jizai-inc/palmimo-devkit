@@ -1,0 +1,9 @@
+# bool param without flag: type "bool" requires a "flag" key
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run", "{verbose}"]
+
+[params.verbose]
+type = "bool"
+default = false

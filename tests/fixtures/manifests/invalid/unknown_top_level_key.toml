@@ -1,0 +1,6 @@
+# unknown top-level key: "unsupported" is not one of the manifest's declared keys
+schema = 1
+name = "bad-app"
+description = "test"
+command = ["run"]
+unsupported = true

@@ -1,0 +1,9 @@
+# `pattern` does not permit backreferences.
+schema = 1
+name = "fixture"
+description = "Fixture"
+command = ["fixture"]
+
+[params.value]
+type = "string"
+pattern = "^\\1$"

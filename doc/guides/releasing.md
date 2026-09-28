@@ -1,31 +1,29 @@
 # Releasing
 
-How to cut a palmimo-devkit release: a SemVer tag and one GitHub Release.
+How to publish independent SDK and example-catalog releases.
 
-A release marks a validated SDK revision with human-readable notes — the
-GitHub release itself carries no asset, and it does not push anything to any
-device. If you have a clone of this repository, you update by fetching and
-checking out the tag (or by pulling `main`), not by downloading anything
-from the release page. Publishing the release is what puts `palmimo-sdk` on
-PyPI — see [Publish](#4-publish) below.
+An SDK release marks a validated SDK revision and publishes `palmimo-sdk` to
+PyPI. An examples release publishes the official-app catalog used by Palmimo
+Portal. Neither kind pushes anything to a device. If you have a clone of this
+repository, update it by fetching and checking out a tag (or by pulling
+`main`), not by downloading a release asset.
 
 Palmimo Portal is a separate product, maintained in its own
 repository; it self-updates from there, independently of this repository's
 releases.
 
-## 1. Versioning
+## 1. SDK releases
 
-- Tags are SemVer: `vX.Y.Z`, optionally with a pre-release suffix like
-  `vX.Y.Z-rc1`.
-- One tag = one GitHub Release.
+- SDK tags are `vX.Y.Z`, optionally with an `-rcN` pre-release suffix
+  (`vX.Y.Z-rc1`). The release workflow rejects any other shape.
 - **Never delete or move a published tag** — publish a newer tag instead of
   correcting an old one in place.
-- A tag with a `-` suffix (e.g. `v1.2.0-rc1`) is created as a GitHub
-  pre-release automatically (see [What CI does](#3-what-ci-does) below).
+- An SDK tag with an `-rcN` suffix (e.g. `v1.2.0-rc1`) is created as a GitHub
+  pre-release automatically (see [What CI does](#what-ci-does) below).
   `GET repos/{repo}/releases/latest` ignores both drafts and pre-releases,
   so a pre-release build can never become "the latest release" by accident.
 
-## 2. Before tagging
+### Before tagging
 
 1. Bump `version` in `pyproject.toml` and `packages/palmimo_sdk/pyproject.toml`.
 2. Regenerate both lockfiles so they record the new versions -- CI's `lock`
@@ -52,28 +50,27 @@ releases.
 Who may do this: every member of the GitHub organization has write access
 to this repository, and write access is all it takes to push a tag, run
 the release workflow, and publish the resulting draft. There is no
-separate release role on purpose. The workflow refuses a tag that is not
-on `main`, and the human gate is section 4 (Publish) below — reading the draft before
-publishing it.
+separate release role on purpose. The workflow refuses a final tag that is
+not on `main`, and the human gate is reading the draft before publishing it.
 
-## 3. What CI does
+### What CI does
 
 Pushing a `v*` tag triggers `.github/workflows/release.yml`:
 
-1. Verifies the tagged commit is actually an ancestor of `main` — refuses to
-   build a release from a tag pushed at a stray commit.
+1. Verifies the tag's shape, and for a final tag that the tagged commit is
+   an ancestor of `main` — refuses to build a release from a tag pushed at a
+   stray commit. An `-rcN` tag may point at a pull request's branch, so a
+   candidate can be verified on a device before the pull request merges.
 2. Creates the release as a **draft**, with GitHub's auto-generated notes
-   (shaped by `.github/release.yml` — see [Labels](#5-labels-that-drive-the-notes)
-   below). If the tag name contains a `-` (a pre-release build), the release
-   is created with `--prerelease` so it can never surface as
-   `releases/latest`.
-
+   (shaped by `.github/release.yml` — see [Labels](#3-labels-that-drive-the-notes)
+   below). An `-rcN` tag is created with `--prerelease` so it can never
+   surface as `releases/latest`.
 Re-running the workflow for a tag that already has a release does nothing
 if that release already exists — draft or published. Re-running it for a
 tag whose release has already been **published** still refuses to touch it:
 cut a new tag instead.
 
-## 4. Publish
+### Publish
 
 1. Open the draft release on GitHub.
 2. Review the generated notes against the [template](#release-notes-template)
@@ -95,7 +92,39 @@ never accepts a version it already holds, so once the `pypi` upload itself
 has gone through there is nothing to re-run: fix the problem and cut a new
 patch version instead.
 
-## 5. Labels that drive the notes
+## 2. Examples catalog releases
+
+Catalog tags are `examples-vX.Y.Z`, optionally with an `-rcN` pre-release
+suffix (`examples-vX.Y.Z-rc1`). Use an examples tag for a catalog change even when
+the SDK version does not change. Never delete or move a published tag; publish
+a newer tag instead.
+
+1. Merge the example and manifest changes to `main` and confirm CI is green.
+2. Tag that merged commit and push the tag:
+
+   ```bash
+   git tag -a examples-vX.Y.Z -m "examples-vX.Y.Z"
+   git push origin examples-vX.Y.Z
+   ```
+
+3. Open the draft release on GitHub, review its generated notes, then publish
+   it. Leave "Set as the latest release" unticked: the repository's latest
+   release is the SDK's, and Portal finds the catalog by its `examples-v`
+   tag, not by `releases/latest`.
+
+Pushing either kind of tag runs `.github/workflows/release.yml`, with the
+same tag-shape and `main` checks as an SDK tag, and creates a draft release
+with generated notes. An `-rcN` tag is marked as a GitHub pre-release. For
+an `examples-v*` tag only, it also builds
+`palmimo-catalog-<tag>.json` and its `.sha256` from every example manifest
+(see [App Manifest](../reference/app-manifest.md)), then attaches both to the
+draft. Publishing an examples release does not invoke `publish.yml`, so it
+never publishes to TestPyPI or PyPI.
+
+Palmimo Portal reads the catalog only from `examples-v` releases. Its release
+selection is maintained in the Portal repository.
+
+## 3. Labels that drive the notes
 
 Label a pull request with one of these **before merging** so
 `.github/release.yml` files it under the right heading:
@@ -111,10 +140,11 @@ Label a pull request with one of these **before merging** so
 | `dependencies` | excluded entirely |
 | (none of the above) | Other changes |
 
-## 6. Verifying a release
+## 4. Verifying a release
 
 ```bash
 gh release view vX.Y.Z
+gh release view examples-vX.Y.Z
 ```
 
 ## Release notes template
