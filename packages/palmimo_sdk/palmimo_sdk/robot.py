@@ -169,6 +169,12 @@ _CANCEL_POLL_INTERVAL_S = 0.05
 # layer's post-motion stance settle duration.
 _CANCEL_SETTLE_S = 0.5
 
+# How long disconnect() waits for a connect() running on another thread before
+# parking anyway. Covers the bus open, every peripheral open and the ~1.5s wake
+# glide with a wide margin; past it, a wedged connect() is the lesser risk than
+# a torque-off that never happens.
+_LIFECYCLE_WAIT_S = 30.0
+
 
 @contextlib.contextmanager
 def _deferred_interrupts() -> Iterator[None]:
@@ -491,10 +497,11 @@ class Palmimo:
         self._cancel_lock = threading.Lock()
         # Held for the whole of connect() and disconnect(), so one never drives
         # the servos while the other is mid-way (a wake glide against a park).
-        # Reentrant because a Python signal handler runs on the thread it
-        # interrupted, which may already hold the lock inside connect(); a
-        # handler that calls disconnect() there would deadlock a plain Lock
-        # with torque still on.
+        # Reentrant for user-written signal handlers: Python runs them on the
+        # main thread, and if that thread is inside connect() a handler that
+        # calls disconnect() would deadlock a plain Lock with torque on. The
+        # nested disconnect() then cuts torque and the interrupted connect()
+        # fails with the driver's RuntimeError -- the expected outcome.
         self._lifecycle_lock = threading.RLock()
         # Set by _arm_cancel_scope() / cleared by _disarm_cancel_scope() (both
         # under _cancel_lock) -- see their docstrings. Lets a caller that is
@@ -704,9 +711,11 @@ class Palmimo:
         ``is_connected`` here, or a half-open resource (e.g. USB yanked) would
         never get cleaned up.
 
-        The whole body — park, every peripheral close, and the driver
-        disconnect that actually cuts torque — runs under one
-        :func:`_deferred_interrupts` block: each peripheral close is wrapped
+        The whole body — the wait for an in-flight :meth:`connect` on another
+        thread (bounded at :data:`_LIFECYCLE_WAIT_S`, after which it parks
+        anyway), the park, every peripheral close, and the driver disconnect
+        that actually cuts torque — runs under one :func:`_deferred_interrupts`
+        block: each peripheral close is wrapped
         in its own ``suppress(Exception)`` so a flaky one never blocks the
         rest, but that does NOT catch :class:`KeyboardInterrupt`, so a Ctrl+C
         landing anywhere in the sequence — including mid-``camera.close()``'s
@@ -737,21 +746,31 @@ class Palmimo:
                 ``Exception`` (in practice ``KeyboardInterrupt``), re-raised
                 after the torque-off. The first one wins if several arrive.
         """
-        with self._lifecycle_lock:
-            interrupt: BaseException | None = None
+        interrupt: BaseException | None = None
 
-            def _step(action: Callable[[], object]) -> None:
-                """Run one teardown step: drop an ``Exception``, remember a ``BaseException``."""
-                nonlocal interrupt
-                try:
-                    action()
-                except Exception:
-                    pass
-                except BaseException as exc:
-                    if interrupt is None:
-                        interrupt = exc
+        def _step(action: Callable[[], object]) -> None:
+            """Run one teardown step: drop an ``Exception``, remember a ``BaseException``."""
+            nonlocal interrupt
+            try:
+                action()
+            except Exception:
+                pass
+            except BaseException as exc:
+                if interrupt is None:
+                    interrupt = exc
 
-            with _deferred_interrupts():
+        with _deferred_interrupts():
+            # Bounded: a connect() wedged after arming the driver (a peripheral
+            # open that never returns) must not hold the torque-off forever.
+            # Past the bound the park runs alongside it, as it did before the
+            # lock existed.
+            acquired = self._lifecycle_lock.acquire(timeout=_LIFECYCLE_WAIT_S)
+            if not acquired:
+                logger.warning(
+                    "disconnect: connect() still running after %.0fs; parking without waiting for it",
+                    _LIFECYCLE_WAIT_S,
+                )
+            try:
                 if self.is_connected:
                     if park:
                         _step(self.return_to_neutral)
@@ -767,18 +786,21 @@ class Palmimo:
                     _step(self._display.disconnect)
                 if self._driver is not None:
                     self._driver.disconnect()
-            # Per-axis tuning tracking is connection-scoped (see connect()).
-            self._gesture_tuned = None
-            self._neck_gesture_tuned = False
-            # Nothing is left to watch once the driver is gone -- reflect that in
-            # neck_thermal_state immediately rather than leaving the last reading
-            # (possibly HOT) visible until the next step() polls. poll(None) also
-            # releases neck_lock_active (see thermal.py): there is no driver left
-            # to write a centering command to.
-            self._thermal.poll(None)
-            self._engine.neck_hold_center = False
-            if interrupt is not None:
-                raise interrupt
+                # Per-axis tuning tracking is connection-scoped (see connect()).
+                self._gesture_tuned = None
+                self._neck_gesture_tuned = False
+                # Nothing is left to watch once the driver is gone -- reflect that in
+                # neck_thermal_state immediately rather than leaving the last reading
+                # (possibly HOT) visible until the next step() polls. poll(None) also
+                # releases neck_lock_active (see thermal.py): there is no driver left
+                # to write a centering command to.
+                self._thermal.poll(None)
+                self._engine.neck_hold_center = False
+            finally:
+                if acquired:
+                    self._lifecycle_lock.release()
+        if interrupt is not None:
+            raise interrupt
 
     def return_to_neutral(
         self,

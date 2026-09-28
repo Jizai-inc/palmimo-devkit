@@ -122,8 +122,10 @@ driving the robot** (the thread inside `run()`/`step()`). Every other motion
 method assumes a single caller thread; `cancel()` is the exception because it
 only increments an internal counter under a small lock and touches no other
 facade state, so it cannot race with the motion loop's own reads/writes.
-`connect()` and `disconnect()` are the other cross-thread pair: they exclude
-each other (see `disconnect()` below).
+`connect()` and `disconnect()` exclude each other across threads (see
+`disconnect()` below); that does not make `disconnect()` safe to call while
+another thread is inside `run()`/`step()`, since its leg return drives the
+same engine.
 
 Implemented as a monotonically increasing counter, not a `threading.Event`
 that gets `clear()`ed: each paced public method (`run()` / `perform_dance()`
@@ -438,7 +440,10 @@ ramp on its own. Presses after `disconnect()` returns behave normally.
 wake glide or its rollback — to finish before parking, rather than streaming
 park commands alongside the glide. An asyncio program that cancels an
 `await asyncio.to_thread(robot.connect)` does not stop that thread, so its
-cleanup's `disconnect()` relies on this wait.
+cleanup's `disconnect()` relies on this wait. The wait is bounded at 30s: a
+`connect()` wedged after arming the driver (a peripheral open that never
+returns) would otherwise keep torque on indefinitely, so past the bound
+`disconnect()` logs a warning and parks alongside it.
 
 A `BaseException` raised by a teardown step — a `KeyboardInterrupt` from a
 mashed Ctrl+C landing in a peripheral close — does not end the teardown early.

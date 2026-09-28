@@ -1469,6 +1469,33 @@ def test_disconnect_waits_for_a_connect_still_running_on_another_thread() -> Non
     assert driver.events == ["connect", "disconnect"]
 
 
+def test_disconnect_parks_anyway_when_a_connect_on_another_thread_never_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(robot_module, "_LIFECYCLE_WAIT_S", 0.1)
+    connect_entered_wake = threading.Event()
+    release_wake = threading.Event()
+
+    class WedgedWakeFace(FakeFace):
+        def wake(self) -> str:
+            connect_entered_wake.set()
+            release_wake.wait(timeout=5)
+            return super().wake()
+
+    driver = RecordingDriver()
+    robot = Palmimo(driver=cast(ServoDriver, driver), display=cast(FaceDisplay, WedgedWakeFace()))
+    connecting = threading.Thread(target=robot.connect)
+    connecting.start()
+    assert connect_entered_wake.wait(timeout=5)
+    try:
+        robot.disconnect()
+        assert connecting.is_alive()
+        assert driver.events == ["connect", "disconnect"]
+    finally:
+        release_wake.set()
+        connecting.join(timeout=5)
+
+
 def test_connect_rolls_back_driver_when_display_connect_times_out() -> None:
     """On a dev machine with no robot attached, the driver connects fine but the
     face display's serial probe never responds. connect() must give up (rather than hang) and
