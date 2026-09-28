@@ -1441,6 +1441,34 @@ def test_connect_rolls_back_driver_when_display_fails() -> None:
     assert driver.is_connected is False
 
 
+def test_disconnect_waits_for_a_connect_still_running_on_another_thread() -> None:
+    connect_entered_wake = threading.Event()
+    release_wake = threading.Event()
+
+    class SlowWakeFace(FakeFace):
+        def wake(self) -> str:
+            connect_entered_wake.set()
+            release_wake.wait(timeout=5)
+            return super().wake()
+
+    driver = RecordingDriver()
+    robot = Palmimo(driver=cast(ServoDriver, driver), display=cast(FaceDisplay, SlowWakeFace()))
+    connecting = threading.Thread(target=robot.connect)
+    connecting.start()
+    assert connect_entered_wake.wait(timeout=5)
+    disconnecting = threading.Thread(target=robot.disconnect)
+    disconnecting.start()
+
+    disconnecting.join(timeout=0.2)
+    assert disconnecting.is_alive()
+    assert driver.events == ["connect"]
+
+    release_wake.set()
+    connecting.join(timeout=5)
+    disconnecting.join(timeout=5)
+    assert driver.events == ["connect", "disconnect"]
+
+
 def test_connect_rolls_back_driver_when_display_connect_times_out() -> None:
     """On a dev machine with no robot attached, the driver connects fine but the
     face display's serial probe never responds. connect() must give up (rather than hang) and

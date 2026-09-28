@@ -117,11 +117,13 @@ onto a stance pose (a short IDLE stream) before the `MotionCancelled`
 propagates, so a cancelled gait doesn't leave one tripod frozen mid-stride,
 bent and loaded, while the caller decides its next move.
 
-**The one `Palmimo` method safe to call from a thread other than the one
-driving the robot** (the thread inside `run()`/`step()`). Every other method
-assumes a single caller thread; `cancel()` is the exception because it only
-increments an internal counter under a small lock and touches no other
+**The one motion method safe to call from a thread other than the one
+driving the robot** (the thread inside `run()`/`step()`). Every other motion
+method assumes a single caller thread; `cancel()` is the exception because it
+only increments an internal counter under a small lock and touches no other
 facade state, so it cannot race with the motion loop's own reads/writes.
+`connect()` and `disconnect()` are the other cross-thread pair: they exclude
+each other (see `disconnect()` below).
 
 Implemented as a monotonically increasing counter, not a `threading.Event`
 that gets `clear()`ed: each paced public method (`run()` / `perform_dance()`
@@ -430,6 +432,13 @@ SIGKILL stops it. With `park=True` (the default) the robot is therefore
 uninterruptible for the leg return's duration plus the ~2.5s neck ramp, not
 the ~2.5s alone; with `park=False` it is uninterruptible for the ~2.5s neck
 ramp on its own. Presses after `disconnect()` returns behave normally.
+
+`disconnect()` and `connect()` hold one lock for their whole run, so a
+`disconnect()` from another thread waits for an in-flight `connect()` — its
+wake glide or its rollback — to finish before parking, rather than streaming
+park commands alongside the glide. An asyncio program that cancels an
+`await asyncio.to_thread(robot.connect)` does not stop that thread, so its
+cleanup's `disconnect()` relies on this wait.
 
 A `BaseException` raised by a teardown step — a `KeyboardInterrupt` from a
 mashed Ctrl+C landing in a peripheral close — does not end the teardown early.

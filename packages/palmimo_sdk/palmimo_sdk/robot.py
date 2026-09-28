@@ -489,6 +489,13 @@ class Palmimo:
         # occur; see cancel()'s docstring for the exact contract this gives.
         self._cancel_count: int = 0
         self._cancel_lock = threading.Lock()
+        # Held for the whole of connect() and disconnect(), so one never drives
+        # the servos while the other is mid-way (a wake glide against a park).
+        # Reentrant because a Python signal handler runs on the thread it
+        # interrupted, which may already hold the lock inside connect(); a
+        # handler that calls disconnect() there would deadlock a plain Lock
+        # with torque still on.
+        self._lifecycle_lock = threading.RLock()
         # Set by _arm_cancel_scope() / cleared by _disarm_cancel_scope() (both
         # under _cancel_lock) -- see their docstrings. Lets a caller that is
         # about to dispatch a paced call onto another thread (e.g.
@@ -593,6 +600,11 @@ class Palmimo:
         also runs on a ``KeyboardInterrupt`` during the wake glide, and
         soft-releases the neck before the driver disconnect cuts torque.
 
+        :meth:`connect` and :meth:`disconnect` exclude each other across
+        threads: a :meth:`disconnect` from another thread waits for an
+        in-flight :meth:`connect` (its wake glide or rollback included) to
+        finish before it parks, instead of driving the servos alongside it.
+
         Raises:
             RuntimeError: If no driver, display, speaker, camera, or mic was attached at
                 construction.
@@ -604,70 +616,71 @@ class Palmimo:
                 "Palmimo(display=...), a Speaker via Palmimo(speaker=...), a "
                 "HeadCamera via Palmimo(camera=...), and/or a Microphone via Palmimo(mic=...)."
             )
-        # Roll back on partial failure: if a later resource fails to open, close
-        # the ones already opened before re-raising. Otherwise a raise here leaks
-        # them — via ``with`` a failing __enter__ means __exit__ never runs, and
-        # the plain connect() path would leave earlier resources open too. Rollback
-        # is best-effort + suppressed so it never masks the original error.
-        driver_connected = False
-        try:
-            if self._driver is not None:
-                self._driver.connect()
-                driver_connected = True
-            if self._display is not None:
-                self._display.connect()
-                self._display.wake()
-            if self._speaker is not None:
-                self._speaker.open()
-            if self._camera is not None:
-                self._camera.open()
-                self._camera.start_drain()
-            if self._mic is not None:
-                self._mic.open()
-            # A fresh driver connect() re-applies the driver's default RAM tuning
-            # (PV/gain), so any per-axis tweak tracked from a previous connection
-            # is gone — the tracking must not survive a reconnect or the re-apply
-            # would be skipped as "already tuned".
-            self._gesture_tuned = None
-            self._neck_gesture_tuned = False
-            # A fresh connect may be to a different driver (or the same one
-            # after a capability probe already latched "unsupported") --
-            # give the thermal guard a fresh chance to read it.
-            self._thermal.reset()
-            # Inside the try block so a wake failure rolls back every resource
-            # already opened (same as any other connect failure) instead of
-            # leaving the robot half-connected.
-            if self._auto_wake:
-                self.wake()
-        except BaseException:
-            # BaseException, not Exception: a Ctrl+C during the ~1.5s wake glide
-            # arrives as KeyboardInterrupt, which is NOT an Exception subclass —
-            # narrower catches used to let it skip rollback entirely, leaking
-            # every resource already opened with torque still on.
-            if driver_connected and self._driver is not None:
-                # Wake may have left the neck held at full gain; soft-release it
-                # BEFORE the driver.disconnect() below cuts torque, or the head
-                # snaps down — the exact hazard the park exists to prevent.
-                # _park_neck() itself absorbs a further Ctrl+C.
-                with contextlib.suppress(Exception):
-                    self._park_neck()
-            if self._mic is not None:
-                with contextlib.suppress(Exception):
-                    self._mic.close()  # idempotent even if open never landed
-            if self._camera is not None:
-                with contextlib.suppress(Exception):
-                    self._camera.close()  # idempotent even if open never landed
-            if self._speaker is not None:
-                with contextlib.suppress(Exception):
-                    self._speaker.close()  # idempotent even if open never landed
-            if self._display is not None:
-                with contextlib.suppress(Exception):
-                    self._display.disconnect()  # idempotent even if connect never landed
-            if driver_connected and self._driver is not None:
-                with contextlib.suppress(Exception):
-                    self._driver.disconnect()
-            raise  # re-raises KeyboardInterrupt too
-        return self
+        with self._lifecycle_lock:
+            # Roll back on partial failure: if a later resource fails to open, close
+            # the ones already opened before re-raising. Otherwise a raise here leaks
+            # them — via ``with`` a failing __enter__ means __exit__ never runs, and
+            # the plain connect() path would leave earlier resources open too. Rollback
+            # is best-effort + suppressed so it never masks the original error.
+            driver_connected = False
+            try:
+                if self._driver is not None:
+                    self._driver.connect()
+                    driver_connected = True
+                if self._display is not None:
+                    self._display.connect()
+                    self._display.wake()
+                if self._speaker is not None:
+                    self._speaker.open()
+                if self._camera is not None:
+                    self._camera.open()
+                    self._camera.start_drain()
+                if self._mic is not None:
+                    self._mic.open()
+                # A fresh driver connect() re-applies the driver's default RAM tuning
+                # (PV/gain), so any per-axis tweak tracked from a previous connection
+                # is gone — the tracking must not survive a reconnect or the re-apply
+                # would be skipped as "already tuned".
+                self._gesture_tuned = None
+                self._neck_gesture_tuned = False
+                # A fresh connect may be to a different driver (or the same one
+                # after a capability probe already latched "unsupported") --
+                # give the thermal guard a fresh chance to read it.
+                self._thermal.reset()
+                # Inside the try block so a wake failure rolls back every resource
+                # already opened (same as any other connect failure) instead of
+                # leaving the robot half-connected.
+                if self._auto_wake:
+                    self.wake()
+            except BaseException:
+                # BaseException, not Exception: a Ctrl+C during the ~1.5s wake glide
+                # arrives as KeyboardInterrupt, which is NOT an Exception subclass —
+                # narrower catches used to let it skip rollback entirely, leaking
+                # every resource already opened with torque still on.
+                if driver_connected and self._driver is not None:
+                    # Wake may have left the neck held at full gain; soft-release it
+                    # BEFORE the driver.disconnect() below cuts torque, or the head
+                    # snaps down — the exact hazard the park exists to prevent.
+                    # _park_neck() itself absorbs a further Ctrl+C.
+                    with contextlib.suppress(Exception):
+                        self._park_neck()
+                if self._mic is not None:
+                    with contextlib.suppress(Exception):
+                        self._mic.close()  # idempotent even if open never landed
+                if self._camera is not None:
+                    with contextlib.suppress(Exception):
+                        self._camera.close()  # idempotent even if open never landed
+                if self._speaker is not None:
+                    with contextlib.suppress(Exception):
+                        self._speaker.close()  # idempotent even if open never landed
+                if self._display is not None:
+                    with contextlib.suppress(Exception):
+                        self._display.disconnect()  # idempotent even if connect never landed
+                if driver_connected and self._driver is not None:
+                    with contextlib.suppress(Exception):
+                        self._driver.disconnect()
+                raise  # re-raises KeyboardInterrupt too
+            return self
 
     def disconnect(self, *, park: bool = True) -> None:
         """Park the robot, then close the mic, camera, speaker, face-display, and/or driver. Safe when idle.
@@ -724,47 +737,48 @@ class Palmimo:
                 ``Exception`` (in practice ``KeyboardInterrupt``), re-raised
                 after the torque-off. The first one wins if several arrive.
         """
-        interrupt: BaseException | None = None
+        with self._lifecycle_lock:
+            interrupt: BaseException | None = None
 
-        def _step(action: Callable[[], object]) -> None:
-            """Run one teardown step: drop an ``Exception``, remember a ``BaseException``."""
-            nonlocal interrupt
-            try:
-                action()
-            except Exception:
-                pass
-            except BaseException as exc:
-                if interrupt is None:
-                    interrupt = exc
+            def _step(action: Callable[[], object]) -> None:
+                """Run one teardown step: drop an ``Exception``, remember a ``BaseException``."""
+                nonlocal interrupt
+                try:
+                    action()
+                except Exception:
+                    pass
+                except BaseException as exc:
+                    if interrupt is None:
+                        interrupt = exc
 
-        with _deferred_interrupts():
-            if self.is_connected:
-                if park:
-                    _step(self.return_to_neutral)
-                _step(self._park_neck)
-            if self._mic is not None:
-                _step(self._mic.close)
-            if self._camera is not None:
-                _step(self._camera.close)
-            if self._speaker is not None:
-                _step(self._speaker.close)
-            if self._display is not None:
-                _step(self._display.idle)
-                _step(self._display.disconnect)
-            if self._driver is not None:
-                self._driver.disconnect()
-        # Per-axis tuning tracking is connection-scoped (see connect()).
-        self._gesture_tuned = None
-        self._neck_gesture_tuned = False
-        # Nothing is left to watch once the driver is gone -- reflect that in
-        # neck_thermal_state immediately rather than leaving the last reading
-        # (possibly HOT) visible until the next step() polls. poll(None) also
-        # releases neck_lock_active (see thermal.py): there is no driver left
-        # to write a centering command to.
-        self._thermal.poll(None)
-        self._engine.neck_hold_center = False
-        if interrupt is not None:
-            raise interrupt
+            with _deferred_interrupts():
+                if self.is_connected:
+                    if park:
+                        _step(self.return_to_neutral)
+                    _step(self._park_neck)
+                if self._mic is not None:
+                    _step(self._mic.close)
+                if self._camera is not None:
+                    _step(self._camera.close)
+                if self._speaker is not None:
+                    _step(self._speaker.close)
+                if self._display is not None:
+                    _step(self._display.idle)
+                    _step(self._display.disconnect)
+                if self._driver is not None:
+                    self._driver.disconnect()
+            # Per-axis tuning tracking is connection-scoped (see connect()).
+            self._gesture_tuned = None
+            self._neck_gesture_tuned = False
+            # Nothing is left to watch once the driver is gone -- reflect that in
+            # neck_thermal_state immediately rather than leaving the last reading
+            # (possibly HOT) visible until the next step() polls. poll(None) also
+            # releases neck_lock_active (see thermal.py): there is no driver left
+            # to write a centering command to.
+            self._thermal.poll(None)
+            self._engine.neck_hold_center = False
+            if interrupt is not None:
+                raise interrupt
 
     def return_to_neutral(
         self,
