@@ -13,6 +13,7 @@ import json
 import os
 import signal
 import sys
+import threading
 import time
 from typing import ClassVar, TextIO, cast
 
@@ -207,6 +208,65 @@ async def test_run_cli_closes_runtime_on_signal_during_start(monkeypatch: pytest
     await asyncio.wait_for(task, timeout=5.0)
 
     assert log.closed is True
+
+
+async def test_run_cli_waits_for_connect_before_disconnecting_on_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Shutdown must not overlap the worker-thread connect and disconnect motions."""
+
+    class _BlockingPalmimo:
+        has_connectable_resource = True
+
+        def __init__(self) -> None:
+            self.connect_started = threading.Event()
+            self.allow_connect_to_finish = threading.Event()
+            self.connect_finished = threading.Event()
+            self.disconnect_started = threading.Event()
+            self.disconnect_overlapped_connect = False
+
+        def connect(self) -> None:
+            self.connect_started.set()
+            self.allow_connect_to_finish.wait()
+            self.connect_finished.set()
+
+        def disconnect(self) -> None:
+            self.disconnect_started.set()
+            self.disconnect_overlapped_connect = not self.connect_finished.is_set()
+
+    palmimo = _BlockingPalmimo()
+    conductor = Conductor(History(), _toolset(), cast(LlmProvider, FakeLlm()), Bus(), event_log=None)
+    runtime = Runtime(
+        conductor=conductor,
+        palmimo=cast(Palmimo, palmimo),
+        toolset=_toolset(),
+        history=conductor.history,
+    )
+    closing_started = asyncio.Event()
+    original_aclose = runtime.aclose
+
+    async def _record_aclose() -> None:
+        closing_started.set()
+        await original_aclose()
+
+    monkeypatch.setattr(runtime, "aclose", _record_aclose)
+    monkeypatch.setattr(cli_module, "build_runtime", lambda settings: runtime)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    task = asyncio.ensure_future(cli_module.run_cli(_settings(), read_stdin=False))
+    await asyncio.wait_for(asyncio.to_thread(palmimo.connect_started.wait), timeout=5.0)
+
+    os.kill(os.getpid(), signal.SIGTERM)
+    await asyncio.wait_for(closing_started.wait(), timeout=5.0)
+    disconnect_wait = asyncio.create_task(asyncio.to_thread(palmimo.disconnect_started.wait))
+    try:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(asyncio.shield(disconnect_wait), timeout=0.2)
+        assert palmimo.disconnect_started.is_set() is False
+    finally:
+        palmimo.allow_connect_to_finish.set()
+        await asyncio.wait_for(task, timeout=5.0)
+    await disconnect_wait
+
+    assert palmimo.disconnect_overlapped_connect is False
 
 
 class _NeverReturningStdin:
