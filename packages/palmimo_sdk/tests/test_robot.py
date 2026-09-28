@@ -1419,7 +1419,7 @@ def test_set_expression_without_display_is_noop() -> None:
     assert Palmimo().set_expression("happy") is None
 
 
-def test_connect_rolls_back_driver_when_display_fails() -> None:
+def test_connect_never_arms_the_driver_when_display_fails() -> None:
     """When display startup fails, the already-opened driver is closed before re-raising
     (prevents a partial-failure leak).
 
@@ -1436,26 +1436,26 @@ def test_connect_rolls_back_driver_when_display_fails() -> None:
     robot = Palmimo(driver=cast(ServoDriver, driver), display=cast(FaceDisplay, BoomFace()))
     with pytest.raises(RuntimeError, match="serial boom"):
         robot.connect()
-    # the driver goes connect -> (rolled back to) disconnect, never left open.
-    assert driver.events == ["connect", "disconnect"]
+    # peripherals open before the driver, so a failing one leaves torque off.
+    assert driver.events == []
     assert driver.is_connected is False
 
 
 def test_disconnect_waits_for_a_connect_still_running_on_another_thread() -> None:
-    connect_entered_wake = threading.Event()
+    wake_entered = threading.Event()
     release_wake = threading.Event()
 
-    class SlowWakeFace(FakeFace):
-        def wake(self) -> str:
-            connect_entered_wake.set()
+    class SlowWakeRobot(Palmimo):
+        def wake(self, *args: Any, **kwargs: Any) -> None:
+            wake_entered.set()
             release_wake.wait(timeout=5)
-            return super().wake()
+            super().wake(*args, **kwargs)
 
     driver = RecordingDriver()
-    robot = Palmimo(driver=cast(ServoDriver, driver), display=cast(FaceDisplay, SlowWakeFace()))
+    robot = SlowWakeRobot(driver=cast(ServoDriver, driver))
     connecting = threading.Thread(target=robot.connect)
     connecting.start()
-    assert connect_entered_wake.wait(timeout=5)
+    assert wake_entered.wait(timeout=5)
     disconnecting = threading.Thread(target=robot.disconnect)
     disconnecting.start()
 
@@ -1469,86 +1469,48 @@ def test_disconnect_waits_for_a_connect_still_running_on_another_thread() -> Non
     assert driver.events == ["connect", "disconnect"]
 
 
-def test_disconnect_parks_anyway_when_a_connect_on_another_thread_never_returns(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(robot_module, "_LIFECYCLE_WAIT_S", 0.1)
+def test_connect_keeps_torque_off_while_a_peripheral_stalls() -> None:
     camera_opening = threading.Event()
     release_open = threading.Event()
 
-    class WedgedCamera(FakeCamera):
+    class StallingCamera(FakeCamera):
         def open(self) -> None:
             camera_opening.set()
             release_open.wait(timeout=5)
             super().open()
 
     driver = RecordingDriver()
-    camera = WedgedCamera()
-    robot = Palmimo(driver=cast(ServoDriver, driver), camera=cast(HeadCamera, camera))
-    outcome: list[BaseException | None] = []
-
-    def connect() -> None:
-        try:
-            robot.connect()
-            outcome.append(None)
-        except BaseException as exc:
-            outcome.append(exc)
-
-    connecting = threading.Thread(target=connect)
+    robot = Palmimo(driver=cast(ServoDriver, driver), camera=cast(HeadCamera, StallingCamera()))
+    connecting = threading.Thread(target=robot.connect)
     connecting.start()
-    assert camera_opening.wait(timeout=5)
     try:
-        robot.disconnect()
-        assert connecting.is_alive()
-        assert driver.events == ["connect", "disconnect"]
+        assert camera_opening.wait(timeout=5)
+        assert driver.events == []
     finally:
         release_open.set()
         connecting.join(timeout=5)
+    assert driver.events == ["connect"]
 
-    assert isinstance(outcome[0], RuntimeError)
-    # The rollback's own driver disconnect is idempotent on a real driver; what
-    # matters is that the torn-down connect never re-arms it.
-    assert driver.events.count("connect") == 1
-    assert driver.is_connected is False
+
+def test_connect_stops_when_disconnect_runs_on_its_own_thread_mid_connect() -> None:
+    driver = RecordingDriver()
+    robot: Palmimo
+
+    class DisconnectingCamera(FakeCamera):
+        def open(self) -> None:
+            robot.disconnect()
+            super().open()
+
+    camera = DisconnectingCamera()
+    robot = Palmimo(driver=cast(ServoDriver, driver), camera=cast(HeadCamera, camera))
+
+    with pytest.raises(RuntimeError, match="interrupted by disconnect"):
+        robot.connect()
+    assert driver.events.count("connect") == 0
     assert camera.is_open is False
 
 
-def test_a_driver_that_arms_after_a_timed_out_disconnect_is_disarmed_again(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(robot_module, "_LIFECYCLE_WAIT_S", 0.1)
-    driver_connecting = threading.Event()
-    release_connect = threading.Event()
-
-    class SlowConnectDriver(RecordingDriver):
-        def connect(self) -> None:
-            driver_connecting.set()
-            release_connect.wait(timeout=5)
-            super().connect()
-
-    driver = SlowConnectDriver()
-    robot = Palmimo(driver=cast(ServoDriver, driver))
-    outcome: list[BaseException | None] = []
-
-    def connect() -> None:
-        try:
-            robot.connect()
-            outcome.append(None)
-        except BaseException as exc:
-            outcome.append(exc)
-
-    connecting = threading.Thread(target=connect)
-    connecting.start()
-    assert driver_connecting.wait(timeout=5)
-    robot.disconnect()
-    release_connect.set()
-    connecting.join(timeout=5)
-
-    assert isinstance(outcome[0], RuntimeError)
-    assert driver.is_connected is False
-
-
-def test_connect_rolls_back_driver_when_display_connect_times_out() -> None:
+def test_connect_never_arms_the_driver_when_display_connect_times_out() -> None:
     """On a dev machine with no robot attached, the driver connects fine but the
     face display's serial probe never responds. connect() must give up (rather than hang) and
     roll back the already-opened driver, same as any other connect failure."""
@@ -1568,8 +1530,8 @@ def test_connect_rolls_back_driver_when_display_connect_times_out() -> None:
     elapsed = time.perf_counter() - start
 
     assert elapsed < 2.0, "connect() should fail fast, not hang"
-    # the driver goes connect -> (rolled back to) disconnect, never left open.
-    assert driver.events == ["connect", "disconnect"]
+    # peripherals open before the driver, so a failing one leaves torque off.
+    assert driver.events == []
     assert driver.is_connected is False
     assert not display.is_connected
 
@@ -1681,7 +1643,7 @@ def test_stop_speech_without_speaker_is_noop() -> None:
     Palmimo().stop_speech()  # must not raise
 
 
-def test_connect_rolls_back_driver_when_speaker_open_fails() -> None:
+def test_connect_never_arms_the_driver_when_speaker_open_fails() -> None:
     """When speaker.open() fails, the already-opened driver is closed before re-raising
     (prevents a partial-failure leak)."""
 
@@ -1695,7 +1657,7 @@ def test_connect_rolls_back_driver_when_speaker_open_fails() -> None:
     with pytest.raises(RuntimeError, match="piper boom"):
         robot.connect()
     # speaker.open() fails last -> the driver goes connect -> rolled back to disconnect.
-    assert driver.events == ["connect", "disconnect"]
+    assert driver.events == []
     assert driver.is_connected is False
 
 
@@ -1782,7 +1744,7 @@ def test_disconnect_swallows_camera_errors() -> None:
     assert "close" in cam.calls
 
 
-def test_connect_rolls_back_driver_when_camera_open_fails() -> None:
+def test_connect_never_arms_the_driver_when_camera_open_fails() -> None:
     """When camera.open() fails, the already-opened driver is closed before re-raising
     (prevents a partial-failure leak).
 
@@ -1800,7 +1762,7 @@ def test_connect_rolls_back_driver_when_camera_open_fails() -> None:
     with pytest.raises(RuntimeError, match="cannot open camera 0"):
         robot.connect()
     # camera.open() fails last -> the driver goes connect -> rolled back to disconnect.
-    assert driver.events == ["connect", "disconnect"]
+    assert driver.events == []
     assert driver.is_connected is False
 
 
@@ -1871,7 +1833,7 @@ def test_connect_rolls_back_others_when_mic_open_fails() -> None:
         robot.connect()
     # mic is opened last -> camera and driver are closed via rollback.
     assert cam.calls == ["open", "start_drain", "close"]
-    assert driver.events == ["connect", "disconnect"]
+    assert driver.events == []
 
 
 def test_mic_stream_connect_and_close_drive_open_and_close() -> None:

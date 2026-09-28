@@ -169,14 +169,6 @@ _CANCEL_POLL_INTERVAL_S = 0.05
 # layer's post-motion stance settle duration.
 _CANCEL_SETTLE_S = 0.5
 
-# How long disconnect() waits for a connect() running on another thread before
-# parking anyway: a torque-safety ceiling, not an estimate of how long connect()
-# takes. The steps that can legitimately run past it -- a camera open with no
-# timeout, a first-run voice download (see io/tts/piper.py) -- come after the
-# driver opens and issue no servo traffic, so parking alongside them does not
-# race a servo write. Every driver transaction in connect() is itself bounded.
-_LIFECYCLE_WAIT_S = 30.0
-
 
 @contextlib.contextmanager
 def _deferred_interrupts() -> Iterator[None]:
@@ -499,17 +491,18 @@ class Palmimo:
         self._cancel_lock = threading.Lock()
         # Held for the whole of connect() and disconnect(), so one never drives
         # the servos while the other is mid-way (a wake glide against a park).
-        # Reentrant for user-written signal handlers: Python runs them on the
-        # main thread, and if that thread is inside connect() a handler that
-        # calls disconnect() would deadlock a plain Lock with torque on. The
-        # nested disconnect() then cuts torque and the interrupted connect()
-        # fails with the driver's RuntimeError -- the expected outcome.
+        # The wait is unbounded on purpose: connect() arms the driver last, so
+        # anything that can stall (a camera open, a first-run voice download)
+        # happens with torque off, and the armed part (bus connect, wake glide)
+        # is bounded. Reentrant for user-written signal handlers: Python runs
+        # them on the main thread, and if that thread is inside connect() a
+        # handler that calls disconnect() would deadlock a plain Lock.
         self._lifecycle_lock = threading.RLock()
-        # Bumped by a disconnect() that gave up waiting for the lock. A connect()
-        # compares it with the value it started under, so one it overtook stops
-        # at its next step -- even when the driver only finishes connecting after
-        # that disconnect() has returned.
-        self._disconnect_generation = 0
+        # Bumped by disconnect() once it holds the lock. Only a disconnect() on
+        # the thread already inside connect() (the reentrant case above) can
+        # bump it mid-connect; connect() checks it after each step so it does
+        # not go on to arm the robot that disconnect() just released.
+        self._disconnect_count = 0
         # Set by _arm_cancel_scope() / cleared by _disarm_cancel_scope() (both
         # under _cancel_lock) -- see their docstrings. Lets a caller that is
         # about to dispatch a paced call onto another thread (e.g.
@@ -595,13 +588,14 @@ class Palmimo:
         return self._driver is not None and self._driver.is_connected
 
     def connect(self) -> Palmimo:
-        """Open the driver, face-display, speaker, camera, and/or mic. Returns ``self``.
+        """Open the face-display, speaker, camera, mic, and/or driver. Returns ``self``.
 
-        Connects whichever resources are attached: the driver (servo bus), the
-        display (which also plays its boot-wake animation, mirroring what a real
+        Connects whichever resources are attached, in this order: the display
+        (which also plays its boot-wake animation, mirroring what a real
         startup shows), the speaker (a piper availability probe), the camera
         (opens the head camera's ``cv2.VideoCapture`` and starts its background
-        frame drain), and the mic. A facade with only a subset of these (e.g.
+        frame drain), the mic, and last the driver (servo bus), which is what
+        turns torque on. A facade with only a subset of these (e.g.
         ``driver=None``) is valid — a face, voice, ears, and/or camera with no legs.
 
         When a driver is attached and connected, and *auto_wake* was not
@@ -614,10 +608,11 @@ class Palmimo:
         also runs on a ``KeyboardInterrupt`` during the wake glide, and
         soft-releases the neck before the driver disconnect cuts torque.
 
-        :meth:`connect` and :meth:`disconnect` exclude each other across
-        threads: a :meth:`disconnect` from another thread waits for an
-        in-flight :meth:`connect` (its wake glide or rollback included) to
-        finish before it parks, instead of driving the servos alongside it.
+        :meth:`connect` and :meth:`disconnect` exclude each other: a
+        :meth:`disconnect` from another thread waits for an in-flight
+        :meth:`connect` (its wake glide or rollback included) to finish
+        before it parks. Because the driver arms last, a peripheral that
+        stalls keeps that wait going with torque still off.
 
         Raises:
             RuntimeError: If no driver, display, speaker, camera, or mic was attached at
@@ -637,34 +632,36 @@ class Palmimo:
             # the plain connect() path would leave earlier resources open too. Rollback
             # is best-effort + suppressed so it never masks the original error.
             driver_connected = False
-            generation = self._disconnect_generation
+            disconnects_before = self._disconnect_count
 
-            def _ensure_not_overtaken() -> None:
-                # See _disconnect_generation / _LIFECYCLE_WAIT_S. Raising routes
-                # through the rollback below, which disconnects a driver that
-                # armed after the overtaking disconnect() returned.
-                if self._disconnect_generation != generation:
-                    raise RuntimeError("connect() was overtaken by a concurrent disconnect()")
+            def _ensure_not_disconnected() -> None:
+                # See _disconnect_count. Raising routes through the rollback below.
+                if self._disconnect_count != disconnects_before:
+                    raise RuntimeError("connect() was interrupted by disconnect()")
 
             try:
-                if self._driver is not None:
-                    self._driver.connect()
-                    driver_connected = True
-                    _ensure_not_overtaken()
+                # Every peripheral opens before the driver arms: these are the steps
+                # that can stall (a camera open has no timeout, a voice download
+                # takes as long as the network does), and stalling with torque off
+                # is what lets disconnect() wait for connect() without a bound.
                 if self._display is not None:
                     self._display.connect()
                     self._display.wake()
-                    _ensure_not_overtaken()
+                    _ensure_not_disconnected()
                 if self._speaker is not None:
                     self._speaker.open()
-                    _ensure_not_overtaken()
+                    _ensure_not_disconnected()
                 if self._camera is not None:
                     self._camera.open()
                     self._camera.start_drain()
-                    _ensure_not_overtaken()
+                    _ensure_not_disconnected()
                 if self._mic is not None:
                     self._mic.open()
-                    _ensure_not_overtaken()
+                    _ensure_not_disconnected()
+                if self._driver is not None:
+                    self._driver.connect()
+                    driver_connected = True
+                    _ensure_not_disconnected()
                 # A fresh driver connect() re-applies the driver's default RAM tuning
                 # (PV/gain), so any per-axis tweak tracked from a previous connection
                 # is gone — the tracking must not survive a reconnect or the re-apply
@@ -678,9 +675,9 @@ class Palmimo:
                 # Inside the try block so a wake failure rolls back every resource
                 # already opened (same as any other connect failure) instead of
                 # leaving the robot half-connected.
-                _ensure_not_overtaken()
                 if self._auto_wake:
                     self.wake()
+                _ensure_not_disconnected()
             except BaseException:
                 # BaseException, not Exception: a Ctrl+C during the ~1.5s wake glide
                 # arrives as KeyboardInterrupt, which is NOT an Exception subclass —
@@ -733,11 +730,9 @@ class Palmimo:
         ``is_connected`` here, or a half-open resource (e.g. USB yanked) would
         never get cleaned up.
 
-        The whole body — the wait for an in-flight :meth:`connect` on another
-        thread (bounded at :data:`_LIFECYCLE_WAIT_S`, after which it parks
-        anyway), the park, every peripheral close, and the driver disconnect
-        that actually cuts torque — runs under one :func:`_deferred_interrupts`
-        block: each peripheral close is wrapped
+        The whole body — park, every peripheral close, and the driver
+        disconnect that actually cuts torque — runs under one
+        :func:`_deferred_interrupts` block: each peripheral close is wrapped
         in its own ``suppress(Exception)`` so a flaky one never blocks the
         rest, but that does NOT catch :class:`KeyboardInterrupt`, so a Ctrl+C
         landing anywhere in the sequence — including mid-``camera.close()``'s
@@ -747,6 +742,10 @@ class Palmimo:
         on an interpreter that refuses handler installation): it covers the
         whole sequence rather than the leg return alone, and it remembers the
         interrupt instead of dropping it — see below.
+
+        A :meth:`connect` in progress on another thread is waited for first
+        (see :meth:`connect`); that wait has no bound, and on the main thread
+        Ctrl+C does not cut it short.
 
         On a connected robot this takes ~2.5s+ (the 14-step neck release ramp
         alone is ~2.5s at :data:`_NECK_RELEASE_STEP_S`; ``park=True`` adds the
@@ -781,46 +780,33 @@ class Palmimo:
                 if interrupt is None:
                     interrupt = exc
 
-        with _deferred_interrupts():
-            # Bounded: a connect() wedged after arming the driver (a peripheral
-            # open that never returns) must not hold the torque-off forever --
-            # see _LIFECYCLE_WAIT_S for why parking alongside it is safe.
-            acquired = self._lifecycle_lock.acquire(timeout=_LIFECYCLE_WAIT_S)
-            if not acquired:
-                self._disconnect_generation += 1
-                logger.warning(
-                    "disconnect: connect() still running after %.0fs; parking without waiting for it",
-                    _LIFECYCLE_WAIT_S,
-                )
-            try:
-                if self.is_connected:
-                    if park:
-                        _step(self.return_to_neutral)
-                    _step(self._park_neck)
-                if self._mic is not None:
-                    _step(self._mic.close)
-                if self._camera is not None:
-                    _step(self._camera.close)
-                if self._speaker is not None:
-                    _step(self._speaker.close)
-                if self._display is not None:
-                    _step(self._display.idle)
-                    _step(self._display.disconnect)
-                if self._driver is not None:
-                    self._driver.disconnect()
-                # Per-axis tuning tracking is connection-scoped (see connect()).
-                self._gesture_tuned = None
-                self._neck_gesture_tuned = False
-                # Nothing is left to watch once the driver is gone -- reflect that in
-                # neck_thermal_state immediately rather than leaving the last reading
-                # (possibly HOT) visible until the next step() polls. poll(None) also
-                # releases neck_lock_active (see thermal.py): there is no driver left
-                # to write a centering command to.
-                self._thermal.poll(None)
-                self._engine.neck_hold_center = False
-            finally:
-                if acquired:
-                    self._lifecycle_lock.release()
+        with _deferred_interrupts(), self._lifecycle_lock:
+            self._disconnect_count += 1
+            if self.is_connected:
+                if park:
+                    _step(self.return_to_neutral)
+                _step(self._park_neck)
+            if self._mic is not None:
+                _step(self._mic.close)
+            if self._camera is not None:
+                _step(self._camera.close)
+            if self._speaker is not None:
+                _step(self._speaker.close)
+            if self._display is not None:
+                _step(self._display.idle)
+                _step(self._display.disconnect)
+            if self._driver is not None:
+                self._driver.disconnect()
+            # Per-axis tuning tracking is connection-scoped (see connect()).
+            self._gesture_tuned = None
+            self._neck_gesture_tuned = False
+            # Nothing is left to watch once the driver is gone -- reflect that in
+            # neck_thermal_state immediately rather than leaving the last reading
+            # (possibly HOT) visible until the next step() polls. poll(None) also
+            # releases neck_lock_active (see thermal.py): there is no driver left
+            # to write a centering command to.
+            self._thermal.poll(None)
+            self._engine.neck_hold_center = False
         if interrupt is not None:
             raise interrupt
 

@@ -117,15 +117,11 @@ onto a stance pose (a short IDLE stream) before the `MotionCancelled`
 propagates, so a cancelled gait doesn't leave one tripod frozen mid-stride,
 bent and loaded, while the caller decides its next move.
 
-**The one motion method safe to call from a thread other than the one
-driving the robot** (the thread inside `run()`/`step()`). Every other motion
-method assumes a single caller thread; `cancel()` is the exception because it
-only increments an internal counter under a small lock and touches no other
+**The one `Palmimo` method safe to call from a thread other than the one
+driving the robot** (the thread inside `run()`/`step()`). Every other method
+assumes a single caller thread; `cancel()` is the exception because it only
+increments an internal counter under a small lock and touches no other
 facade state, so it cannot race with the motion loop's own reads/writes.
-`connect()` and `disconnect()` exclude each other across threads (see
-`disconnect()` below); that does not make `disconnect()` safe to call while
-another thread is inside `run()`/`step()`, since its leg return drives the
-same engine.
 
 Implemented as a monotonically increasing counter, not a `threading.Event`
 that gets `clear()`ed: each paced public method (`run()` / `perform_dance()`
@@ -379,11 +375,23 @@ and `robot.driver.write_positions` also reaches directly), so consumers reach
 them through the `camera` / `mic` properties.
 
 ### `robot.connect() -> Palmimo`
-Open whichever resources are attached and return `self`. The display also plays
-its boot-wake animation (mirroring a real startup); the speaker probes that its
-TTS engine (`PiperEngine` by default) is available; the camera opens its
-`cv2.VideoCapture`; the mic runs a short capture probe. Raises `RuntimeError`
-when nothing is attached.
+Open whichever resources are attached and return `self`, in this order: the
+display (which also plays its boot-wake animation, mirroring a real startup),
+the speaker (probes that its TTS engine, `PiperEngine` by default, is
+available), the camera (opens its `cv2.VideoCapture`), the mic (a short
+capture probe), and last the driver, which turns servo torque on. Raises
+`RuntimeError` when nothing is attached.
+
+`connect()` and `disconnect()` exclude each other across threads: a
+`disconnect()` from another thread waits for an in-flight `connect()` — its
+wake glide or its rollback included — to finish before parking, rather than
+streaming park commands alongside the glide. An asyncio program that cancels
+an `await asyncio.to_thread(robot.connect)` does not stop that thread, so its
+cleanup's `disconnect()` relies on this wait. The wait has no bound: the steps
+that can stall (a camera open has no timeout; a first-run voice download takes
+as long as the network does) all run before the driver arms, so a stalled
+`connect()` keeps `disconnect()` waiting with torque off, and the steps after
+arming (the bus connect, the wake glide) are bounded.
 
 If a driver is attached and connected, `connect()` then runs the `wake()` glide
 automatically (limp -> gain-ramped rise to neutral) unless the facade was built
@@ -434,20 +442,6 @@ SIGKILL stops it. With `park=True` (the default) the robot is therefore
 uninterruptible for the leg return's duration plus the ~2.5s neck ramp, not
 the ~2.5s alone; with `park=False` it is uninterruptible for the ~2.5s neck
 ramp on its own. Presses after `disconnect()` returns behave normally.
-
-`disconnect()` and `connect()` hold one lock for their whole run, so a
-`disconnect()` from another thread waits for an in-flight `connect()` — its
-wake glide or its rollback — to finish before parking, rather than streaming
-park commands alongside the glide. An asyncio program that cancels an
-`await asyncio.to_thread(robot.connect)` does not stop that thread, so its
-cleanup's `disconnect()` relies on this wait. The wait is bounded at 30s: a
-`connect()` wedged after arming the driver (a peripheral open that never
-returns) would otherwise keep torque on indefinitely, so past the bound
-`disconnect()` logs a warning and parks alongside it. The steps that can run
-that long (a camera open, a first-run voice download) issue no servo traffic,
-so the park does not race a servo write; the `connect()` it overtook then
-raises `RuntimeError` and closes what it opened, instead of returning a robot
-with no driver.
 
 A `BaseException` raised by a teardown step — a `KeyboardInterrupt` from a
 mashed Ctrl+C landing in a peripheral close — does not end the teardown early.
