@@ -505,6 +505,11 @@ class Palmimo:
         # nested disconnect() then cuts torque and the interrupted connect()
         # fails with the driver's RuntimeError -- the expected outcome.
         self._lifecycle_lock = threading.RLock()
+        # Bumped by a disconnect() that gave up waiting for the lock. A connect()
+        # compares it with the value it started under, so one it overtook stops
+        # at its next step -- even when the driver only finishes connecting after
+        # that disconnect() has returned.
+        self._disconnect_generation = 0
         # Set by _arm_cancel_scope() / cleared by _disarm_cancel_scope() (both
         # under _cancel_lock) -- see their docstrings. Lets a caller that is
         # about to dispatch a paced call onto another thread (e.g.
@@ -632,20 +637,34 @@ class Palmimo:
             # the plain connect() path would leave earlier resources open too. Rollback
             # is best-effort + suppressed so it never masks the original error.
             driver_connected = False
+            generation = self._disconnect_generation
+
+            def _ensure_not_overtaken() -> None:
+                # See _disconnect_generation / _LIFECYCLE_WAIT_S. Raising routes
+                # through the rollback below, which disconnects a driver that
+                # armed after the overtaking disconnect() returned.
+                if self._disconnect_generation != generation:
+                    raise RuntimeError("connect() was overtaken by a concurrent disconnect()")
+
             try:
                 if self._driver is not None:
                     self._driver.connect()
                     driver_connected = True
+                    _ensure_not_overtaken()
                 if self._display is not None:
                     self._display.connect()
                     self._display.wake()
+                    _ensure_not_overtaken()
                 if self._speaker is not None:
                     self._speaker.open()
+                    _ensure_not_overtaken()
                 if self._camera is not None:
                     self._camera.open()
                     self._camera.start_drain()
+                    _ensure_not_overtaken()
                 if self._mic is not None:
                     self._mic.open()
+                    _ensure_not_overtaken()
                 # A fresh driver connect() re-applies the driver's default RAM tuning
                 # (PV/gain), so any per-axis tweak tracked from a previous connection
                 # is gone — the tracking must not survive a reconnect or the re-apply
@@ -659,12 +678,7 @@ class Palmimo:
                 # Inside the try block so a wake failure rolls back every resource
                 # already opened (same as any other connect failure) instead of
                 # leaving the robot half-connected.
-                # A disconnect() on another thread that stopped waiting (see
-                # _LIFECYCLE_WAIT_S) may have torn the driver down under us;
-                # failing here rolls back the peripherals opened since, instead of
-                # returning a "connected" robot with no driver.
-                if driver_connected and self._driver is not None and not self._driver.is_connected:
-                    raise RuntimeError("connect() was torn down by a concurrent disconnect()")
+                _ensure_not_overtaken()
                 if self._auto_wake:
                     self.wake()
             except BaseException:
@@ -773,6 +787,7 @@ class Palmimo:
             # see _LIFECYCLE_WAIT_S for why parking alongside it is safe.
             acquired = self._lifecycle_lock.acquire(timeout=_LIFECYCLE_WAIT_S)
             if not acquired:
+                self._disconnect_generation += 1
                 logger.warning(
                     "disconnect: connect() still running after %.0fs; parking without waiting for it",
                     _LIFECYCLE_WAIT_S,

@@ -1513,6 +1513,41 @@ def test_disconnect_parks_anyway_when_a_connect_on_another_thread_never_returns(
     assert camera.is_open is False
 
 
+def test_a_driver_that_arms_after_a_timed_out_disconnect_is_disarmed_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(robot_module, "_LIFECYCLE_WAIT_S", 0.1)
+    driver_connecting = threading.Event()
+    release_connect = threading.Event()
+
+    class SlowConnectDriver(RecordingDriver):
+        def connect(self) -> None:
+            driver_connecting.set()
+            release_connect.wait(timeout=5)
+            super().connect()
+
+    driver = SlowConnectDriver()
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    outcome: list[BaseException | None] = []
+
+    def connect() -> None:
+        try:
+            robot.connect()
+            outcome.append(None)
+        except BaseException as exc:
+            outcome.append(exc)
+
+    connecting = threading.Thread(target=connect)
+    connecting.start()
+    assert driver_connecting.wait(timeout=5)
+    robot.disconnect()
+    release_connect.set()
+    connecting.join(timeout=5)
+
+    assert isinstance(outcome[0], RuntimeError)
+    assert driver.is_connected is False
+
+
 def test_connect_rolls_back_driver_when_display_connect_times_out() -> None:
     """On a dev machine with no robot attached, the driver connects fine but the
     face display's serial probe never responds. connect() must give up (rather than hang) and
