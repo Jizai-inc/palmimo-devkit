@@ -36,8 +36,9 @@ Two rules the callers depend on, both learned the hard way:
 
 Nothing here can promise the servos end up released. ``SIGKILL`` and power
 loss run no code at all, and a client or service manager that stops waiting
-mid-park kills the process with torque still on -- :func:`park` is bounded
-(seconds), not instant. What this module removes is the case where the code
+mid-park kills the process with torque still on -- :func:`park` takes
+seconds, not an instant, and first waits for a :meth:`~palmimo_sdk.robot.Palmimo.connect`
+still running on another thread, with no bound (see that method). What this module removes is the case where the code
 that *would* have released torque never ran.
 """
 
@@ -148,9 +149,10 @@ def signals_ignored(*signums: signal.Signals) -> Iterator[None]:
 
     ``SIG_IGN`` rather than :func:`signal.pthread_sigmask`: a blocked signal
     stays pending and fires the moment it is unblocked, which would just move
-    the kill to immediately after the park; an ignored one is discarded. The
-    park is bounded, and a caller that genuinely must stop it still has
-    SIGKILL -- which this cannot, and should not, intercept.
+    the kill to immediately after the park; an ignored one is discarded. A
+    caller that genuinely must stop the park -- including its wait for a
+    connect() on another thread -- still has SIGKILL, which this cannot, and
+    should not, intercept.
 
     Off the main thread :func:`signal.signal` is not allowed, so this yields
     without installing anything. That is not a silent downgrade: Python only

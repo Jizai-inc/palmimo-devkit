@@ -90,8 +90,11 @@ after it.
 That window sets a flag; it does not cancel. The connect runs on a worker
 thread, and a thread cannot be cancelled: abandoning the `await` would leave
 that thread driving the servo bus while the park started driving it too. So the
-connect is allowed to finish — it is bounded — and the stop is honoured at the
-next checkpoint, which skips opening a session nobody asked for.
+connect is allowed to finish, and the stop is honoured at the next checkpoint,
+which skips opening a session nobody asked for. The part of the connect that
+has torque on (the bus connect and the wake glide) is bounded; the steps before
+it, which can take as long as a camera open or a voice download does, run with
+torque off.
 
 Reading that flag decides which shape the window uses. `loop_stop_on_signals`
 delivers through an ordinary loop callback, queued behind whatever the ready

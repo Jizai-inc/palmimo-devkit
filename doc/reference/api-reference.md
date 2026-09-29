@@ -391,7 +391,14 @@ cleanup's `disconnect()` relies on this wait. The wait has no bound: the steps
 that can stall (a camera open has no timeout; a first-run voice download takes
 as long as the network does) all run before the driver arms, so a stalled
 `connect()` keeps `disconnect()` waiting with torque off, and the steps after
-arming (the bus connect, the wake glide) are bounded.
+arming (the bus connect, the wake glide) are bounded. That holds only when the
+driver was not already connected before `connect()`: a caller that connects
+the driver first (to probe the port, say) has torque on for the whole of
+`connect()`. On the main thread, Ctrl+C does not cut the wait short.
+
+Because the driver is connected last, a missing servo bus is reported only
+after the display, speaker, camera and mic have opened; they are then closed
+before the error is raised.
 
 If a driver is attached and connected, `connect()` then runs the `wake()` glide
 automatically (limp -> gain-ramped rise to neutral) unless the facade was built
