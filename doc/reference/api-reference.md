@@ -394,7 +394,13 @@ as long as the network does) all run before the driver arms, so a stalled
 arming (the bus connect, the wake glide) are bounded. That holds only when the
 driver was not already connected before `connect()`: a caller that connects
 the driver first (to probe the port, say) has torque on for the whole of
-`connect()`. On the main thread, Ctrl+C does not cut the wait short.
+`connect()`, and so does calling `connect()` again on a robot that is already
+connected. On the main thread, Ctrl+C (SIGINT) does not cut the wait short;
+other stop signals are held off only by `palmimo_sdk.shutdown.park()`, which is
+the path to use for a signal-driven stop.
+
+`connect()` also raises `RuntimeError` if a `disconnect()` was running when it
+was called or ran during it; everything it opened is closed first.
 
 Because the driver is connected last, a missing servo bus is reported only
 after the display, speaker, camera and mic have opened; they are then closed

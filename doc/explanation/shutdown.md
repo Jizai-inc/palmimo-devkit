@@ -80,9 +80,10 @@ the park has begun, Ctrl-C is one more way to skip the torque-off.
 
 ## The window before the loop exists
 
-Torque goes on at `Palmimo.connect()`, which is *before* any of the loops above
-is running. That connect is seconds — a bus handshake on 21 servos plus a wake
-glide — and every entry point used to spend it with no handler installed, so a
+Torque goes on at the end of `Palmimo.connect()`, which is *before* any of the
+loops above is running. That armed part is seconds — a bus handshake on 21
+servos plus a wake glide — and every entry point used to spend it with no
+handler installed, so a
 signal there took the default disposition and killed the process with the servos
 already energised. A stop window therefore has to open *before* the connect, not
 after it.
@@ -94,7 +95,9 @@ connect is allowed to finish, and the stop is honoured at the next checkpoint,
 which skips opening a session nobody asked for. The part of the connect that
 has torque on (the bus connect and the wake glide) is bounded; the steps before
 it, which can take as long as a camera open or a voice download does, run with
-torque off.
+torque off — unless the driver was connected before the facade was built, as
+the MCP server and the wake-word agent do to probe the port, in which case
+torque is on throughout.
 
 Reading that flag decides which shape the window uses. `loop_stop_on_signals`
 delivers through an ordinary loop callback, queued behind whatever the ready

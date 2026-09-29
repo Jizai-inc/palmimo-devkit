@@ -1492,7 +1492,7 @@ def test_connect_keeps_torque_off_while_a_peripheral_stalls() -> None:
     assert driver.events == ["connect"]
 
 
-def test_connect_stops_when_disconnect_runs_on_its_own_thread_mid_connect() -> None:
+def test_connect_stops_when_disconnect_runs_on_the_connecting_thread_mid_connect() -> None:
     driver = RecordingDriver()
     robot: Palmimo
 
@@ -1549,6 +1549,48 @@ def test_a_connect_that_starts_while_disconnect_runs_does_not_arm_the_driver() -
 
     assert isinstance(outcome[0], RuntimeError)
     assert driver.events == ["connect", "disconnect"]
+
+
+def test_a_connect_waiting_for_the_lock_while_a_disconnect_comes_and_goes_does_not_arm_the_driver() -> None:
+    driver = RecordingDriver()
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    connect_waiting = threading.Event()
+    let_connect_in = threading.Event()
+    real_lock = robot._lifecycle_lock
+
+    class GatedLock:
+        """Holds the connecting thread at the lock until the test lets it in."""
+
+        def __enter__(self) -> bool:
+            if threading.current_thread() is connecting:
+                connect_waiting.set()
+                let_connect_in.wait(timeout=5)
+            return real_lock.__enter__()
+
+        def __exit__(self, *exc: Any) -> None:
+            real_lock.__exit__(*exc)
+
+    robot._lifecycle_lock = GatedLock()  # type: ignore[assignment]
+    outcome: list[BaseException | None] = []
+
+    def connect() -> None:
+        try:
+            robot.connect()
+            outcome.append(None)
+        except BaseException as exc:
+            outcome.append(exc)
+
+    connecting = threading.Thread(target=connect)
+    connecting.start()
+    try:
+        assert connect_waiting.wait(timeout=5)
+        robot.disconnect()
+    finally:
+        let_connect_in.set()
+        connecting.join(timeout=5)
+
+    assert isinstance(outcome[0], RuntimeError)
+    assert driver.events == ["disconnect"]
 
 
 def test_connect_never_arms_the_driver_when_display_connect_times_out() -> None:

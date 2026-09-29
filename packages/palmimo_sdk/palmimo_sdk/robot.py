@@ -499,12 +499,14 @@ class Palmimo:
         # them on the main thread, and if that thread is inside connect() a
         # handler that calls disconnect() would deadlock a plain Lock.
         self._lifecycle_lock = threading.RLock()
-        # A disconnect() whose call overlaps a connect() call wins: connect()
-        # reads both of these before it waits for the lock, and raises if a
-        # disconnect() was running then or ran since -- whether it ran on
-        # another thread while connect() waited, or reentrantly (above) on
-        # the connecting thread itself. A connect() that starts after a
-        # disconnect() has returned is a plain reconnect and proceeds.
+        # connect() reads both of these before it waits for the lock, and
+        # raises if a disconnect() was running when it read them or has run
+        # since -- whether on another thread while connect() waited, or
+        # reentrantly (above) on the connecting thread itself. Anything else
+        # is a plain reconnect and proceeds; that includes a connect() that
+        # reads in the moment between a disconnect() finishing its teardown
+        # and releasing the lock, which is harmless because the teardown has
+        # already run.
         self._disconnect_count = 0
         self._disconnecting = False
         # Set by _arm_cancel_scope() / cleared by _disarm_cancel_scope() (both
@@ -625,7 +627,8 @@ class Palmimo:
 
         Raises:
             RuntimeError: If no driver, display, speaker, camera, or mic was attached at
-                construction.
+                construction, or if a :meth:`disconnect` was running when this call
+                started or ran during it (everything opened so far is rolled back).
         """
         if not self.has_connectable_resource:
             raise RuntimeError(
@@ -757,7 +760,11 @@ class Palmimo:
 
         A :meth:`connect` in progress on another thread is waited for first
         (see :meth:`connect`); that wait has no bound, and on the main thread
-        Ctrl+C does not cut it short.
+        Ctrl+C (SIGINT) does not cut it short. Other signals are not held off
+        here; a caller that turns SIGTERM into an exception should hold it off
+        around the call, as :func:`~palmimo_sdk.shutdown.park` does, or the
+        wait can end with nothing parked while the other thread's
+        :meth:`connect` goes on to arm the robot.
 
         On a connected robot this takes ~2.5s+ (the 14-step neck release ramp
         alone is ~2.5s at :data:`_NECK_RELEASE_STEP_S`; ``park=True`` adds the
