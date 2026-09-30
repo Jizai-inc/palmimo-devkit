@@ -8,7 +8,6 @@ not fork while holding reservations.
 """
 
 import errno
-import fcntl
 import json
 import math
 import os
@@ -103,8 +102,8 @@ class Reservation:
                 os.close(held.fd)
 
 
-# pwd and grp are imported where used: the docs site runs the SDK under
-# Pyodide, which ships neither module.
+# fcntl, pwd and grp are imported where used: the docs site runs the SDK
+# under Pyodide, which lists all three as removed modules.
 def _user_name(uid: int) -> str:
     try:
         import pwd
@@ -248,6 +247,8 @@ def acquire_resource(resource: str, *, timeout: float | None = None) -> Reservat
             acquired = False
             try:
                 try:
+                    import fcntl
+
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except OSError as error:
                     if error.errno not in {errno.EAGAIN, errno.EACCES}:

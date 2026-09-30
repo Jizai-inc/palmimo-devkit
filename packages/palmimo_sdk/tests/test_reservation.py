@@ -421,3 +421,9 @@ def test_reservation_setup_error_identifies_remediation(
         pass
     assert caught.value.remediation == remediation
     assert caught.value.group == group
+
+
+def test_sdk_imports_without_posix_only_modules() -> None:
+    blocked = "import sys\nfor name in ('fcntl', 'pwd', 'grp'):\n    sys.modules[name] = None\nimport palmimo_sdk\n"
+    result = subprocess.run([sys.executable, "-c", blocked], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
