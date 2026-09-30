@@ -384,6 +384,7 @@ its reservation between recordings, including when it delegates to `MicStream`.
 An in-flight recording keeps an additional reference until its recorder exits,
 even if `Microphone.close()` is called meanwhile.
 Compute-only motion reserves nothing.
+On non-POSIX platforms without `fcntl`, reservations only count references within the process; they do not provide interprocess exclusion.
 
 | API | Contract |
 |---|---|
@@ -392,7 +393,7 @@ Compute-only motion reserves nothing.
 | `ReservationSetupError` | Exported from `palmimo_sdk`; unusable reservation storage or permissions. Attributes `owner` and `group` identify ownership when available; `remediation` is `join_group` for the `palmimo-locks` group or `update_platform` for other groups. |
 
 Both exceptions derive from `palmimo_sdk.reservation.ReservationError`, which
-inherits directly from `Exception`. They propagate from camera `read()` and
+inherits directly from `Exception`. They propagate from camera `read()` / `latest()` and
 microphone `record()`; ordinary device-open `RuntimeError` still produces
 `(False, None)` / `None` respectively.
 

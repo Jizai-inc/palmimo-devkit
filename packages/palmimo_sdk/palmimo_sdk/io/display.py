@@ -243,7 +243,10 @@ class FaceDisplay:
                 raise
 
     def disconnect(self) -> None:
-        """Stop the reader thread (if any) and close the port."""
+        """Stop the reader thread (if any) and close the port.
+
+        If closing the port fails, retry disconnect() to release the connection.
+        """
         self._stop.set()
         if self._reader is not None:
             self._reader.join(timeout=self._timeout + 0.5)

@@ -74,7 +74,7 @@ class ReservationSetupError(ReservationError):
 
 @dataclass
 class _HeldResource:
-    fd: int
+    fd: int | None
     references: int = 1
 
 
@@ -99,7 +99,8 @@ class Reservation:
             if held.references == 0:
                 del _HELD[self._path]
                 # Never unlink: waiters must continue to lock the same inode.
-                os.close(held.fd)
+                if held.fd is not None:
+                    os.close(held.fd)
 
 
 # fcntl, pwd and grp are imported where used: the docs site runs the SDK
@@ -143,7 +144,7 @@ def _setup_error(path: Path, error: OSError | None = None) -> ReservationSetupEr
     remediation: Literal["join_group", "update_platform"]
     if group == "palmimo-locks":
         remediation = "join_group"
-        guidance = "Add this user to the palmimo-locks group."
+        guidance = "Add this user to the palmimo-locks group, then log out and log in again."
     else:
         remediation = "update_platform"
         guidance = "Update the platform in Portal and reboot the robot."
@@ -164,7 +165,7 @@ def _lock_directory() -> Path:
     elif RUNTIME_DIR.exists():
         raise _setup_error(SYSTEM_LOCK_DIR)
     else:
-        directory = Path(tempfile.gettempdir()) / f"palmimo-locks-{os.getuid()}"
+        directory = Path(tempfile.gettempdir()) / f"palmimo-locks-{os.getuid() if hasattr(os, 'getuid') else 'local'}"
     try:
         directory.mkdir(parents=True, exist_ok=True)
         if not os.access(directory, os.W_OK | os.X_OK):
@@ -236,6 +237,16 @@ def acquire_resource(resource: str, *, timeout: float | None = None) -> Reservat
         ValueError: The resource or timeout is invalid.
     """
     _validate(resource, timeout)
+    try:
+        import fcntl
+    except ImportError:
+        path = Path(resource)
+        with _MUTEX:
+            if path in _HELD:
+                _HELD[path].references += 1
+            else:
+                _HELD[path] = _HeldResource(None)
+        return Reservation(path)
     deadline = time.monotonic() + (timeout or 0)
     path = _lock_directory() / f"{resource}.lock"
     while True:
@@ -247,8 +258,6 @@ def acquire_resource(resource: str, *, timeout: float | None = None) -> Reservat
             acquired = False
             try:
                 try:
-                    import fcntl
-
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except OSError as error:
                     if error.errno not in {errno.EAGAIN, errno.EACCES}:

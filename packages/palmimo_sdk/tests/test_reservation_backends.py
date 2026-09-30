@@ -1,10 +1,12 @@
 """Backend lifetimes reserve logical resources, even during deferred teardown."""
 
+import os
+import sys
 import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -102,6 +104,37 @@ def close_backend(backend: Any) -> None:
         backend.disconnect()
     else:
         backend.close()
+
+
+@pytest.mark.parametrize("backend_name", ["servo_bus", "camera", "display", "speaker", "microphone", "mic_stream"])
+def test_backend_opens_without_posix_reservations(
+    monkeypatch: pytest.MonkeyPatch, backend_factory: Callable[[str], Any], backend_name: str
+) -> None:
+    monkeypatch.setitem(sys.modules, "fcntl", None)
+    monkeypatch.delattr(os, "getuid", raising=False)
+    monkeypatch.delattr(os, "geteuid", raising=False)
+    monkeypatch.delenv("PALMIMO_LOCK_DIR", raising=False)
+    backend = backend_factory(backend_name)
+    try:
+        open_backend(backend)
+    finally:
+        close_backend(backend)
+
+
+def test_camera_latest_retries_after_external_holder_releases(
+    directory: Path, backend_factory: Callable[[str], Any]
+) -> None:
+    import cv2
+
+    camera = backend_factory("camera")
+    cap = cast("Any", cv2.VideoCapture(0))
+    cap.read.return_value = (True, np.zeros((4, 4, 3), dtype=np.uint8))
+    try:
+        with holder("camera", directory), pytest.raises(ResourceBusyError):
+            camera.latest(timeout=1)
+        assert camera.latest(timeout=2) is not None
+    finally:
+        camera.close()
 
 
 @pytest.mark.parametrize("backend_name", ["servo_bus", "camera", "display", "speaker", "microphone", "mic_stream"])

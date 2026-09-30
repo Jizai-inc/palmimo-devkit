@@ -56,6 +56,8 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import Future, TimeoutError
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -102,8 +104,8 @@ class HeadCamera:
     """OpenCV-backed head camera that owns one ``cv2.VideoCapture``.
 
     Lifecycle: :meth:`open` (idempotent) / :meth:`read` (auto-opens) /
-    :meth:`close`. Usable as a context manager. Only one process may hold the
-    device at a time, so a single :class:`HeadCamera` instance is the intended
+    :meth:`close`. Usable as a context manager. On POSIX systems, only one
+    process may hold the device at a time, so a single :class:`HeadCamera` instance is the intended
     owner per session.
 
     An optional background drain (:meth:`start_drain` / :meth:`stop_drain` /
@@ -136,10 +138,10 @@ class HeadCamera:
         # event is per-generation: each drain thread closes over its own, so a
         # thread whose join timed out can never be revived by a later start
         # clearing a shared flag.
-        self._drain_lock = threading.Lock()
+        self._drain_lock = threading.RLock()
         self._drain_thread: threading.Thread | None = None
         self._drain_stop = threading.Event()
-        self._first_frame = threading.Event()
+        self._first_frame: Future[None] = Future()
         self._closed = False  # close() is terminal for the drain until open()
         self._log = logging.getLogger(__name__)
 
@@ -254,7 +256,7 @@ class HeadCamera:
                 "handle and retaining its reservation until the read returns",
                 _CLOSE_LOCK_TIMEOUT_S,
             )
-        self._first_frame.clear()
+        self._first_frame = Future()
         with self._latest_lock:
             self._latest = None
 
@@ -289,7 +291,7 @@ class HeadCamera:
                 return
             stop = threading.Event()
             self._drain_stop = stop
-            self._first_frame.clear()
+            self._first_frame = Future()
             # A frame captured before a stop/restart is not "the latest" anymore:
             # returning it would present an old scene as current when the camera
             # fails to deliver after the restart. Freshness restarts with the drain.
@@ -300,7 +302,7 @@ class HeadCamera:
             # never-started thread — that join raises and would abort close()
             # before it releases the device.
             thread = threading.Thread(
-                target=self._drain_loop, args=(stop,), name="palmimo-headcamera-drain", daemon=True
+                target=self._drain_loop, args=(stop, self._first_frame), name="palmimo-headcamera-drain", daemon=True
             )
             thread.start()
             self._drain_thread = thread
@@ -325,15 +327,18 @@ class HeadCamera:
 
         Waits up to *timeout* seconds for a first frame if the drain just
         started; returns ``None`` if none arrives in time (e.g. the device
-        can't open).
+        can't open). Reservation errors propagate; a later call retries the drain.
         """
-        if self._drain_thread is None:
-            self.start_drain()
-        self._first_frame.wait(timeout)
+        with self._drain_lock:
+            if self._drain_thread is None:
+                self.start_drain()
+            first_frame = self._first_frame
+        with suppress(TimeoutError):
+            first_frame.result(timeout)
         with self._latest_lock:
             return self._latest
 
-    def _drain_loop(self, stop: threading.Event) -> None:
+    def _drain_loop(self, stop: threading.Event, first_frame: Future[None]) -> None:
         """Background thread body: read() continuously, update latest, fan out.
 
         Checks *stop* — this generation's own event, closed over at start — so
@@ -342,7 +347,15 @@ class HeadCamera:
         later restart cannot revive this thread.
         """
         while not stop.is_set():
-            ok, frame = self.read()
+            try:
+                ok, frame = self.read()
+            except ReservationError as error:
+                with self._drain_lock:
+                    if self._drain_stop is stop:
+                        self._drain_thread = None
+                    if not first_frame.done():
+                        first_frame.set_exception(error)
+                return
             if not ok or frame is None:
                 # Without a wait here, a persistent read failure spins at
                 # 100% CPU. A short sleep gives the camera time to recover.
@@ -350,7 +363,8 @@ class HeadCamera:
                 continue
             with self._latest_lock:
                 self._latest = frame
-            self._first_frame.set()
+            if not first_frame.done():
+                first_frame.set_result(None)
             ts = time.monotonic()
             # Snapshot under the lock, dispatch outside it — a callback that
             # registers another consumer must not deadlock.
