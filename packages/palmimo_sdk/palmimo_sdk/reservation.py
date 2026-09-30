@@ -9,11 +9,9 @@ not fork while holding reservations.
 
 import errno
 import fcntl
-import grp
 import json
 import math
 import os
-import pwd
 import sys
 import tempfile
 import threading
@@ -105,6 +103,26 @@ class Reservation:
                 os.close(held.fd)
 
 
+# pwd and grp are imported where used: the docs site runs the SDK under
+# Pyodide, which ships neither module.
+def _user_name(uid: int) -> str:
+    try:
+        import pwd
+
+        return pwd.getpwuid(uid).pw_name
+    except (ImportError, KeyError):
+        return str(uid)
+
+
+def _group_name(gid: int) -> str:
+    try:
+        import grp
+
+        return grp.getgrgid(gid).gr_name
+    except (ImportError, KeyError):
+        return str(gid)
+
+
 def _setup_error(path: Path, error: OSError | None = None) -> ReservationSetupError:
     owner: str | None = None
     group: str | None = None
@@ -119,14 +137,8 @@ def _setup_error(path: Path, error: OSError | None = None) -> ReservationSetupEr
                 break
             current = current.parent
     if info is not None:
-        try:
-            owner = pwd.getpwuid(info.st_uid).pw_name
-        except KeyError:
-            owner = str(info.st_uid)
-        try:
-            group = grp.getgrgid(info.st_gid).gr_name
-        except KeyError:
-            group = str(info.st_gid)
+        owner = _user_name(info.st_uid)
+        group = _group_name(info.st_gid)
     ownership = f" Owner: {owner}; group: {group}." if owner is not None else " Ownership unavailable."
     detail = f" {error}" if error is not None else ""
     remediation: Literal["join_group", "update_platform"]
@@ -244,7 +256,7 @@ def acquire_resource(resource: str, *, timeout: float | None = None) -> Reservat
                 else:
                     metadata = {
                         "pid": os.getpid(),
-                        "user": pwd.getpwuid(os.geteuid()).pw_name,
+                        "user": _user_name(os.geteuid()),
                         "app": os.environ.get("PALMIMO_APP_ID", Path(sys.argv[0]).name),
                         "acquired_at": datetime.now(UTC).isoformat(),
                     }
