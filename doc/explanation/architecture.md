@@ -126,6 +126,32 @@ VAD + ASR stack and doesn't use the SDK's mic simply keeps `mic=None` — the fa
 "can own it, but doesn't force it." This is exactly the same treatment as every
 other peripheral; mic is not a special case.
 
+### Resource reservation boundary
+
+The backend that opens a device also owns its logical resource reservation:
+`DynamixelBus` owns `servo_bus`, `HeadCamera` owns `camera`, `Microphone` and
+`MicStream` own `microphone`, `Speaker` owns `speaker`, and `FaceDisplay` owns
+`display`. The facade delegates to these owners and uses its existing rollback
+to close earlier resources when a later open fails. Apps, diagnostics, and MCP
+consumers therefore share the same arbitration without taking a second set of
+locks at the facade layer.
+
+`palmimo_sdk.reservation` uses non-blocking advisory `flock` locks. OS process
+exit releases them, including after SIGKILL. Process-local reference counts
+allow several backend instances to express intent for the same resource;
+other processes remain excluded until the last reference is released. This
+coordination does not replace the mic registry's in-process stream delegation
+or make multiple hardware handles safe to operate concurrently. Code opening
+devices directly outside the SDK does not participate, and a forked child can
+extend an inherited lock's lifetime.
+
+A reservation lasts across gaps in playback or recording. Teardown releases it
+only after the device handle closes, so a bounded camera or mic close that
+abandons a blocked read preserves exclusivity until deferred cleanup succeeds.
+The lock file is retained rather than unlinked, keeping all waiters on the same
+inode. See [resource reservations](../reference/api-reference.md#resource-reservations)
+for API, storage, and error contracts.
+
 ### Package Structure
 
 A uv-managed workspace holding the SDK core; `palmimo_sdk` is the only member.

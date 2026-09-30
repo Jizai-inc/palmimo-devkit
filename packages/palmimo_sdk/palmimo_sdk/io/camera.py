@@ -42,8 +42,8 @@ drain loop checks its stop flag (set before the join, so before any lock
 contention) before ever grabbing again. The wait is bounded
 (``_CLOSE_LOCK_TIMEOUT_S``): a read wedged at the USB level past the budget
 makes :meth:`close` leak the handle (logged) rather than block forever — the
-release is either serialized after the read or skipped entirely, never
-concurrent with it, and teardown stays bounded either way.
+release is serialized after the read, including deferred cleanup when a
+close times out, never concurrent with it. Teardown stays bounded either way.
 
 ``cv2`` (OpenCV) is an optional dependency (``palmimo-sdk[vision]``), imported
 lazily so importing this module stays hardware-free for compute-only use,
@@ -58,6 +58,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from ..reservation import Reservation, ReservationError, acquire_resource
 
 
 if TYPE_CHECKING:
@@ -113,6 +115,8 @@ class HeadCamera:
     def __init__(self, config: HeadCameraConfig | None = None) -> None:
         self.config = config or HeadCameraConfig()
         self._cap: cv2.VideoCapture | None = None
+        self._reservation: Reservation | None = None
+        self._close_pending = False
         # Serializes every cv2.VideoCapture call (open/read/release) so the
         # drain thread's read() and a caller's close() can never touch the
         # capture object at the same time.
@@ -153,26 +157,39 @@ class HeadCamera:
         """Actual cv2 open. Caller must hold ``_cap_lock``."""
         if self.is_open:
             return
-        import cv2
+        if self._cap is not None:
+            self._release_capture_locked()
+        self._reservation = acquire_resource("camera")
+        try:
+            import cv2
 
-        cap = cv2.VideoCapture(self.config.device)
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open camera {self.config.device}")
-        # Full sensor in MJPG; a smaller request would be a corner crop instead
-        # of a scaled full frame (see module docstring).
-        # VideoWriter.fourcc, unlike the VideoWriter_fourcc alias, is present in
-        # the cv2 stubs, so this type-checks whether or not opencv is installed.
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.capture_width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.capture_height)
-        self._cap = cap
+            self._cap = cv2.VideoCapture(self.config.device)
+            if not self._cap.isOpened():
+                raise RuntimeError(f"Cannot open camera {self.config.device}")
+            self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
+            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.capture_width)
+            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.capture_height)
+        except BaseException:
+            self._release_capture_locked()
+            raise
+
+    def _release_capture_locked(self) -> None:
+        """Close capture and its reservation under the device lock."""
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+        if self._reservation is not None:
+            self._reservation.release()
+            self._reservation = None
+        self._close_pending = False
 
     def read(self) -> tuple[bool, Any]:
         """Grab one frame, downscaled to the processing size and rotated upright.
 
         Returns ``(ok, frame)`` so callers can skip a failed grab without
         raising; ``frame`` is ``None`` when ``ok`` is False. A failure to open
-        the device is reported the same way rather than propagating.
+        the device is reported the same way rather than propagating, except for
+        reservation errors, which always propagate.
 
         The open + grab happen under ``_cap_lock``; the downscale/rotate run
         afterwards so the lock is only held for the actual device I/O (see
@@ -183,10 +200,16 @@ class HeadCamera:
         with self._cap_lock:
             try:
                 self._open_locked()
+            except ReservationError:
+                raise
             except RuntimeError:
                 return False, None
             assert self._cap is not None  # _open_locked sets it (or raised, handled above)
-            ok, frame = self._cap.read()
+            try:
+                ok, frame = self._cap.read()
+            finally:
+                if self._close_pending:
+                    self._release_capture_locked()
         if not ok or frame is None:
             return False, None
         # Skip resize if the backend ignored our request and already returned small.
@@ -207,7 +230,7 @@ class HeadCamera:
         safe against an in-flight background read; see the module docstring.
         The lock wait is bounded (``_CLOSE_LOCK_TIMEOUT_S``): if a read is
         wedged at the USB level and never returns, the handle is deliberately
-        LEAKED (with an error log) instead of blocking forever — releasing
+        retained (with an error log) until the read returns instead of blocking forever — releasing
         under an in-flight read is undefined behaviour in OpenCV, and an
         unbounded wait here would stall ``Palmimo.disconnect()`` before it ever
         reaches the servo driver.
@@ -217,19 +240,18 @@ class HeadCamera:
         instead of a stale pre-close frame) — only an explicit :meth:`open`
         re-arms. :meth:`read`'s one-shot auto-open is unchanged.
         """
+        self._close_pending = True
         self._closed = True  # set first so a racing latest() cannot restart the drain
         self.stop_drain()
         if self._cap_lock.acquire(timeout=_CLOSE_LOCK_TIMEOUT_S):
             try:
-                if self._cap is not None:
-                    self._cap.release()
-                    self._cap = None
+                self._release_capture_locked()
             finally:
                 self._cap_lock.release()
         else:
             self._log.error(
                 "HeadCamera.close: a device read is wedged past %.1fs; leaking the cv2 "
-                "handle so teardown stays bounded",
+                "handle and retaining its reservation until the read returns",
                 _CLOSE_LOCK_TIMEOUT_S,
             )
         self._first_frame.clear()

@@ -86,6 +86,7 @@ from .io import (
     resolve_alsa_device,
 )
 from .name_match import PALMIMO_NAMES, NameMatch, NameMatcher, name_skeleton
+from .reservation import ReservationSetupError, ResourceBusyError
 from .robot import (
     MotionCancelled,
     NeckPitchDegrees,
@@ -131,6 +132,8 @@ __all__ = [
     "Palmimo",
     "PiperEngine",
     "PortDetectionError",
+    "ReservationSetupError",
+    "ResourceBusyError",
     "RoutineStep",
     "ServoDriver",
     "ServoPositions",

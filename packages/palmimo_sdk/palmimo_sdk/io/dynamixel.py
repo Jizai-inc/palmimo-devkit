@@ -183,32 +183,38 @@ def _open_dynamixel_bus(
     bus = DynamixelBus(port=port, motors=palmimo_motor_ids(), model=motor_model, calibration=calibration)
     bus.set_baudrate(baudrate)
     bus.connect()
-    with bus.torque_disabled():
-        bus.configure_motors()
-        for motor in bus.motors:
-            bus.write("Operating_Mode", motor, OPERATING_MODE_POSITION)
-        # Hold the current pose so re-enabling torque doesn't snap to a stale
-        # Goal_Position. Read with num_retry=3 — this bus is flaky and a single
-        # read can drop, which would skip the hold and let it snap. Mirrors the
-        # current-survey scripts' gentle bring-up (motion_current_survey.py).
-        try:
-            pres = bus.sync_read("Present_Position", normalize=False, num_retry=3)
-            if pres is None:
-                # A fully dropped batch read returns None; skip seeding rather than
-                # AttributeError into the except below (keeps the warning accurate).
-                logger.warning("could not seed hold pose before torque-on: read returned None")
-            else:
-                for motor in bus.motors:
-                    tick = pres.get(motor)
-                    if tick is not None:
-                        # A position read back from hardware, not a caller-chosen
-                        # goal -- write it verbatim so the goal equals the joint's
-                        # real position and torque-on holds rather than moves it.
-                        bus.write("Goal_Position", motor, tick, normalize=False)
-        except Exception as exc:
-            logger.warning("could not seed hold pose before torque-on: %s", exc)
-    bus.sync_write("Profile_Velocity", profile_velocity, normalize=False)
-    bus.enable_torque()
+    try:
+        with bus.torque_disabled():
+            bus.configure_motors()
+            for motor in bus.motors:
+                bus.write("Operating_Mode", motor, OPERATING_MODE_POSITION)
+            # Hold the current pose so re-enabling torque doesn't snap to a stale
+            # Goal_Position. Read with num_retry=3 — this bus is flaky and a single
+            # read can drop, which would skip the hold and let it snap. Mirrors the
+            # current-survey scripts' gentle bring-up (motion_current_survey.py).
+            try:
+                pres = bus.sync_read("Present_Position", normalize=False, num_retry=3)
+                if pres is None:
+                    # A fully dropped batch read returns None; skip seeding rather than
+                    # AttributeError into the except below (keeps the warning accurate).
+                    logger.warning("could not seed hold pose before torque-on: read returned None")
+                else:
+                    for motor in bus.motors:
+                        tick = pres.get(motor)
+                        if tick is not None:
+                            # A position read back from hardware, not a caller-chosen
+                            # goal -- write it verbatim so the goal equals the joint's
+                            # real position and torque-on holds rather than moves it.
+                            bus.write("Goal_Position", motor, tick, normalize=False)
+            except Exception as exc:
+                logger.warning("could not seed hold pose before torque-on: %s", exc)
+        bus.sync_write("Profile_Velocity", profile_velocity, normalize=False)
+        bus.enable_torque()
+    except BaseException:
+        # Even a torque write failure must reach closePort via disconnect's finally.
+        with contextlib.suppress(Exception):
+            bus.disconnect(True)
+        raise
     return bus
 
 

@@ -374,6 +374,49 @@ multiple readers — the same shape as the servo bus, which `step()` writes to
 and `robot.driver.write_positions` also reaches directly), so consumers reach
 them through the `camera` / `mic` properties.
 
+### Resource reservations
+
+The SDK reserves `servo_bus`, `camera`, `microphone`, `speaker`, and `display`
+when their backend opens, and holds the reservation until it closes. Standalone
+backends use the same reservations as `Palmimo`. `Speaker.say()` also reserves
+before starting its worker when called without `open()`. A `Microphone` keeps
+its reservation between recordings, including when it delegates to `MicStream`.
+An in-flight recording keeps an additional reference until its recorder exits,
+even if `Microphone.close()` is called meanwhile.
+Compute-only motion reserves nothing.
+
+| API | Contract |
+|---|---|
+| `palmimo_sdk.reservation.reserve(*resources, timeout=None)` | Context manager; acquires logical resource names in lexical order and releases all acquired references on exit or acquisition failure. By default, contention fails immediately; a finite non-negative `timeout` sets a total wait budget in seconds. |
+| `ResourceBusyError` | Exported from `palmimo_sdk`; attributes `resource`, `holder_pid`, `holder_user`, `holder_app`. Holder fields are `None` if metadata is unreadable, invalid, or names a nonexistent process. |
+| `ReservationSetupError` | Exported from `palmimo_sdk`; unusable reservation storage or permissions. Attributes `owner` and `group` identify ownership when available; `remediation` is `join_group` for the `palmimo-locks` group or `update_platform` for other groups. |
+
+Both exceptions derive from `palmimo_sdk.reservation.ReservationError`, which
+inherits directly from `Exception`. They propagate from camera `read()` and
+microphone `record()`; ordinary device-open `RuntimeError` still produces
+`(False, None)` / `None` respectively.
+
+`PALMIMO_LOCK_DIR` overrides the lock directory and is created if absent.
+Otherwise the SDK uses `/run/palmimo/locks`; permission failures there are setup
+errors, with no temporary-directory fallback. A `palmimo-locks` ownership failure
+asks the user to join that group; another group asks for a platform update in
+Portal followed by a robot reboot.
+Only a machine without `/run/palmimo` uses `palmimo-locks-<uid>` beneath its
+system temporary directory. A machine with `/run/palmimo` but no lock directory
+fails with a setup error. Lock files are created with mode `0660` regardless of
+umask. `PALMIMO_APP_ID` supplies the holder's app name; otherwise it is the
+process name. Holder metadata also records the effective user's name and a UTC
+`acquired_at` timestamp.
+
+A camera close that times out waiting for an in-flight read retains its
+reservation until the read returns and closes the capture. A `MicStream` join
+timeout retains it until the capture thread closes its stream. Serial opens
+that outlive their connect deadline retain reservations until late cleanup
+closes the orphaned handle. These paths log the delayed cleanup; another
+process remains blocked while the device is still owned.
+
+LeRobot plugin scripts open LeRobot's `DynamixelMotorsBus` directly and therefore do not participate in SDK reservations.
+
 ### `robot.connect() -> Palmimo`
 Open whichever resources are attached and return `self`, in this order: the
 display (which also plays its boot-wake animation, mirroring a real startup),
@@ -413,7 +456,7 @@ no glide (sim, calibration, tests).
 
 If a later resource — including the wake glide itself — fails, the ones
 already opened are closed before the error is re-raised, so a partial failure
-never leaks an open port. This rollback also covers a `KeyboardInterrupt`
+releases their reservations when their handles close. This rollback also covers a `KeyboardInterrupt`
 (Ctrl+C) during the wake glide, not just an `Exception`: it soft-releases the
 neck before closing the driver, same as any other rollback, so an interrupted
 wake never leaves the head held at full gain with torque about to cut.

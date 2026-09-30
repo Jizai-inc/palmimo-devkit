@@ -73,6 +73,7 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk.mcp.server": frozenset({"mcp"}),
     # difflib / unicodedata name folding; no third-party package involved.
     "palmimo_sdk.name_match": _NO_EXTRA,
+    "palmimo_sdk.reservation": _NO_EXTRA,
     "palmimo_sdk.robot": _NO_EXTRA,
     # signal disposition and the park -- signal, contextlib, threading, time.
     "palmimo_sdk.shutdown": _NO_EXTRA,
@@ -136,6 +137,8 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:NeckYawDegrees": _NO_EXTRA,
     "palmimo_sdk:NeckYawNormalized": _NO_EXTRA,
     "palmimo_sdk:Palmimo": _NO_EXTRA,
+    "palmimo_sdk:ReservationSetupError": _NO_EXTRA,
+    "palmimo_sdk:ResourceBusyError": _NO_EXTRA,
     "palmimo_sdk:RoutineStep": _NO_EXTRA,
     "palmimo_sdk:SAFE_MAX_TICK": _NO_EXTRA,
     "palmimo_sdk:SAFE_MIN_TICK": _NO_EXTRA,

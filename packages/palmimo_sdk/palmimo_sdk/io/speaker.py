@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..reservation import Reservation, acquire_resource
 from .alsa_devices import resolve_alsa_device
 from .tts import PiperEngine, TtsEngine, TtsVoice
 
@@ -322,6 +323,7 @@ class Speaker:
         self._player: Player = player or _SubprocessPlayer()
         self._lock = threading.RLock()
         self._opened = False
+        self._reservation: Reservation | None = None
         # Resolved from config.device_name_hint on first playback, not at
         # construction: a Speaker is routinely built before its USB device is
         # attached. Only a hit is remembered -- a miss is exactly what
@@ -402,45 +404,61 @@ class Speaker:
         Raises :class:`RuntimeError` if the default voice's preflight fails,
         or the probe synthesis fails; the message includes a remediation hint
         from ``self._engine.failure_hint``.
+        Opening, enqueueing, and closing share the worker lifecycle lock,
+        so a concurrent call waits for this probe to finish.
         """
+        with self._worker_lock:
+            self._open_locked()
+
+    def _open_locked(self) -> None:
+        """Probe and reserve while holding the worker lifecycle lock."""
         if self._opened:
             return
-        self._engine.preflight(self.config.lang)
-        other_lang = "en" if self.config.lang == "ja" else "ja"
+        acquired = self._reservation is None
+        if acquired:
+            self._reservation = acquire_resource("speaker")
         try:
-            # fetch=False: only the voice being opened with is worth paying a
-            # download for here. The other language is checked so a missing
-            # one is reported now rather than mid-utterance -- nothing
-            # downloads it later, since load_voice() never fetches.
-            self._engine.preflight(other_lang, fetch=False)
-        except RuntimeError as exc:
-            logger.warning(
-                "%s voice (lang=%s) is unavailable; say(lang=...) / say_bilingual will fail until fixed: %s",
-                self._engine.name,
-                other_lang,
-                exc,
-            )
-
-        def probe_error(prefix: str, exc: Exception) -> RuntimeError:
-            error_text = f"{type(exc).__name__}: {exc}"
-            hint = self._engine.failure_hint(error_text, self.config.lang)
-            return RuntimeError(f"{prefix}: {error_text}{hint}")
-
-        with self._lock:
+            self._engine.preflight(self.config.lang)
+            other_lang = "en" if self.config.lang == "ja" else "ja"
             try:
-                cached = self._get_voice(self.config.lang)
-            except RuntimeError:
-                raise
-            except Exception as exc:
-                raise probe_error(f"{self._engine.name} is not available", exc) from exc
-        try:
-            wav_path = self._synthesize_with_timeout(cached, _PROBE_TEXT, self.config.say_timeout_s)
-        except Exception as exc:
+                # fetch=False: only the voice being opened with is worth paying a
+                # download for here. The other language is checked so a missing
+                # one is reported now rather than mid-utterance -- nothing
+                # downloads it later, since load_voice() never fetches.
+                self._engine.preflight(other_lang, fetch=False)
+            except RuntimeError as exc:
+                logger.warning(
+                    "%s voice (lang=%s) is unavailable; say(lang=...) / say_bilingual will fail until fixed: %s",
+                    self._engine.name,
+                    other_lang,
+                    exc,
+                )
+
+            def probe_error(prefix: str, exc: Exception) -> RuntimeError:
+                error_text = f"{type(exc).__name__}: {exc}"
+                hint = self._engine.failure_hint(error_text, self.config.lang)
+                return RuntimeError(f"{prefix}: {error_text}{hint}")
+
             with self._lock:
-                self._voices.pop(self.config.lang, None)
-            raise probe_error(f"{self._engine.name} probe synthesis failed", exc) from exc
-        wav_path.unlink(missing_ok=True)
-        self._opened = True
+                try:
+                    cached = self._get_voice(self.config.lang)
+                except RuntimeError:
+                    raise
+                except Exception as exc:
+                    raise probe_error(f"{self._engine.name} is not available", exc) from exc
+            try:
+                wav_path = self._synthesize_with_timeout(cached, _PROBE_TEXT, self.config.say_timeout_s)
+            except Exception as exc:
+                with self._lock:
+                    self._voices.pop(self.config.lang, None)
+                raise probe_error(f"{self._engine.name} probe synthesis failed", exc) from exc
+            wav_path.unlink(missing_ok=True)
+            self._opened = True
+        except BaseException:
+            if acquired and self._reservation is not None:
+                self._reservation.release()
+                self._reservation = None
+            raise
 
     def _synthesize_to_tmp_wav(self, cached: _CachedVoice, text: str) -> Path:
         """Synthesize *text* into a fresh temp WAV, holding *cached*'s lock
@@ -751,9 +769,19 @@ class Speaker:
         under ``_worker_lock`` -- see :class:`Speaker`'s docstring for why
         this must be atomic with :meth:`close`."""
         with self._worker_lock:
-            if self._worker is None or not self._worker.is_alive():
-                self._worker = threading.Thread(target=self._worker_loop, daemon=True)
-                self._worker.start()
+            acquired = self._reservation is None
+            if acquired:
+                self._reservation = acquire_resource("speaker")
+            try:
+                if self._worker is None or not self._worker.is_alive():
+                    worker = threading.Thread(target=self._worker_loop, daemon=True)
+                    worker.start()
+                    self._worker = worker
+            except BaseException:
+                if acquired and self._reservation is not None:
+                    self._reservation.release()
+                    self._reservation = None
+                raise
             with self._proc_lock:
                 job.enqueued_at_stop_count = self._stop_count
             self._queue.put(job)
@@ -846,6 +874,9 @@ class Speaker:
                     self._worker = None
             self._opened = False
             self._voices.clear()
+            if self._reservation is not None:
+                self._reservation.release()
+                self._reservation = None
 
     def __enter__(self) -> Speaker:
         self.open()
