@@ -1,6 +1,10 @@
 """Behavior of `palmimo_teleop.main._build_servo_driver`'s startup probe retry -- no real
 hardware, no real sleep."""
 
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from palmimo_teleop.main import PROBE_RETRY_ATTEMPTS, _build_servo_driver
 
 
@@ -36,3 +40,16 @@ def test_build_servo_driver_degrades_to_compute_only_after_every_attempt_fails()
 
     assert driver is None
     assert attempts == PROBE_RETRY_ATTEMPTS
+
+
+@pytest.mark.parametrize("error_name", ["ResourceBusyError", "ReservationSetupError"])
+def test_build_servo_driver_propagates_reservation_errors(error_name: str) -> None:
+    reservation = pytest.importorskip("palmimo_sdk.reservation")
+    error_type = getattr(reservation, error_name)
+    error = error_type("servo_bus")
+
+    with (
+        patch("palmimo_teleop.main.DynamixelDriver", return_value=MagicMock(connect=MagicMock(side_effect=error))),
+        pytest.raises(error_type),
+    ):
+        _build_servo_driver("fake", sleep=lambda _seconds: None)

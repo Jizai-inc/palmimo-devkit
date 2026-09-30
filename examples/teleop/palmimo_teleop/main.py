@@ -22,6 +22,16 @@ from .session import PilotSession
 from .video import VideoStream
 
 
+# Released SDK versions before reservations have no reservation exceptions.
+_RESERVATION_ERRORS: tuple[type[Exception], ...]
+try:
+    from palmimo_sdk.reservation import ReservationError
+except ImportError:
+    _RESERVATION_ERRORS = ()
+else:
+    _RESERVATION_ERRORS = (ReservationError,)
+
+
 _LOG = logging.getLogger(__name__)
 
 #: Default gait speed applied to every teleop-driven motion. There is no
@@ -62,6 +72,8 @@ def _probe_servo_driver(servo_port: str | None) -> Exception | None:
     try:
         driver.connect()
         driver.disconnect()
+    except _RESERVATION_ERRORS:
+        raise
     except Exception as exc:  # PortDetectionError, missing hardware extra, serial-layer error, etc.
         return exc
     return None
