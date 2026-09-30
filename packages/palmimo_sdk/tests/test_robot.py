@@ -1593,6 +1593,21 @@ def test_a_connect_waiting_for_the_lock_while_a_disconnect_comes_and_goes_does_n
     assert driver.events == ["disconnect"]
 
 
+def test_connect_disarms_an_already_connected_driver_when_a_peripheral_fails() -> None:
+    class BoomCamera(FakeCamera):
+        def open(self) -> None:
+            raise RuntimeError("camera boom")
+
+    driver = RecordingDriver()
+    driver.connect()
+    robot = Palmimo(driver=cast(ServoDriver, driver), camera=cast(HeadCamera, BoomCamera()))
+
+    with pytest.raises(RuntimeError, match="camera boom"):
+        robot.connect()
+    assert driver.events == ["connect", "disconnect"]
+    assert driver.is_connected is False
+
+
 def test_connect_never_arms_the_driver_when_display_connect_times_out() -> None:
     """On a dev machine with no robot attached, the driver connects fine but the
     face display's serial probe never responds. connect() must give up (rather than hang)

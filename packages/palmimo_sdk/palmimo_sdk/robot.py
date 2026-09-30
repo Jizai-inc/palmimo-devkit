@@ -647,7 +647,10 @@ class Palmimo:
             # them — via ``with`` a failing __enter__ means __exit__ never runs, and
             # the plain connect() path would leave earlier resources open too. Rollback
             # is best-effort + suppressed so it never masks the original error.
-            driver_connected = False
+            # A driver the caller connected before building the facade is armed
+            # already, so a peripheral failure before our own driver.connect()
+            # must still park it and cut torque.
+            driver_connected = self._driver is not None and self._driver.is_connected
 
             def _ensure_not_disconnected() -> None:
                 # See _disconnect_count. Raising routes through the rollback below.
