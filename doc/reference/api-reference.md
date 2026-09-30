@@ -375,11 +375,36 @@ and `robot.driver.write_positions` also reaches directly), so consumers reach
 them through the `camera` / `mic` properties.
 
 ### `robot.connect() -> Palmimo`
-Open whichever resources are attached and return `self`. The display also plays
-its boot-wake animation (mirroring a real startup); the speaker probes that its
-TTS engine (`PiperEngine` by default) is available; the camera opens its
-`cv2.VideoCapture`; the mic runs a short capture probe. Raises `RuntimeError`
-when nothing is attached.
+Open whichever resources are attached and return `self`, in this order: the
+display (which also plays its boot-wake animation, mirroring a real startup),
+the speaker (probes that its TTS engine, `PiperEngine` by default, is
+available), the camera (opens its `cv2.VideoCapture`), the mic (a short
+capture probe), and last the driver, which turns servo torque on. Raises
+`RuntimeError` when nothing is attached.
+
+`connect()` and `disconnect()` exclude each other across threads: a
+`disconnect()` from another thread waits for an in-flight `connect()` — its
+wake glide or its rollback included — to finish before parking, rather than
+streaming park commands alongside the glide. An asyncio program that cancels
+an `await asyncio.to_thread(robot.connect)` does not stop that thread, so its
+cleanup's `disconnect()` relies on this wait. The wait has no bound: the steps
+that can stall (a camera open has no timeout; a first-run voice download takes
+as long as the network does) all run before the driver arms, so a stalled
+`connect()` keeps `disconnect()` waiting with torque off, and the steps after
+arming (the bus connect, the wake glide) are bounded. That holds only when the
+driver was not already connected before `connect()`: a caller that connects
+the driver first (to probe the port, say) has torque on for the whole of
+`connect()`, and so does calling `connect()` again on a robot that is already
+connected. On the main thread, Ctrl+C (SIGINT) does not cut the wait short;
+other stop signals are held off only by `palmimo_sdk.shutdown.park()`, which is
+the path to use for a signal-driven stop.
+
+`connect()` also raises `RuntimeError` if a `disconnect()` was running when it
+was called or ran during it; everything it opened is closed first.
+
+Because the driver is connected last, a missing servo bus is reported only
+after the display, speaker, camera and mic have opened; they are then closed
+before the error is raised.
 
 If a driver is attached and connected, `connect()` then runs the `wake()` glide
 automatically (limp -> gain-ramped rise to neutral) unless the facade was built
