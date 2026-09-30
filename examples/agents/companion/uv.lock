@@ -1153,7 +1153,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.24" },
     { name = "onnxruntime", specifier = ">=1.17" },
     { name = "opencv-python", specifier = ">=4" },
-    { name = "palmimo-sdk", extras = ["voice", "vision", "agent", "speech", "hardware", "face"], specifier = ">=0.1.1,<0.2" },
+    { name = "palmimo-sdk", extras = ["voice", "vision", "agent", "speech", "hardware", "face"], specifier = ">=0.1.2,<0.2" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "scipy", specifier = ">=1.11" },
     { name = "textual", specifier = ">=0.60" },
@@ -1173,14 +1173,14 @@ dev = [
 
 [[package]]
 name = "palmimo-sdk"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyserial" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/92/ca/f25c6403f71f197531ed64fc661d40cb55b7e1d2a399eb5a78fa95d5dfd5/palmimo_sdk-0.1.1.tar.gz", hash = "sha256:83948e2feea3f7a9cb7f0f73e58d8afa56d01b0b03b64217eae78c63e6e70ee4", size = 363439, upload-time = "2026-09-24T08:33:43.026Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/cf/8b5fe4548a743cdcc700b55ff13b751e0961866a342ec34d1ce5fc401c31/palmimo_sdk-0.1.2.tar.gz", hash = "sha256:f9457c7b2537c3e3757f45f24076864e669f7b8193ab675d18959554ab6c8b19", size = 381671, upload-time = "2026-09-30T22:06:24.807Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/bf/c22de0fc12a33500cc35ff8b69edda03230d1eb120015570566a6580449c/palmimo_sdk-0.1.1-py3-none-any.whl", hash = "sha256:deccf0b263d9897978c2cf5978281a2e1a25bfd1251139adb14fbfd24fdaf797", size = 239260, upload-time = "2026-09-24T08:33:41.263Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/80/f7524eaf6a3d6a985414b65ad0613c194159d8a10d6cc0b55f49a8fadf7b/palmimo_sdk-0.1.2-py3-none-any.whl", hash = "sha256:c64553bf706f72cbf0e7eeba7895742547e57e6feccacdbc626100e7971c4076", size = 249944, upload-time = "2026-09-30T22:06:23.248Z" },
 ]
 
 [package.optional-dependencies]
