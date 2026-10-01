@@ -23,6 +23,8 @@ from palmimo_sdk import (
 )
 from palmimo_sdk.engine import MotionEngine
 from palmimo_sdk.io.base import ServoTelemetry
+from palmimo_sdk.kinematics import LEG_MOTORS, leg_motors
+from palmimo_sdk.overload import OVERLOAD_POLL_INTERVAL_S, SOFT_RETURN_GAIN
 from palmimo_sdk.robot import NeckPitchDegrees, NeckPitchNormalized, NeckYawDegrees, NeckYawNormalized
 from palmimo_sdk.thermal import NECK_COOL_C, NECK_HOT_C, NECK_MOTORS, NECK_STALE_S, NECK_WARM_C
 
@@ -2131,7 +2133,10 @@ def test_telemetry_is_read_at_most_once_per_poll_interval() -> None:
     second -- the sweep shares bus time with the position write every frame already needs."""
     clock = _FakeClock()
     driver = _NeckTelemetryDriver(_neck_temps(30))
-    robot = Palmimo(driver=cast(ServoDriver, driver), thermal_clock=clock)
+    # The overload guard polls on its own faster cadence; this test is about the neck guard.
+    robot = Palmimo(
+        driver=cast(ServoDriver, driver), thermal_clock=clock, arm_overload_current=None, leg_overload_current=None
+    )
 
     read_calls = 0
     original_read_telemetry = driver.read_telemetry
@@ -2406,3 +2411,502 @@ def test_disconnect_then_reconnect_re_judges_the_neck_immediately() -> None:
     robot.connect()
     robot.step()  # the very first poll after reconnect must not be throttled away
     assert robot.neck_thermal_state is NeckThermalState.NORMAL
+
+
+# ================================================================
+# LEG OVERLOAD GUARD WIRING (overload.py's OverloadGuard, wired into step())
+# ================================================================
+
+_ARM_6 = leg_motors([6])
+_POLL_DT = 2 * OVERLOAD_POLL_INTERVAL_S  # comfortably past the poll interval despite float error
+
+
+class _OverloadDriver(ServoDriver):
+    """An in-memory driver that reports injected leg currents/positions and records every tuning call."""
+
+    def __init__(self, *, gain_raises: bool = False, torque_supported: bool = True) -> None:
+        self.currents: dict[str, int] = {}
+        self.positions: dict[str, int] = dict.fromkeys(LEG_MOTORS, 2500)
+        self.writes: list[dict[str, int]] = []
+        self.telemetry_requests: list[tuple[str, ...] | None] = []
+        self.gain_calls: list[tuple[int | None, tuple[str, ...] | None]] = []
+        self.torque_calls: list[tuple[bool, tuple[str, ...] | None]] = []
+        self.gain_raises = gain_raises
+        self.torque_supported = torque_supported
+        self.profile_velocity = 300
+        self.telemetry_error: Exception | None = None
+        self._connected = True
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    def connect(self) -> None:
+        self._connected = True
+
+    def disconnect(self) -> None:
+        self._connected = False
+
+    def _write_positions(self, positions: dict[str, int]) -> None:
+        self.writes.append(dict(positions))
+
+    def read_positions(self) -> dict[str, int]:
+        return dict(self.positions)
+
+    def read_telemetry(self, motors: Sequence[str] | None = None) -> ServoTelemetry:
+        self.telemetry_requests.append(None if motors is None else tuple(motors))
+        if self.telemetry_error is not None:
+            raise self.telemetry_error
+        wanted = motors if motors is not None else LEG_MOTORS
+        return ServoTelemetry(
+            current={m: self.currents[m] for m in wanted if m in self.currents},
+            position={m: self.positions[m] for m in wanted if m in self.positions},
+        )
+
+    def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
+        if self.gain_raises and value == SOFT_RETURN_GAIN:
+            raise RuntimeError("gain write failed")
+        self.gain_calls.append((value, None if motors is None else tuple(motors)))
+
+    def set_torque_enabled(self, enabled: bool, motors: Sequence[str] | None = None) -> None:
+        if not self.torque_supported:
+            raise NotImplementedError
+        self.torque_calls.append((enabled, None if motors is None else tuple(motors)))
+
+    def set_profile_velocity_units(self, value: int, motors: list[str] | None = None) -> None:
+        pass
+
+    def set_iir(self, enabled: bool, alpha: float | None = None, motors: list[str] | None = None) -> None:
+        pass
+
+
+def _overload_robot(driver: _OverloadDriver, **kwargs: Any) -> tuple[Palmimo, _FakeClock]:
+    clock = _FakeClock()
+    robot = Palmimo(driver=cast(ServoDriver, driver), thermal_clock=clock, auto_wake=False, **kwargs)
+    return robot, clock
+
+
+def _poll_steps(robot: Palmimo, clock: _FakeClock, n: int = 1) -> None:
+    """Step *n* frames, each one a poll interval apart on the injected clock."""
+    for _ in range(n):
+        robot.step()
+        clock.advance(_POLL_DT)
+
+
+def _soft_gain_calls(driver: _OverloadDriver) -> list[tuple[int | None, tuple[str, ...] | None]]:
+    return [c for c in driver.gain_calls if c[0] == SOFT_RETURN_GAIN]
+
+
+def test_invalid_overload_threshold_is_rejected() -> None:
+    with pytest.raises(ValueError, match="threshold"):
+        Palmimo(arm_overload_current=0)
+    with pytest.raises(ValueError, match="threshold"):
+        Palmimo(leg_overload_current=-5)
+
+
+def test_wave_arm_trip_drops_to_idle_and_softens_only_the_arm() -> None:
+    """Three strained samples on the waving arm stop the motion and leave just that arm at the soft gain."""
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800, "leg_1_yaw": 800}  # only the arm is over ITS threshold (leg: 1200)
+    _poll_steps(robot, clock, 2)
+    assert robot.motion == "wave"
+    _poll_steps(robot, clock)
+
+    assert robot.motion == "idle"
+    assert _soft_gain_calls(driver) == [(SOFT_RETURN_GAIN, _ARM_6)]
+    assert driver.torque_calls == []
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.current, trip.threshold, trip.samples) == ("leg_6_yaw", 800, 700, 3)
+    assert (trip.channel, trip.motion) == ("arm", "wave")
+    assert robot.drain_overload_trips() == []
+    assert robot.last_overload_trip == trip
+
+
+def test_trip_frame_is_computed_but_not_written() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    seen: list[dict[str, int]] = []
+    robot._on_step = seen.append
+    robot.set_motion("pushup")
+    driver.currents = {"leg_2_pitch1": 1300}
+    _poll_steps(robot, clock, 2)
+    writes_before = len(driver.writes)
+
+    _poll_steps(robot, clock)
+
+    assert len(driver.writes) == writes_before
+    assert len(seen) == 3  # on_step still ran for the tripping frame
+
+
+def test_soft_return_gain_survives_the_frames_after_the_trip() -> None:
+    """The wave's gesture release writes the default gain to every axis; it must land BEFORE the
+    soft gain, and nothing afterwards may lift the arm back to full stiffness."""
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    _poll_steps(robot, clock)  # wave tuning applied
+    driver.currents = {"leg_6_yaw": 900}
+    _poll_steps(robot, clock, 3)
+    assert robot.motion == "idle"
+
+    gain_values = [c[0] for c in driver.gain_calls]
+    assert gain_values.index(None) < gain_values.index(SOFT_RETURN_GAIN)  # release, then soft apply
+    calls_after_trip = list(driver.gain_calls)
+    driver.currents = {"leg_6_yaw": 1500}  # still strained: the leg channel records it, and reacts to nothing
+    _poll_steps(robot, clock, 8)
+
+    assert driver.gain_calls == calls_after_trip
+    assert driver.torque_calls == []
+    assert [(t.channel, t.motion) for t in robot.drain_overload_trips()] == [("arm", "wave"), ("leg", "idle")]
+
+
+def test_arm_gain_failure_cuts_torque_on_the_arm_only() -> None:
+    driver = _OverloadDriver(gain_raises=True)
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_pitch2": 900}
+
+    _poll_steps(robot, clock, 3)
+
+    assert robot.motion == "idle"
+    assert driver.torque_calls == [(False, _ARM_6)]
+    _poll_steps(robot, clock, 5)  # the failed soft return is not retried or re-cut
+    assert driver.torque_calls == [(False, _ARM_6)]
+
+
+def test_arm_trip_without_gain_or_torque_support_only_records() -> None:
+    driver = _OverloadDriver(gain_raises=True, torque_supported=False)
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_pitch2": 900}
+
+    _poll_steps(robot, clock, 3)
+
+    assert robot.motion == "idle"
+    assert len(robot.drain_overload_trips()) == 1
+
+
+def test_soft_return_ends_once_the_arm_settles_at_neutral() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 900}
+    _poll_steps(robot, clock, 3)
+    driver.currents = {}
+    _poll_steps(robot, clock, 10)  # positions still far from neutral
+    assert driver.gain_calls[-1] == (SOFT_RETURN_GAIN, _ARM_6)
+
+    driver.positions = dict.fromkeys(LEG_MOTORS, MotionEngine.NEUTRAL + 59)
+    _poll_steps(robot, clock, 4)
+    assert driver.gain_calls[-1] == (SOFT_RETURN_GAIN, _ARM_6)  # four settled polls are not enough
+    _poll_steps(robot, clock, 2)
+
+    assert driver.gain_calls[-1] == (None, _ARM_6)
+
+
+def test_soft_return_holds_when_a_position_read_is_missing() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 900}
+    _poll_steps(robot, clock, 3)
+    driver.currents = {}
+    driver.positions = dict.fromkeys(LEG_MOTORS, MotionEngine.NEUTRAL)
+    _poll_steps(robot, clock, 4)
+    del driver.positions["leg_6_pitch1"]
+    _poll_steps(robot, clock, 1)  # one gap zeroes the settle streak
+    driver.positions["leg_6_pitch1"] = MotionEngine.NEUTRAL
+    _poll_steps(robot, clock, 4)
+    assert driver.gain_calls[-1] == (SOFT_RETURN_GAIN, _ARM_6)
+
+    _poll_steps(robot, clock, 1)
+    assert driver.gain_calls[-1] == (None, _ARM_6)
+
+
+def test_a_new_motion_ends_the_soft_return() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 900}
+    _poll_steps(robot, clock, 3)
+    driver.currents = {}
+    assert driver.gain_calls[-1] == (SOFT_RETURN_GAIN, _ARM_6)
+
+    robot.stretch()
+    _poll_steps(robot, clock)
+
+    assert (None, _ARM_6) in driver.gain_calls[driver.gain_calls.index((SOFT_RETURN_GAIN, _ARM_6)) :]
+    assert driver.gain_calls[-1] != (SOFT_RETURN_GAIN, _ARM_6)
+
+
+def test_wake_ends_the_soft_return() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 900}
+    _poll_steps(robot, clock, 3)
+    driver.currents = {}
+
+    robot.wake(duration=0.05)
+    calls_after_wake = len(driver.gain_calls)
+    _poll_steps(robot, clock, 3)
+
+    assert all(c[0] != SOFT_RETURN_GAIN for c in driver.gain_calls[calls_after_wake:])
+    assert driver.gain_calls[-1][0] is None
+
+
+def test_sleep_ramps_a_soft_returning_arm_from_its_soft_gain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A held arm must never be handed running stiffness: not by the first frame of sleep's
+    ramp, and not by a soft-return release on a step() taken while asleep."""
+    import time as _time
+
+    monkeypatch.setattr(_time, "sleep", lambda s: None)
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 900}
+    _poll_steps(robot, clock, 3)
+    driver.currents = {}
+    assert driver.gain_calls[-1] == (SOFT_RETURN_GAIN, _ARM_6), "the arm never softened; the test proves nothing"
+    calls_before_sleep = len(driver.gain_calls)
+
+    robot.sleep(duration=0.2)
+    driver.positions = dict.fromkeys(LEG_MOTORS, MotionEngine.NEUTRAL)
+    _poll_steps(robot, clock, 8)  # long enough for a surviving soft return to settle and release
+
+    arm_gains = [
+        value for value, motors in driver.gain_calls[calls_before_sleep:] if motors is None or set(motors) & set(_ARM_6)
+    ]
+    assert arm_gains, "sleep never ramped the arm"
+    assert all(value is not None and value <= 300 for value in arm_gains), arm_gains
+    assert arm_gains[-1] == 300
+
+
+def test_leg_trip_drops_pushup_to_idle_at_normal_gain() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    driver.currents = {"leg_4_pitch2": -1250}  # magnitude, not sign
+
+    _poll_steps(robot, clock, 3)
+
+    assert robot.motion == "idle"
+    assert _soft_gain_calls(driver) == []
+    assert driver.torque_calls == []
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.channel, trip.motion, trip.motor, trip.current) == ("leg", "pushup", "leg_4_pitch2", -1250)
+
+
+def test_leg_strain_with_no_leg_motion_is_reported_once_and_stops_nothing() -> None:
+    """A nod moves no leg, so a strained leg under it has nothing to stop: the trip is a record,
+    made once per stretch of strain rather than every three polls."""
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("nod")
+    _poll_steps(robot, clock)
+    assert robot.motion == "nod", "the nod never started; the test proves nothing"
+    driver.currents = {"leg_2_pitch1": 1300}
+
+    _poll_steps(robot, clock, 4)
+    assert robot.motion == "nod"
+    robot.stop()
+    writes_before = len(driver.writes)
+    _poll_steps(robot, clock, 20)
+
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.channel, trip.motion) == ("leg", "nod")
+    assert len(driver.writes) == writes_before + 20
+
+    driver.currents = {"leg_2_pitch1": 0}  # read and below the threshold; an unread axis would keep its streak
+    _poll_steps(robot, clock)
+    driver.currents = {"leg_2_pitch1": 1300}
+    _poll_steps(robot, clock, 3)
+
+    assert [t.motion for t in robot.drain_overload_trips()] == ["idle"]
+
+
+def test_healthy_currents_let_a_motion_run_to_completion() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    driver.currents = dict.fromkeys(LEG_MOTORS, 1199)
+
+    _poll_steps(robot, clock, 60)
+
+    assert robot.motion == "pushup"
+    assert robot.drain_overload_trips() == []
+    assert robot.last_overload_trip is None
+    assert len(driver.writes) == 60
+
+
+def test_overload_channels_can_be_disabled_independently() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver, leg_overload_current=None)
+    robot.set_motion("pushup")
+    driver.currents = dict.fromkeys(LEG_MOTORS, 5000)
+    _poll_steps(robot, clock, 5)
+    assert robot.motion == "pushup"  # the leg channel is off
+
+    robot.wave()
+    _poll_steps(robot, clock, 3)
+    assert robot.motion == "idle"  # the arm channel still watches
+
+
+def test_overload_guard_reads_no_telemetry_when_both_channels_are_disabled() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver, arm_overload_current=None, leg_overload_current=None)
+    robot.wave()
+    driver.currents = dict.fromkeys(LEG_MOTORS, 5000)
+
+    _poll_steps(robot, clock, 10)
+
+    assert [r for r in driver.telemetry_requests if r is not None and r != NECK_MOTORS] == []
+    assert robot.motion == "wave"
+
+
+def test_overload_poll_is_throttled_and_reads_all_leg_axes_once() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    for _ in range(10):
+        robot.step()  # the clock never moves
+    leg_reads = [r for r in driver.telemetry_requests if r != NECK_MOTORS]
+    assert leg_reads == [LEG_MOTORS]
+
+    clock.advance(_POLL_DT)
+    robot.step()
+    assert len([r for r in driver.telemetry_requests if r != NECK_MOTORS]) == 2
+
+
+def test_axis_missing_from_a_sweep_neither_advances_nor_resets_its_streak() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    driver.currents = {"leg_1_yaw": 1300}
+    _poll_steps(robot, clock, 2)
+    driver.currents = {}  # silent this sweep
+    _poll_steps(robot, clock, 3)
+    assert robot.motion == "pushup"  # a gap did not count as a strained sample
+    driver.currents = {"leg_1_yaw": 1300}
+    _poll_steps(robot, clock)
+
+    assert robot.motion == "idle"  # ...and did not reset the two earlier ones
+
+
+def test_switching_motion_restarts_the_streaks() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    driver.currents = {"leg_1_yaw": 1300}
+    _poll_steps(robot, clock, 2)
+    robot.set_motion("forward")
+    _poll_steps(robot, clock, 2)
+    assert robot.motion == "forward"
+
+    _poll_steps(robot, clock)
+    assert robot.motion == "idle"
+
+
+def test_switching_the_waving_leg_restarts_the_streaks() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("wave_right")
+    driver.currents = {"leg_3_yaw": 900}
+    _poll_steps(robot, clock, 2)
+    robot.set_motion("wave_left")  # leg 3 is now the arm: same motion, different channel set
+    _poll_steps(robot, clock, 2)
+    assert robot.motion == "wave"
+
+    _poll_steps(robot, clock)
+    assert robot.motion == "idle"
+
+
+def test_reconnect_leaves_no_streak_behind() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    driver.currents = {"leg_1_yaw": 1300}
+    _poll_steps(robot, clock, 2)
+
+    robot.connect()
+    _poll_steps(robot, clock, 2)
+    assert robot.motion == "pushup"
+
+    _poll_steps(robot, clock)
+    assert robot.motion == "idle"
+
+
+def test_last_overload_trip_survives_a_reconnect() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    driver.currents = {"leg_1_yaw": 1300}
+    _poll_steps(robot, clock, 3)
+    trip = robot.last_overload_trip
+    assert trip is not None
+
+    robot.connect()
+
+    assert robot.last_overload_trip == trip
+
+
+def test_overload_trip_queue_keeps_the_newest_64() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    driver.currents = {"leg_1_yaw": 1300}
+    for _ in range(70):
+        robot.set_motion("pushup")
+        _poll_steps(robot, clock, 3)
+
+    trips = robot.drain_overload_trips()
+
+    assert len(trips) == 64
+    assert robot.drain_overload_trips() == []
+
+
+def test_failed_telemetry_read_keeps_streaks_and_does_not_stop_the_motion() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    driver.currents = {"leg_1_yaw": 1300}
+    _poll_steps(robot, clock, 2)
+    driver.telemetry_error = RuntimeError("bus glitch")
+    _poll_steps(robot, clock)
+    assert robot.motion == "pushup"
+    driver.telemetry_error = None
+
+    _poll_steps(robot, clock)
+
+    assert robot.motion == "idle"
+
+
+def test_driver_without_telemetry_disables_the_overload_guard_with_one_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    robot = Palmimo(driver=cast(ServoDriver, RecordingDriver()), auto_wake=False)
+    robot.connect()
+    robot.set_motion("pushup")
+
+    with caplog.at_level("WARNING"):
+        for _ in range(5):
+            robot.step()
+
+    assert robot.motion == "pushup"
+    assert len([r for r in caplog.records if "overload guard is disabled" in r.getMessage()]) == 1
+
+
+def test_driver_missing_a_leg_motor_disables_the_overload_guard_with_one_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    driver = _OverloadDriver()
+    driver.telemetry_error = KeyError("Unknown motor(s) for a span read: ['leg_6_yaw']")
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+
+    with caplog.at_level("WARNING"):
+        _poll_steps(robot, clock, 5)
+
+    assert driver.telemetry_requests.count(LEG_MOTORS) == 1
+    assert len([r for r in caplog.records if "overload guard is disabled" in r.getMessage()]) == 1

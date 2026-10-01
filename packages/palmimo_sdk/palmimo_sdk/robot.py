@@ -64,13 +64,25 @@ import math
 import signal
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ._signals import signals_ignored
 from .engine import NECK_GESTURES, Motion, MotionEngine
 from .io import FaceDisplay, HeadCamera, Microphone, MicStream, ServoDriver, Speaker, SpeechHandle
+from .kinematics import LEG_MOTORS, leg_motors
+from .overload import (
+    ARM_OVERLOAD_CURRENT,
+    LEG_OVERLOAD_CURRENT,
+    OVERLOAD_POLL_INTERVAL_S,
+    SOFT_RETURN_GAIN,
+    OverloadGuard,
+    OverloadTrip,
+    SoftReturnMonitor,
+)
+from .telemetry import TelemetryPoller
 from .thermal import NECK_MOTORS as _NECK_MOTORS
 from .thermal import NeckThermalGuard, NeckThermalState
 
@@ -147,6 +159,9 @@ _STRETCH_LEG_PV = 120
 _NECK_GESTURE_MOTORS = ("neck_pitch1", "neck_pitch2", "neck_yaw")
 _NECK_GESTURE_PV = 0
 _NECK_GESTURE_RESTORE_PV_FALLBACK = 300
+# Motions a soft-returning arm may coexist with; anything else ends the soft return.
+_SOFT_RETURN_MOTIONS = (Motion.IDLE, *NECK_GESTURES)
+_OVERLOAD_TRIP_HISTORY = 64
 # Dance finishing flourish — a lingering hold followed by a slow return,
 # tuned on hardware. After the swaying body ends
 # near-static on the dwell at an extreme, the legs softly hold that ACTUAL pose
@@ -349,9 +364,15 @@ class Palmimo:
             for an immediate connect with no glide — sim, calibration, or
             tests that don't want the extra motion.
         thermal_clock (callable, optional): Clock injected into the neck thermal guard (see
-            :attr:`neck_thermal_state`) in place of :func:`time.monotonic`. A
-            public escape hatch for tests that need to advance the guard's
+            :attr:`neck_thermal_state`) and the leg overload guard (see
+            :meth:`drain_overload_trips`) in place of :func:`time.monotonic`. A
+            public escape hatch for tests that need to advance the guards'
             poll/staleness timers deterministically without real sleeps.
+        arm_overload_current (int, optional): Raw |current| at or above which a waving arm axis counts as
+            strained (3 samples in a row stop the motion and soften the arm).
+            ``None`` disables the arm channel. Must be positive.
+        leg_overload_current (int, optional): The same threshold for every other leg axis; a trip drops the
+            motion to IDLE. ``None`` disables the leg channel. Must be positive.
         display (FaceDisplay, optional): Face display resource. When attached, the connection lifecycle bundles
             it alongside the driver — :meth:`connect` opens it and plays the
             boot-wake animation, :meth:`disconnect` returns it to IDLE and closes
@@ -448,9 +469,17 @@ class Palmimo:
         mic: Microphone | MicStream | None = None,
         auto_wake: bool = True,
         thermal_clock: Callable[[], float] | None = None,
+        arm_overload_current: int | None = ARM_OVERLOAD_CURRENT,
+        leg_overload_current: int | None = LEG_OVERLOAD_CURRENT,
     ):
         if fps <= 0:
             raise ValueError("fps must be positive.")
+        self._arm_overload = (
+            None if arm_overload_current is None else OverloadGuard(arm_overload_current, channel="arm")
+        )
+        self._leg_overload = (
+            None if leg_overload_current is None else OverloadGuard(leg_overload_current, channel="leg")
+        )
         self._engine = MotionEngine(
             gait_speed=gait_speed,
             step_length=step_length,
@@ -519,7 +548,7 @@ class Palmimo:
         # method's own entry snapshot.
         self._armed_snapshot: int | None = None
         # Neck-only thermal guard (see thermal.py) -- polled once per second
-        # inside step(). Legs have no guard yet (see AGENTS.md Hardware Safety).
+        # inside step(). Leg current has its own guard (see overload.py).
         # *thermal_clock* is a public escape hatch for tests that need to
         # advance the guard's poll/stale timers without real sleeps -- the
         # same role NeckThermalGuard's own `now=` constructor argument plays,
@@ -531,6 +560,22 @@ class Palmimo:
         # None while the guard isn't currently locked.
         self._thermal_locked_since: float | None = None
         self._last_thermal_lock_log: float | None = None
+        # Leg overload guard (see overload.py) -- polled inside step().
+        self._overload_clock = thermal_clock or time.monotonic
+        self._overload_poller = TelemetryPoller(
+            LEG_MOTORS, OVERLOAD_POLL_INTERVAL_S, guard_name="overload guard", logger=logger
+        )
+        # (motion, arm legs) the guards' streaks were counted under.
+        self._overload_scope: tuple[Motion, tuple[int, ...]] | None = None
+        self._overload_trips: deque[OverloadTrip] = deque(maxlen=_OVERLOAD_TRIP_HISTORY)
+        self._last_overload_trip: OverloadTrip | None = None
+        # A leg trip with no leg motion running has been recorded and the
+        # strain has not cleared since; holds back the repeats.
+        self._resting_strain_reported = False
+        # Arm axes held at SOFT_RETURN_GAIN after an arm trip (applied by
+        # _sync_gesture_tuning), or None.
+        self._soft_return: tuple[str, ...] | None = None
+        self._soft_return_monitor = SoftReturnMonitor(MotionEngine.NEUTRAL)
 
     @property
     def fps(self) -> int:
@@ -690,6 +735,7 @@ class Palmimo:
                 # after a capability probe already latched "unsupported") --
                 # give the thermal guard a fresh chance to read it.
                 self._thermal.reset()
+                self._reset_overload()
                 # Inside the try block so a wake failure rolls back every resource
                 # already opened (same as any other connect failure) instead of
                 # leaving the robot half-connected.
@@ -831,6 +877,7 @@ class Palmimo:
                 # to write a centering command to.
                 self._thermal.poll(None)
                 self._engine.neck_hold_center = False
+                self._reset_overload()
             finally:
                 self._disconnecting = False
         if interrupt is not None:
@@ -920,6 +967,7 @@ class Palmimo:
         if duration <= 0:
             raise ValueError("duration must be positive.")
         self.stop()
+        self._end_soft_return()
         targets = self._neutral_targets()
         try:
             current = driver.read_positions()
@@ -1035,7 +1083,11 @@ class Palmimo:
         # neck down here too would leave _park_neck's ladder starting *above*
         # it, jolting the head up before letting it down.
         legs = [n for n in targets if n not in _NECK_MOTORS]
-        start_gain = self._present_leg_gain(legs)
+        # A soft-returning arm ramps from its own low gain: starting it with
+        # the other legs would snap an arm that is still held to full stiffness.
+        soft_arm = self._take_soft_return()
+        firm = [n for n in legs if n not in soft_arm]
+        start_gain = self._present_leg_gain(firm)
         # Every frame carries the neck at its present pose rather than easing it
         # to neutral. Dropping the keys instead would not leave it alone: a
         # driver backfills an unnamed motor with NEUTRAL, which is the head-up
@@ -1047,7 +1099,11 @@ class Palmimo:
                 f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
                 if has_gain:
                     try:
-                        driver.set_position_p_gain(int(start_gain + (end_gain - start_gain) * f), motors=legs)
+                        driver.set_position_p_gain(int(start_gain + (end_gain - start_gain) * f), motors=firm)
+                        if soft_arm:
+                            driver.set_position_p_gain(
+                                int(SOFT_RETURN_GAIN + (end_gain - SOFT_RETURN_GAIN) * f), motors=soft_arm
+                            )
                     except Exception:
                         has_gain = False  # driver can't ramp gain — keep gliding
                 if not current:
@@ -2101,6 +2157,10 @@ class Palmimo:
         reads ``True``, not just at the moment it was entered, and reverts
         (normal glide resumed) once the neck cools to ``NECK_COOL_C``.
 
+        Also polls the leg overload guard (see :meth:`drain_overload_trips`).
+        On a trip the motion drops to IDLE and this frame's positions are
+        computed and returned but not written to the driver.
+
         Returns:
             dict[str, int]: Motor name -> Dynamixel tick value.
         """
@@ -2108,15 +2168,139 @@ class Palmimo:
         connected_driver = driver if driver is not None and driver.is_connected else None
         self._thermal.poll(connected_driver)
         self._engine.neck_hold_center = self._thermal.neck_lock_active
+        overloaded = self._poll_overload(connected_driver)
         pos = self._engine.step()
         self._log_thermal_lockout()
         if connected_driver is not None:
             self._sync_gesture_tuning()
             self._sync_neck_gesture_tuning()
-            connected_driver.write_positions(pos)
+            if not overloaded:
+                connected_driver.write_positions(pos)
         if self._on_step is not None:
             self._on_step(pos)
         return pos
+
+    def _reset_overload(self) -> None:
+        """Forget all per-connection overload state (streaks, latch, poll timers, soft return).
+
+        The trip history survives: it is a record, not connection state.
+        """
+        for guard in (self._arm_overload, self._leg_overload):
+            if guard is not None:
+                guard.reset()
+        self._overload_scope = None
+        self._overload_poller.reset()
+        self._resting_strain_reported = False
+        self._end_soft_return()
+
+    def _end_soft_return(self) -> None:
+        """Drop the soft-return state; the next gesture sync restores the arm's gain."""
+        self._soft_return = None
+        self._soft_return_monitor.reset()
+
+    def _take_soft_return(self) -> list[str]:
+        """End the soft return without restoring the arm's gain, for a caller that ramps it itself.
+
+        Returns:
+            list[str]: The arm axes still at ``SOFT_RETURN_GAIN``; empty when none are.
+        """
+        tuned = self._gesture_tuned
+        self._end_soft_return()
+        if tuned is None or tuned[0] != "soft_return":
+            return []
+        self._gesture_tuned = None
+        return list(tuned[1])
+
+    def _cut_arm_torque(self, driver: ServoDriver, arm: Sequence[str], reason: str) -> None:
+        """Fallback when the arm cannot be softened: let just those axes go limp."""
+        self._soft_return = None
+        try:
+            driver.set_torque_enabled(False, arm)
+        except Exception as exc:
+            logger.error("overload guard: %s and torque could not be cut (%s); %s left as is.", reason, exc, list(arm))
+        else:
+            logger.warning("overload guard: %s; torque cut on %s.", reason, list(arm))
+
+    def _poll_overload(self, driver: ServoDriver | None) -> bool:
+        """Sample leg currents at most every ``OVERLOAD_POLL_INTERVAL_S`` and react to a trip.
+
+        Returns:
+            bool: ``True`` if a guard stopped the motion this call (the caller skips the frame's write).
+        """
+        if driver is None or self._overload_poller.disabled:
+            return False
+        if self._arm_overload is None and self._leg_overload is None:
+            return False
+        motion = self._engine.motion
+        if self._soft_return is not None and motion not in _SOFT_RETURN_MOTIONS:
+            self._end_soft_return()
+        arm_legs = self._wave_arm_legs(motion)
+        scope = (motion, arm_legs)
+        if scope != self._overload_scope:
+            for guard in (self._arm_overload, self._leg_overload):
+                if guard is not None:
+                    guard.reset()
+            self._overload_scope = scope
+        now = self._overload_clock()
+        if not self._overload_poller.due(now):
+            return False
+        telemetry = self._overload_poller.read(
+            driver, now, "overload telemetry read failed, keeping the current streaks"
+        )
+        if telemetry is None:
+            return False
+        arm = leg_motors(arm_legs)
+        if self._soft_return is not None and self._soft_return_monitor.sample(telemetry.position, self._soft_return):
+            self._end_soft_return()
+        # IDLE and the neck gestures move no leg, so a trip under them has nothing to stop.
+        resting = motion in _SOFT_RETURN_MOTIONS
+        trips: list[OverloadTrip | None] = []
+        if self._arm_overload is not None and arm:
+            trips.append(self._arm_overload.sample(telemetry.current, arm))
+        if self._leg_overload is not None:
+            leg_trip = self._leg_overload.sample(telemetry.current, [m for m in LEG_MOTORS if m not in arm])
+            if not resting or (leg_trip is None and not self._leg_overload.strained):
+                self._resting_strain_reported = False
+            elif leg_trip is not None:
+                if self._resting_strain_reported:
+                    leg_trip = None
+                self._resting_strain_reported = True
+            trips.append(leg_trip)
+        found = [replace(t, motion=motion.name.lower()) for t in trips if t is not None]
+        for trip in found:
+            self._overload_trips.append(trip)
+            self._last_overload_trip = trip
+            logger.warning(
+                "overload guard (%s): %s at %d (threshold %d) for %d samples during %s; %s.",
+                trip.channel,
+                trip.motor,
+                trip.current,
+                trip.threshold,
+                trip.samples,
+                trip.motion,
+                "no leg motion to stop" if resting else "stopping",
+            )
+        if not found or resting:
+            return False
+        self._engine.motion = Motion.IDLE
+        if any(t.channel == "arm" for t in found):
+            self._soft_return = arm
+            self._soft_return_monitor.reset()
+        return True
+
+    def drain_overload_trips(self) -> list[OverloadTrip]:
+        """Return and clear the overload trips recorded since the last call, oldest first.
+
+        The queue keeps the most recent 64; older trips are dropped when it overflows.
+        """
+        trips = list(self._overload_trips)
+        self._overload_trips.clear()
+        return trips
+
+    @property
+    def last_overload_trip(self) -> OverloadTrip | None:
+        """The most recent overload trip, kept across :meth:`connect`; ``None`` if none has happened."""
+        return self._last_overload_trip
 
     def _log_thermal_lockout(self) -> None:
         """Re-log every :data:`_THERMAL_IGNORE_LOG_INTERVAL_S` while the guard keeps overriding the neck.
@@ -2149,8 +2333,16 @@ class Palmimo:
             now - self._thermal_locked_since,
         )
 
+    def _wave_arm_legs(self, motion: Motion) -> tuple[int, ...]:
+        """Legs acting as the raised arm under *motion* (empty when none is)."""
+        if motion == Motion.WAVE:
+            return (self._engine.wave_leg,)
+        if motion in (Motion.WAVE_BOTH, Motion.CLAP):
+            return self._engine._WAVE_BOTH_LEGS
+        return ()
+
     def _sync_gesture_tuning(self) -> None:
-        """Apply/restore per-gesture servo tuning (WAVE / WAVE_BOTH / CLAP / STRETCH).
+        """Apply/restore per-gesture servo tuning (WAVE / WAVE_BOTH / CLAP / STRETCH / soft return).
 
         One release-then-apply path for every gesture that tweaks servo RAM
         (Profile_Velocity / Position_P_Gain / IIR): on any change of the
@@ -2164,29 +2356,38 @@ class Palmimo:
         Best-effort: drivers without these RAM tweaks simply no-op — STRETCH
         only needs Profile_Velocity, so it still tunes on a PV-only driver
         while the wave family additionally requires Position_P_Gain / IIR.
+
+        The overload guard's soft return is one more want-state here, so the
+        wave release above cannot overwrite its low gain on the frame after the
+        trip. If the gain cannot be written, the arm's torque is cut instead.
         """
         driver = self._driver
-        if driver is None or not hasattr(driver, "set_profile_velocity_units"):
+        if driver is None:
             return
+        has_pv = hasattr(driver, "set_profile_velocity_units")
         has_gain = hasattr(driver, "set_position_p_gain")
         has_iir = hasattr(driver, "set_iir")
+        # The RAM-tuning methods are optional capabilities probed with hasattr above.
+        tuner: Any = driver
 
         motion = self._engine.motion
-        # Wave family (needs Profile_Velocity + Position_P_Gain + IIR): the
-        # want key carries the waving leg set and the arm IIR weight, so a
+        arm_legs = self._wave_arm_legs(motion)
+        soft_return = self._soft_return if motion in _SOFT_RETURN_MOTIONS else None
+        if soft_return is not None and not has_gain:
+            self._cut_arm_torque(driver, soft_return, "the driver cannot set Position_P_Gain")
+            soft_return = None
+        # The want key carries the waving leg set and the arm IIR weight, so a
         # wave_left -> wave_right or wave -> clap switch re-applies. STRETCH
         # only tweaks leg Profile_Velocity, so it tunes even on a PV-only
         # driver.
-        if motion == Motion.WAVE and has_gain and has_iir:
-            want: tuple | None = ("wave", (self._engine.wave_leg,), _WAVE_ARM_IIR)
-        elif motion == Motion.WAVE_BOTH and has_gain and has_iir:
-            want = ("wave", self._engine._WAVE_BOTH_LEGS, _WAVE_ARM_IIR)
-        elif motion == Motion.CLAP and has_gain and has_iir:
-            # Lighter smoothing: the wave's IIR would low-pass the fast
-            # open/close away (see _CLAP_ARM_IIR).
-            want = ("wave", self._engine._WAVE_BOTH_LEGS, _CLAP_ARM_IIR)
-        elif motion == Motion.STRETCH:
+        if arm_legs and has_pv and has_gain and has_iir:
+            # CLAP gets lighter smoothing: the wave's IIR would low-pass the
+            # fast open/close away (see _CLAP_ARM_IIR).
+            want: tuple | None = ("wave", arm_legs, _CLAP_ARM_IIR if motion == Motion.CLAP else _WAVE_ARM_IIR)
+        elif motion == Motion.STRETCH and has_pv:
             want = ("stretch",)
+        elif soft_return is not None:
+            want = ("soft_return", soft_return)
         else:
             want = None
         if want == self._gesture_tuned:
@@ -2199,25 +2400,35 @@ class Palmimo:
         # Release whatever the previous gesture applied.
         if self._gesture_tuned is not None:
             with contextlib.suppress(Exception):
-                if self._gesture_tuned[0] == "wave":
-                    if hasattr(driver, "set_iir"):
-                        driver.set_iir(False)
-                    driver.set_position_p_gain(None)  # restore captured defaults
-                driver.set_profile_velocity_units(default_pv)
+                kind = self._gesture_tuned[0]
+                if kind == "soft_return":
+                    tuner.set_position_p_gain(None, motors=list(self._gesture_tuned[1]))
+                else:
+                    if kind == "wave":
+                        if has_iir:
+                            tuner.set_iir(False)
+                        tuner.set_position_p_gain(None)  # restore captured defaults
+                    tuner.set_profile_velocity_units(default_pv)
 
         # Apply the new gesture's tuning.
         if want is not None and want[0] == "wave":
             legs, arm_iir = want[1], want[2]
-            arm = [f"leg_{leg}_{axis}" for leg in legs for axis in ("yaw", "pitch1", "pitch2")]
+            arm = list(leg_motors(legs))
             with contextlib.suppress(Exception):
-                driver.set_profile_velocity_units(default_pv)  # legs smooth
-                driver.set_profile_velocity_units(_WAVE_ARM_PV, motors=arm)  # arm crisp
-                driver.set_position_p_gain(_WAVE_GAIN)
-                if hasattr(driver, "set_iir"):
-                    driver.set_iir(True, arm_iir, motors=arm)
+                tuner.set_profile_velocity_units(default_pv)  # legs smooth
+                tuner.set_profile_velocity_units(_WAVE_ARM_PV, motors=arm)  # arm crisp
+                tuner.set_position_p_gain(_WAVE_GAIN)
+                if has_iir:
+                    tuner.set_iir(True, arm_iir, motors=arm)
+        elif want is not None and want[0] == "soft_return":
+            try:
+                tuner.set_position_p_gain(SOFT_RETURN_GAIN, motors=list(want[1]))
+            except Exception as exc:
+                self._cut_arm_torque(driver, want[1], f"setting Position_P_Gain failed ({exc})")
+                want = None
         elif want is not None:
             with contextlib.suppress(Exception):
-                driver.set_profile_velocity_units(_STRETCH_LEG_PV)
+                tuner.set_profile_velocity_units(_STRETCH_LEG_PV)
 
         self._gesture_tuned = want
 

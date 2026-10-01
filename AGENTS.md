@@ -129,22 +129,25 @@ in `toolset.py` saying so).
 
 ## Hardware Safety
 
-- **The neck has thermal protection; the legs do not.** `Palmimo.step()` polls
-  neck temperature once a second (`palmimo_sdk/thermal.py`'s
+- **The neck has thermal protection; the legs have current protection, not thermal.**
+  `Palmimo.step()` polls neck temperature once a second (`palmimo_sdk/thermal.py`'s
   `NeckThermalGuard`) and, at >= 62°C (`HOT`), forces the neck to center and
   downgrades NOD/HEAD_SHAKE to IDLE. This holds until the neck cools to
   <= 55°C — see
   [doc/reference/api-reference.md](doc/reference/api-reference.md#neck-thermal-guard)
   for the full state table, including `neck_lock_active`, which can stay
   engaged past a HOT reading if telemetry then goes stale. Legs only expose
-  the reading (`ServoDriver.read_telemetry()`); nothing acts on it — do NOT
-  assume a leg self-protects, and watch leg temperature by hand during long or
-  stalled runs.
-- **The guard only covers callers that go through `Palmimo.step()`** — `run()`
+  their temperature (`ServoDriver.read_telemetry()`); nothing acts on it — do NOT
+  assume a leg self-protects against heat, and watch leg temperature by hand
+  during long or stalled runs. Leg current is acted on by the overload guard
+  (`palmimo_sdk/overload.py`): see
+  [doc/reference/api-reference.md](doc/reference/api-reference.md#overload-guard).
+- **The guards only cover callers that go through `Palmimo.step()`** — `run()`
   / `play()`, the MCP server, and the agent tool layer (`palmimo_sdk/agent/`).
   **The LeRobot teleop integration (`integrations/lerobot/`) drives the engine
   directly and is NOT covered** — see that package's `palmimo.py` module
-  docstring.
+  docstring. The overload guard likewise does not watch `wake()`, `sleep()` or
+  `return_to_neutral()`, which write the driver directly.
 - Always smooth transitions — abrupt jumps damage gears
 - `stop()` returns to neutral gradually; NEVER skip it
 - Safe servo range: 200-3900 (avoid mechanical limits at 0 and 4095)

@@ -47,8 +47,9 @@ _DEFAULT_POSITION_P_GAIN = 900
 
 # The health signals the safety layer watches, read as one span. Present_Current
 # through Present_Temperature is a contiguous range on the control table, so the
-# registers in between ride along at no extra cost.
-TELEMETRY_REGISTERS = ("Present_Current", "Present_Input_Voltage", "Present_Temperature")
+# registers in between ride along at no extra cost. Present_Position sits inside
+# that range, so reading it adds no bus time.
+TELEMETRY_REGISTERS = ("Present_Current", "Present_Position", "Present_Input_Voltage", "Present_Temperature")
 # Present_Input_Voltage counts tenths of a volt.
 _VOLTAGE_UNITS_PER_VOLT = 10.0
 
@@ -430,6 +431,13 @@ class DynamixelDriver(ServoDriver):
             for motor in motors:
                 self._bus.write("Position_P_Gain", motor, v, normalize=False)
 
+    def set_torque_enabled(self, enabled: bool, motors: Sequence[str] | None = None) -> None:
+        """Write Torque_Enable on *motors* (every motor when ``None``), one acknowledged write each."""
+        if self._bus is None:
+            raise RuntimeError("Driver is not connected. Call connect() before set_torque_enabled().")
+        for motor in self._bus.motors if motors is None else motors:
+            self._bus.write("Torque_Enable", motor, int(enabled))
+
     @property
     def position_p_gain(self) -> int | None:
         """Effective Position_P_Gain (the set value, else the captured default)."""
@@ -493,6 +501,7 @@ class DynamixelDriver(ServoDriver):
             current={n: v["Present_Current"] for n, v in sweep.values.items()},
             voltage={n: v["Present_Input_Voltage"] / _VOLTAGE_UNITS_PER_VOLT for n, v in sweep.values.items()},
             temperature={n: v["Present_Temperature"] for n, v in sweep.values.items()},
+            position={n: v["Present_Position"] for n, v in sweep.values.items()},
             silent=sweep.silent,
             unreached=sweep.unreached,
         )
