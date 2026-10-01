@@ -25,7 +25,7 @@ import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from ..kinematics import NEUTRAL
+from ..kinematics import LEG_MOTORS, NEUTRAL
 from ._timeout import ProbeTimeoutError, run_with_timeout
 from .base import ServoDriver, ServoPositions, ServoTelemetry
 
@@ -76,12 +76,7 @@ def palmimo_motor_ids() -> dict[str, int]:
     IDs 19-21: neck (pitch1, pitch2, yaw from body to head). Names match the
     keys the engine emits (``leg_{1-6}_{yaw,pitch1,pitch2}``, ``neck_*``).
     """
-    ids: dict[str, int] = {}
-    for leg_id in range(1, 7):
-        base_id = (leg_id - 1) * 3 + 1
-        ids[f"leg_{leg_id}_yaw"] = base_id
-        ids[f"leg_{leg_id}_pitch1"] = base_id + 1
-        ids[f"leg_{leg_id}_pitch2"] = base_id + 2
+    ids = {name: motor_id for motor_id, name in enumerate(LEG_MOTORS, start=1)}
     ids["neck_pitch1"] = 19
     ids["neck_pitch2"] = 20
     ids["neck_yaw"] = 21

@@ -860,6 +860,8 @@ helpers include `leg_ik()` and `leg_servo_ticks()` for inverse kinematics, plus
 `leg_forward_kinematics(leg_id, ticks)` for converting one leg's three raw servo
 positions into an absolute `(x, y, z)` foot position in the body frame. All
 distances are millimetres; tick dictionaries use the standard `leg_<id>_*` keys.
+Those keys have one home here too: `LEG_MOTORS` is all 18 leg axis names in bus
+order, and `leg_motors(legs)` returns the three axes of each leg given.
 
 The user-facing SDK does not depend on the plotting or tuning scripts. Those
 scripts consume these helpers so their geometry cannot drift from the motion

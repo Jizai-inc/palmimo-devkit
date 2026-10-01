@@ -10,7 +10,7 @@ angles degrees.
 """
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 
 # Dynamixel resolution
@@ -50,6 +50,19 @@ LEG_MOUNT_RADIUS: dict[int, float] = {
 # Left-side legs are mirrored, so their pitch servos turn the opposite way
 LEFT_LEGS: tuple[int, ...] = (1, 2, 3)
 RIGHT_LEGS: tuple[int, ...] = (4, 5, 6)
+ALL_LEGS: tuple[int, ...] = LEFT_LEGS + RIGHT_LEGS
+
+# Joints of one leg, from the body out to the tip.
+LEG_AXES: tuple[str, ...] = ("yaw", "pitch1", "pitch2")
+
+
+def leg_motors(legs: Iterable[int]) -> tuple[str, ...]:
+    """Return the three axis names of each leg in *legs*, in the order given."""
+    return tuple(f"leg_{leg}_{axis}" for leg in legs for axis in LEG_AXES)
+
+
+# Every leg axis in bus order (leg 1 yaw .. leg 6 pitch2).
+LEG_MOTORS: tuple[str, ...] = leg_motors(ALL_LEGS)
 
 
 def base_foot_pos(leg_id: int) -> list[float]:
