@@ -149,7 +149,12 @@ A reservation lasts across gaps in playback or recording. Teardown releases it
 only after the device handle closes, so a bounded camera or mic close that
 abandons a blocked read preserves exclusivity until deferred cleanup succeeds.
 The lock file is retained rather than unlinked, keeping all waiters on the same
-inode. See [resource reservations](../reference/api-reference.md#resource-reservations)
+inode. Shared storage under `/run/lock/palmimo` lets local users coordinate
+without group membership or image-specific setup. Newly created directories
+are sticky and world-writable (`1777`); files are world-readable and writable
+(`0666`). Opening existing files without `O_CREAT` permits cooperation under
+Linux's `fs.protected_regular`. An unusable shared directory fails rather than
+silently splitting reservations into private temporary storage. See [resource reservations](../reference/api-reference.md#resource-reservations)
 for API, storage, and error contracts.
 
 ### Package Structure

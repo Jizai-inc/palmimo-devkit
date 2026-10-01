@@ -21,11 +21,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import mkstemp
-from typing import Literal
 
 
-RUNTIME_DIR = Path("/run/palmimo")
-SYSTEM_LOCK_DIR = RUNTIME_DIR / "locks"
+SYSTEM_LOCK_ROOT = Path("/run/lock")
+SYSTEM_LOCK_DIR = SYSTEM_LOCK_ROOT / "palmimo"
 _RESOURCES = frozenset({"servo_bus", "camera", "microphone", "speaker", "display"})
 _MUTEX = threading.Lock()
 
@@ -56,17 +55,15 @@ class ResourceBusyError(ReservationError):
 
 
 class ReservationSetupError(ReservationError):
-    """Reservation storage cannot be used; inspect remediation to choose a fix."""
+    """Reservation storage cannot be used; ownership is available when known."""
 
     def __init__(
         self,
         message: str,
         *,
-        remediation: Literal["join_group", "update_platform"] | None = None,
         owner: str | None = None,
         group: str | None = None,
     ) -> None:
-        self.remediation = remediation
         self.owner = owner
         self.group = group
         super().__init__(message)
@@ -139,18 +136,14 @@ def _setup_error(path: Path, error: OSError | None = None) -> ReservationSetupEr
     if info is not None:
         owner = _user_name(info.st_uid)
         group = _group_name(info.st_gid)
-    ownership = f" Owner: {owner}; group: {group}." if owner is not None else " Ownership unavailable."
+    ownership = (
+        f" Existing path '{current}': owner: {owner}; group: {group}; mode: {info.st_mode & 0o7777:04o}."
+        if info is not None
+        else " Ownership and permissions unavailable."
+    )
     detail = f" {error}" if error is not None else ""
-    remediation: Literal["join_group", "update_platform"]
-    if group == "palmimo-locks":
-        remediation = "join_group"
-        guidance = "Add this user to the palmimo-locks group, then log out and log in again."
-    else:
-        remediation = "update_platform"
-        guidance = "Update the platform in Portal and reboot the robot."
     return ReservationSetupError(
-        f"Cannot use reservation path '{path}'.{ownership}{detail} {guidance}",
-        remediation=remediation,
+        f"Cannot use reservation path '{path}'.{ownership}{detail}",
         owner=owner,
         group=group,
     )
@@ -160,14 +153,18 @@ def _lock_directory() -> Path:
     override = os.environ.get("PALMIMO_LOCK_DIR")
     if override is not None:
         directory = Path(override)
-    elif SYSTEM_LOCK_DIR.exists():
+    elif SYSTEM_LOCK_ROOT.exists():
         directory = SYSTEM_LOCK_DIR
-    elif RUNTIME_DIR.exists():
-        raise _setup_error(SYSTEM_LOCK_DIR)
     else:
         directory = Path(tempfile.gettempdir()) / f"palmimo-locks-{os.getuid() if hasattr(os, 'getuid') else 'local'}"
     try:
-        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            directory.mkdir(parents=True)
+        except FileExistsError:
+            if not directory.is_dir():
+                raise
+        else:
+            directory.chmod(0o1777)
         if not os.access(directory, os.W_OK | os.X_OK):
             raise _setup_error(directory)
     except OSError as error:
@@ -183,7 +180,7 @@ def _open_lock(path: Path) -> int:
             pass
         fd, temporary = mkstemp(prefix=".palmimo-lock-", dir=path.parent)
         try:
-            os.fchmod(fd, 0o660)
+            os.fchmod(fd, 0o666)
             # Publishing only after chmod keeps restrictive umasks invisible to peers.
             with suppress(FileExistsError):
                 os.link(temporary, path)

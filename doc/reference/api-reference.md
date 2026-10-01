@@ -390,7 +390,7 @@ On non-POSIX platforms without `fcntl`, reservations only count references withi
 |---|---|
 | `palmimo_sdk.reservation.reserve(*resources, timeout=None)` | Context manager; acquires logical resource names in lexical order and releases all acquired references on exit or acquisition failure. By default, contention fails immediately; a finite non-negative `timeout` sets a total wait budget in seconds. |
 | `ResourceBusyError` | Exported from `palmimo_sdk`; attributes `resource`, `holder_pid`, `holder_user`, `holder_app`. Holder fields are `None` if metadata is unreadable, invalid, or names a nonexistent process. |
-| `ReservationSetupError` | Exported from `palmimo_sdk`; unusable reservation storage or permissions. Attributes `owner` and `group` identify ownership when available; `remediation` is `join_group` for the `palmimo-locks` group or `update_platform` for other groups. |
+| `ReservationSetupError` | Exported from `palmimo_sdk`; unusable reservation storage or permissions. Attributes `owner` and `group` identify ownership when available; the error reports the unusable path and existing ownership and permissions. |
 
 Both exceptions derive from `palmimo_sdk.reservation.ReservationError`, which
 inherits directly from `Exception`. They propagate from camera `read()` / `latest()` and
@@ -398,14 +398,14 @@ microphone `record()`; ordinary device-open `RuntimeError` still produces
 `(False, None)` / `None` respectively.
 
 `PALMIMO_LOCK_DIR` overrides the lock directory and is created if absent.
-Otherwise the SDK uses `/run/palmimo/locks`; permission failures there are setup
-errors, with no temporary-directory fallback. A `palmimo-locks` ownership failure
-asks the user to join that group; another group asks for a platform update in
-Portal followed by a robot reboot.
-Only a machine without `/run/palmimo` uses `palmimo-locks-<uid>` beneath its
-system temporary directory. A machine with `/run/palmimo` but no lock directory
-fails with a setup error. Lock files are created with mode `0660` regardless of
-umask. `PALMIMO_APP_ID` supplies the holder's app name; otherwise it is the
+Otherwise, when `/run/lock` exists, the SDK uses `/run/lock/palmimo`, creating it
+if absent. An unusable override or system directory raises
+`ReservationSetupError` without falling back to a temporary directory.
+Only a machine without `/run/lock` uses `palmimo-locks-<uid>` beneath its
+system temporary directory. SDK-created directories have mode `1777`; new
+lock files have mode `0666`, regardless of umask, so all local users can
+participate. Existing files are opened without creation flags and retained
+after release. `PALMIMO_APP_ID` supplies the holder's app name; otherwise it is the
 process name. Holder metadata also records the effective user's name and a UTC
 `acquired_at` timestamp.
 

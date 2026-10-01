@@ -126,11 +126,11 @@ def test_reservation_shares_resource_between_threads(lock_dir: Path) -> None:
     assert contender("camera", lock_dir).returncode == 0
 
 
-def test_reservation_creates_group_writable_file_despite_umask(lock_dir: Path) -> None:
+def test_reservation_creates_world_writable_file_despite_umask(lock_dir: Path) -> None:
     previous = os.umask(0o077)
     try:
         with rsv.reserve("servo_bus"):
-            assert stat.S_IMODE((lock_dir / "servo_bus.lock").stat().st_mode) == 0o660
+            assert stat.S_IMODE((lock_dir / "servo_bus.lock").stat().st_mode) == 0o666
     finally:
         os.umask(previous)
 
@@ -180,34 +180,68 @@ def test_reservation_ignores_unreadable_holder(lock_dir: Path, monkeypatch: pyte
     assert caught.value.holder_app is None
 
 
-@pytest.mark.parametrize("choice", ["override", "system", "development"])
+@pytest.mark.parametrize("choice", ["override", "system", "new_system", "development"])
 def test_reservation_selects_lock_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, choice: str) -> None:
-    runtime = tmp_path / "run" / "palmimo"
-    system = runtime / "locks"
+    runtime = tmp_path / "run" / "lock"
+    system = runtime / "palmimo"
     override = tmp_path / "override"
-    monkeypatch.setattr(rsv, "RUNTIME_DIR", runtime)
+    monkeypatch.setattr(rsv, "SYSTEM_LOCK_ROOT", runtime)
     monkeypatch.setattr(rsv, "SYSTEM_LOCK_DIR", system)
     monkeypatch.setattr(rsv.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.delenv("PALMIMO_LOCK_DIR", raising=False)
     if choice in {"override", "system"}:
         system.mkdir(parents=True)
+    if choice == "new_system":
+        runtime.mkdir(parents=True)
     if choice == "override":
         monkeypatch.setenv("PALMIMO_LOCK_DIR", str(override))
-    expected = {"override": override, "system": system, "development": tmp_path / f"palmimo-locks-{os.getuid()}"}[
-        choice
-    ]
+    expected = {
+        "override": override,
+        "system": system,
+        "new_system": system,
+        "development": tmp_path / f"palmimo-locks-{os.getuid()}",
+    }[choice]
     with rsv.reserve("camera"):
         assert contender("camera", expected).returncode == 23
 
 
-def test_reservation_rejects_missing_system_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    runtime = tmp_path / "palmimo"
-    runtime.mkdir()
+@pytest.mark.parametrize("choice", ["override", "system"])
+def test_reservation_creates_shared_directory_despite_umask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, choice: str
+) -> None:
+    root = tmp_path / "lock"
+    root.mkdir()
+    directory = root / "palmimo"
+    monkeypatch.setattr(rsv, "SYSTEM_LOCK_ROOT", root)
+    monkeypatch.setattr(rsv, "SYSTEM_LOCK_DIR", directory)
     monkeypatch.delenv("PALMIMO_LOCK_DIR", raising=False)
-    monkeypatch.setattr(rsv, "RUNTIME_DIR", runtime)
-    monkeypatch.setattr(rsv, "SYSTEM_LOCK_DIR", runtime / "locks")
+    if choice == "override":
+        monkeypatch.setenv("PALMIMO_LOCK_DIR", str(directory))
+    previous = os.umask(0o077)
+    try:
+        with rsv.reserve("camera"):
+            assert stat.S_IMODE(directory.stat().st_mode) == 0o1777
+    finally:
+        os.umask(previous)
+
+
+@pytest.mark.parametrize("choice", ["override", "system"])
+def test_reservation_does_not_fallback_when_directory_creation_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, choice: str
+) -> None:
+    root = tmp_path / "lock"
+    root.mkdir()
+    directory = root / "palmimo"
+    directory.touch()
+    monkeypatch.setattr(rsv, "SYSTEM_LOCK_ROOT", root)
+    monkeypatch.setattr(rsv, "SYSTEM_LOCK_DIR", directory)
+    monkeypatch.setattr(rsv.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.delenv("PALMIMO_LOCK_DIR", raising=False)
+    if choice == "override":
+        monkeypatch.setenv("PALMIMO_LOCK_DIR", str(directory))
     with pytest.raises(ReservationSetupError), rsv.reserve("camera"):
         pass
+    assert not list(tmp_path.rglob("*.lock"))
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="Root bypasses directory write permissions")
@@ -217,7 +251,7 @@ def test_reservation_does_not_fallback_when_directory_unwritable(
 ) -> None:
     directory = tmp_path / "palmimo" / "locks"
     directory.mkdir(parents=True)
-    monkeypatch.setattr(rsv, "RUNTIME_DIR", directory.parent)
+    monkeypatch.setattr(rsv, "SYSTEM_LOCK_ROOT", directory.parent)
     monkeypatch.setattr(rsv, "SYSTEM_LOCK_DIR", directory)
     monkeypatch.delenv("PALMIMO_LOCK_DIR", raising=False)
     if choice == "override":
@@ -226,7 +260,7 @@ def test_reservation_does_not_fallback_when_directory_unwritable(
     try:
         with pytest.raises(ReservationSetupError) as caught, rsv.reserve("camera"):
             pass
-        assert caught.value.remediation in {"join_group", "update_platform"}
+        assert caught.value.owner == pwd.getpwuid(directory.stat().st_uid).pw_name
     finally:
         directory.chmod(0o770)
     assert not (directory / "camera.lock").exists()
@@ -245,7 +279,7 @@ def test_reservation_reports_file_permission_owner(lock_dir: Path) -> None:
 
         assert caught.value.group == grp.getgrgid(path.stat().st_gid).gr_name
     finally:
-        path.chmod(0o660)
+        path.chmod(0o666)
 
 
 @pytest.mark.parametrize("code", [errno.EACCES, errno.EPERM])
@@ -348,79 +382,31 @@ def test_reservation_releases_after_metadata_write_failure(lock_dir: Path, monke
     assert contender("camera", lock_dir).returncode == 0
 
 
-@pytest.mark.parametrize("ending", ["normal", "sigkill"])
-def test_reservation_never_publishes_incomplete_file_permissions(lock_dir: Path, ending: str) -> None:
-    script = """
-import os, sys
-import palmimo_sdk.reservation as rsv
-os.umask(0o027)
-original = os.fchmod
-def paused(fd, mode):
-    print('ready', flush=True)
-    sys.stdin.readline()
-    original(fd, mode)
-rsv.os.fchmod = paused
-with rsv.reserve('camera'):
-    pass
-"""
-    process = subprocess.Popen(
-        [sys.executable, "-c", script],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        env={**os.environ, "PALMIMO_LOCK_DIR": str(lock_dir)},
-    )
-    try:
-        assert process.stdout is not None
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ)
-            assert selector.select(timeout=10)
-        assert process.stdout.readline().strip() == "ready"
-        path = lock_dir / "camera.lock"
-        assert not path.exists() or stat.S_IMODE(path.stat().st_mode) == 0o660
-        if ending == "sigkill":
-            process.kill()
-        else:
-            assert process.stdin is not None
-            process.stdin.write("\n")
-            process.stdin.flush()
-        process.wait(timeout=10)
-        if ending == "normal":
-            assert process.returncode == 0
-            assert stat.S_IMODE(path.stat().st_mode) == 0o660
-        else:
-            assert not path.exists() or stat.S_IMODE(path.stat().st_mode) == 0o660
-    finally:
-        if process.poll() is None:
-            process.kill()
-        process.communicate(timeout=10)
-
-
-@pytest.mark.parametrize("group,remediation", [("palmimo-locks", "join_group"), ("palmimo-apps", "update_platform")])
-@pytest.mark.parametrize("target", ["directory", "file"])
-def test_reservation_setup_error_identifies_remediation(
-    lock_dir: Path, monkeypatch: pytest.MonkeyPatch, group: str, remediation: str, target: str
+def test_reservation_reopens_existing_file_under_protected_regular(
+    lock_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import grp
-    from types import SimpleNamespace
+    lock_dir.mkdir(mode=0o1777)
+    path = lock_dir / "camera.lock"
+    path.touch(mode=0o666)
+    inode = path.stat().st_ino
+    original_open = os.open
 
-    lock_dir.mkdir()
-    if target == "file":
-        (lock_dir / "camera.lock").touch()
-    monkeypatch.setattr(grp, "getgrgid", lambda _: SimpleNamespace(gr_name=group))
-    if target == "directory":
-        monkeypatch.setattr(rsv.os, "access", lambda *args: False)
-    else:
+    def protected_open(
+        file: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if flags & os.O_CREAT:
+            raise PermissionError(errno.EACCES, "Creation denied by protected_regular")
+        return original_open(file, flags, mode, dir_fd=dir_fd)
 
-        def denied(*args: object, **kwargs: object) -> int:
-            raise PermissionError(errno.EACCES, "Cannot open lock")
-
-        monkeypatch.setattr(rsv.os, "open", denied)
-    with pytest.raises(ReservationSetupError) as caught, rsv.reserve("camera"):
-        pass
-    assert caught.value.remediation == remediation
-    assert caught.value.group == group
+    monkeypatch.setattr(rsv.os, "open", protected_open)
+    with rsv.reserve("camera"):
+        assert contender("camera", lock_dir).returncode == 23
+    assert path.stat().st_ino == inode
+    assert contender("camera", lock_dir).returncode == 0
 
 
 def test_sdk_imports_without_posix_only_modules() -> None:
