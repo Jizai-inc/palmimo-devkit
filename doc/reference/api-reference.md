@@ -384,6 +384,7 @@ its reservation between recordings, including when it delegates to `MicStream`.
 An in-flight recording keeps an additional reference until its recorder exits,
 even if `Microphone.close()` is called meanwhile.
 Compute-only motion reserves nothing.
+While another program is connected through `Palmimo.connect()` with a speaker or microphone, those devices cannot be used standalone either (for example a separate `Speaker` or `MicStream`); stop that program first.
 On non-POSIX platforms without `fcntl`, reservations only count references within the process; they do not provide interprocess exclusion.
 
 | API | Contract |
