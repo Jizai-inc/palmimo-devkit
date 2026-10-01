@@ -821,7 +821,7 @@ the position write already needs) and classifies the highest reading:
 | `NORMAL` | < 55°C | None |
 | `WARM` | >= 55°C | Logged once on entry; motion is unaffected |
 | `HOT` | >= 62°C | The neck is glided to center every frame, overriding `look()`'s target AND any motion's own neck keyframes (NOD/HEAD_SHAKE, BOW/STRETCH); `look()`, `nod()`, `head_shake()`, and `set_motion("nod"/"head_shake")` return `False` instead of taking effect, until the neck cools to <= 55°C |
-| `UNMONITORED` | No driver, the driver doesn't implement `read_telemetry()`, or the last COMPLETE sweep is older than `NECK_STALE_S` (10s) | `neck_temperature_c` is `None`. `neck_lock_active` stays `True` if the guard was HOT when it lost telemetry (see below) |
+| `UNMONITORED` | No driver, the driver doesn't implement `read_telemetry()` or doesn't carry the neck motors, or the last COMPLETE sweep is older than `NECK_STALE_S` (10s) | `neck_temperature_c` is `None`. `neck_lock_active` stays `True` if the guard was HOT when it lost telemetry (see below) |
 
 `HOT` is latched (hysteresis: released only at <= 55°C, not just below its
 own 62°C entry threshold) — without it, a neck hovering near the boundary

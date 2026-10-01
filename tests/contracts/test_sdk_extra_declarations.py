@@ -77,6 +77,8 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk.robot": _NO_EXTRA,
     # signal disposition and the park -- signal, contextlib, threading, time.
     "palmimo_sdk.shutdown": _NO_EXTRA,
+    # Scheduled read_telemetry() calls for the guards (stdlib logging only).
+    "palmimo_sdk.telemetry": _NO_EXTRA,
     # A pure state machine over ServoTelemetry (stdlib logging/enum/time only).
     "palmimo_sdk.thermal": _NO_EXTRA,
 }

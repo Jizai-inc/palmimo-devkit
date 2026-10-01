@@ -297,3 +297,17 @@ def test_unsupported_latch_is_re_evaluated_after_reset() -> None:
     guard.reset()
     guard.poll(telemetry_driver)
     assert guard.state is NeckThermalState.WARM
+
+
+def test_driver_missing_a_neck_motor_disables_the_guard_with_one_warning(caplog: pytest.LogCaptureFixture) -> None:
+    clock = FakeClock()
+    guard = NeckThermalGuard(now=clock)
+    driver = RaisingDriver(KeyError("Unknown motor(s) for a span read: ['neck_yaw']"))
+
+    with caplog.at_level("WARNING"):
+        for _ in range(12):
+            guard.poll(driver)
+            clock.advance(1.0)
+
+    assert guard.state is NeckThermalState.UNMONITORED
+    assert len([r for r in caplog.records if "neck thermal guard is disabled" in r.getMessage()]) == 1
