@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -32,6 +33,7 @@ def holder(resource: str, directory: Path, metadata: str | None = None) -> Itera
     script = """
 import json, os, sys
 from pathlib import Path
+from typing import Any
 from palmimo_sdk.reservation import reserve
 with reserve(sys.argv[1]):
     if sys.argv[2] != 'default':
@@ -413,3 +415,65 @@ def test_sdk_imports_without_posix_only_modules() -> None:
     blocked = "import sys\nfor name in ('fcntl', 'pwd', 'grp'):\n    sys.modules[name] = None\nimport palmimo_sdk\n"
     result = subprocess.run([sys.executable, "-c", blocked], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("stage", ["existing", "publication"])
+def test_reservation_rejects_symlink_without_overwriting_target(
+    lock_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    lock_dir.mkdir()
+    target = tmp_path / "victim"
+    target.write_text("precious data")
+    path = lock_dir / "camera.lock"
+    if stage == "existing":
+        path.symlink_to(target)
+    else:
+
+        def replace_publication(source: object, destination: Path) -> None:
+            destination.symlink_to(target)
+            raise FileExistsError()
+
+        monkeypatch.setattr(rsv.os, "link", replace_publication)
+    with pytest.raises(ReservationSetupError), rsv.reserve("camera"):
+        pass
+    assert target.read_text() == "precious data"
+
+
+@pytest.mark.parametrize("kind", ["directory", "fifo"])
+def test_reservation_rejects_nonregular_lock(lock_dir: Path, kind: str) -> None:
+    lock_dir.mkdir()
+    path = lock_dir / "camera.lock"
+    if kind == "directory":
+        path.mkdir()
+    else:
+        os.mkfifo(path)
+    with pytest.raises(ReservationSetupError), rsv.reserve("camera"):
+        pass
+
+
+def test_reservation_rejects_symlink_directory(lock_dir: Path, tmp_path: Path) -> None:
+    target = tmp_path / "other"
+    target.mkdir()
+    lock_dir.symlink_to(target, target_is_directory=True)
+    with pytest.raises(ReservationSetupError), rsv.reserve("camera"):
+        pass
+    assert not list(target.iterdir())
+
+
+def test_reservation_publishes_only_shared_directory(lock_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    original_mkdir = Path.mkdir
+    observed: list[int] = []
+
+    def observe_mkdir(path: Path, *args: Any, **kwargs: Any) -> None:
+        original_mkdir(path, *args, **kwargs)
+        if lock_dir.exists():
+            observed.append(stat.S_IMODE(lock_dir.stat().st_mode))
+
+    monkeypatch.setattr(Path, "mkdir", observe_mkdir)
+    previous = os.umask(0o077)
+    try:
+        with rsv.reserve("camera"):
+            observed.append(stat.S_IMODE(lock_dir.stat().st_mode))
+    finally:
+        os.umask(previous)
+    assert observed and set(observed) == {0o1777}

@@ -792,6 +792,7 @@ class Speaker:
         Join the returned handle and read its ``error`` to find out whether
         it actually spoke. :meth:`stop` (or :meth:`Speaker.stop`) can
         interrupt it mid-utterance.
+        Reservation errors can be raised synchronously before a handle is returned.
         """
         voice = lang or self.config.lang
         handle = SpeechHandle(self)

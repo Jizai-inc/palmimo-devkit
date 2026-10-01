@@ -219,6 +219,7 @@ class FaceDisplay:
             else:
                 reservation.release()
 
+        previous_reservation = self._reservation
         try:
             port, self._ser, self._reservation = run_with_timeout(
                 _open, timeout=self._connect_timeout, on_late_result=_on_late_open
@@ -230,6 +231,8 @@ class FaceDisplay:
                 f"{self._connect_timeout:.1f}s (no response opening the serial port). Check that "
                 "the face display is powered and this is the correct port."
             ) from exc
+        if previous_reservation is not None:
+            previous_reservation.release()
         self._port = port
 
         if self._on_power_event is not None:
@@ -245,15 +248,16 @@ class FaceDisplay:
     def disconnect(self) -> None:
         """Stop the reader thread (if any) and close the port.
 
-        If closing the port fails, retry disconnect() to release the connection.
+        A failed close clears the connection but retains its reservation until
+        a successful reconnect and disconnect.
         """
         self._stop.set()
         if self._reader is not None:
             self._reader.join(timeout=self._timeout + 0.5)
             self._reader = None
         if self._ser is not None:
-            self._ser.close()
-            self._ser = None
+            ser, self._ser = self._ser, None
+            ser.close()
             if self._reservation is not None:
                 self._reservation.release()
                 self._reservation = None

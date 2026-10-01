@@ -11,6 +11,7 @@ import errno
 import json
 import math
 import os
+import stat
 import sys
 import tempfile
 import threading
@@ -143,7 +144,8 @@ def _setup_error(path: Path, error: OSError | None = None) -> ReservationSetupEr
     )
     detail = f" {error}" if error is not None else ""
     return ReservationSetupError(
-        f"Cannot use reservation path '{path}'.{ownership}{detail}",
+        f"Cannot use reservation path '{path}'.{ownership}{detail} "
+        "Set PALMIMO_LOCK_DIR to a location writable by every participating user.",
         owner=owner,
         group=group,
     )
@@ -158,13 +160,21 @@ def _lock_directory() -> Path:
     else:
         directory = Path(tempfile.gettempdir()) / f"palmimo-locks-{os.getuid() if hasattr(os, 'getuid') else 'local'}"
     try:
-        try:
-            directory.mkdir(parents=True)
-        except FileExistsError:
-            if not directory.is_dir():
-                raise
-        else:
-            directory.chmod(0o1777)
+        if not directory.exists() and not directory.is_symlink():
+            directory.parent.mkdir(parents=True, exist_ok=True)
+            temporary = Path(tempfile.mkdtemp(prefix=".palmimo-locks-", dir=directory.parent))
+            try:
+                temporary.chmod(0o1777)
+                try:
+                    temporary.rename(directory)
+                except OSError as error:
+                    if error.errno not in {errno.EEXIST, errno.ENOTEMPTY}:
+                        raise
+            finally:
+                if temporary.exists():
+                    temporary.rmdir()
+        if not stat.S_ISDIR(directory.lstat().st_mode):
+            raise _setup_error(directory)
         if not os.access(directory, os.W_OK | os.X_OK):
             raise _setup_error(directory)
     except OSError as error:
@@ -172,10 +182,21 @@ def _lock_directory() -> Path:
     return directory.resolve()
 
 
+def _open_regular_lock(path: Path) -> int:
+    fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise _setup_error(path)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
 def _open_lock(path: Path) -> int:
     try:
         try:
-            return os.open(path, os.O_RDWR)
+            return _open_regular_lock(path)
         except FileNotFoundError:
             pass
         fd, temporary = mkstemp(prefix=".palmimo-lock-", dir=path.parent)
@@ -187,7 +208,7 @@ def _open_lock(path: Path) -> int:
         finally:
             os.close(fd)
             os.unlink(temporary)
-        return os.open(path, os.O_RDWR)
+        return _open_regular_lock(path)
     except OSError as error:
         raise _setup_error(path, error) from error
 

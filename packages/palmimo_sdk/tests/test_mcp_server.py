@@ -1695,3 +1695,49 @@ def test_main_never_prints_the_bearer_token_while_serving_over_http(
 
     captured = capsys.readouterr()
     assert "s3cr3t" not in captured.out + captured.err
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        palmimo_sdk.ReservationSetupError("Storage unavailable"),
+        palmimo_sdk.ResourceBusyError("servo_bus", 123, "user", "holder"),
+    ],
+)
+def test_main_reports_reservation_failure_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, error: Exception
+) -> None:
+    _patch_all_peripheral_builders(monkeypatch)
+
+    def fail_probe(*args: Any) -> None:
+        raise error
+
+    monkeypatch.setattr(mcp_main, "_build_servo_driver", fail_probe)
+    with pytest.raises(SystemExit) as caught:
+        mcp_main.main([])
+    assert caught.value.code == 1
+    assert len(capsys.readouterr().err.splitlines()) == 1
+
+
+@pytest.mark.parametrize("app", [None, "custom-mcp"])
+def test_main_identifies_reservations_as_mcp(monkeypatch: pytest.MonkeyPatch, tmp_path: Any, app: str | None) -> None:
+    import json
+
+    from palmimo_sdk.reservation import reserve
+
+    monkeypatch.setenv("PALMIMO_LOCK_DIR", str(tmp_path / "locks"))
+    if app is None:
+        monkeypatch.delenv("PALMIMO_APP_ID", raising=False)
+    else:
+        monkeypatch.setenv("PALMIMO_APP_ID", app)
+    observed: list[str] = []
+    _patch_all_peripheral_builders(monkeypatch)
+
+    def probe(*args: Any) -> None:
+        with reserve("servo_bus"):
+            observed.append(json.loads((tmp_path / "locks" / "servo_bus.lock").read_text())["app"])
+
+    monkeypatch.setattr(mcp_main, "_build_servo_driver", probe)
+    monkeypatch.setattr(mcp_main.anyio, "run", lambda *args: None)
+    mcp_main.main([])
+    assert observed == [app or "palmimo-mcp"]

@@ -1377,3 +1377,41 @@ def test_scan_dynamixel_disables_progress_when_stderr_is_not_a_tty(monkeypatch: 
 
 def test_scan_dynamixel_shows_progress_when_stderr_is_a_tty(monkeypatch: Any) -> None:
     assert _scan_recording_progress_kwargs(monkeypatch, stderr_is_a_tty=True)["disable"] is False
+
+
+@pytest.mark.parametrize("command", ["scan", "power", "errors", "joints", "recover", "oscillate"])
+def test_diagnose_servos_refuses_busy_bus(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any, command: str
+) -> None:
+    import os
+    import subprocess
+    import sys
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("PALMIMO_LOCK_DIR", str(tmp_path / "locks"))
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "from palmimo_sdk.reservation import reserve; import sys;\nwith reserve('servo_bus'):\n print('ready', flush=True); sys.stdin.read()",
+        ],
+        env={**os.environ, "PALMIMO_APP_ID": "diagnostic-holder"},
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    port = MagicMock()
+    monkeypatch.setattr(diagnose_servos, "PortHandler", port)
+    args = ["diagnose_servos", command, "--port", "fake"]
+    if command == "oscillate":
+        args += ["--id", "1"]
+    monkeypatch.setattr(sys, "argv", args)
+    try:
+        assert process.stdout is not None
+        assert process.stdout.readline().strip() == "ready"
+        assert diagnose_servos.main() == 1
+        port.assert_not_called()
+        output = capsys.readouterr()
+        assert "diagnostic-holder" in output.out + output.err
+    finally:
+        process.communicate(timeout=10)

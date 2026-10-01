@@ -152,7 +152,10 @@ The lock file is retained rather than unlinked, keeping all waiters on the same
 inode. Shared storage under `/run/lock/palmimo` lets local users coordinate
 without group membership or image-specific setup. Newly created directories
 are sticky and world-writable (`1777`); files are world-readable and writable
-(`0666`). Opening existing files without `O_CREAT` permits cooperation under
+(`0666`). Directories are published after their shared permissions are set,
+so peers never see a partially configured directory at the reservation path.
+Lock opens reject symlinks and validate the descriptor as a regular file before
+locking or writing metadata. Opening existing files without `O_CREAT` permits cooperation under
 Linux's `fs.protected_regular`. An unusable shared directory fails rather than
 silently splitting reservations into private temporary storage. See [resource reservations](../reference/api-reference.md#resource-reservations)
 for API, storage, and error contracts.

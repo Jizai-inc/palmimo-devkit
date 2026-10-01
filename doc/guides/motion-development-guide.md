@@ -8,6 +8,7 @@ Step-by-step guide for adding new motions to Palmimo.
 - See [motor_layout.drawio.svg](../images/motor_layout.drawio.svg) for the servo layout and leg numbering
 - See the README's [Safety](../../README.md#-safety) section for the servo range limits
 - Complete the setup in [installation.md](installation.md)
+- Before running hardware diagnostics, handle [resource reservation errors](../reference/api-reference.md#resource-reservations); stop the reported holder before retrying.
 
 ## Step 1: Define the Motion
 

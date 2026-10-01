@@ -400,14 +400,24 @@ microphone `record()`; ordinary device-open `RuntimeError` still produces
 `PALMIMO_LOCK_DIR` overrides the lock directory and is created if absent.
 Otherwise, when `/run/lock` exists, the SDK uses `/run/lock/palmimo`, creating it
 if absent. An unusable override or system directory raises
-`ReservationSetupError` without falling back to a temporary directory.
+`ReservationSetupError` without falling back to a temporary directory. Set
+`PALMIMO_LOCK_DIR` to a location writable by every participating user if the
+system lock directory cannot be created. Symlink directories and symlink or
+non-regular lock files are rejected before any holder metadata is written.
 Only a machine without `/run/lock` uses `palmimo-locks-<uid>` beneath its
 system temporary directory. SDK-created directories have mode `1777`; new
 lock files have mode `0666`, regardless of umask, so all local users can
 participate. Existing files are opened without creation flags and retained
 after release. `PALMIMO_APP_ID` supplies the holder's app name; otherwise it is the
-process name. Holder metadata also records the effective user's name and a UTC
+process name; MCP defaults to `palmimo-mcp` when the variable is unset. Holder metadata also records the effective user's name and a UTC
 `acquired_at` timestamp.
+
+`Speaker.say()` and `Palmimo.say()` can raise reservation errors synchronously
+before returning a speech handle. The servo diagnostic CLI reserves `servo_bus`
+for the entire subcommand and exits with the holder details on contention.
+
+A failed display close clears `is_connected` while retaining its reservation;
+reconnect and successfully disconnect to release it.
 
 A camera close that times out waiting for an in-flight read retains its
 reservation until the read returns and closes the capture. A `MicStream` join

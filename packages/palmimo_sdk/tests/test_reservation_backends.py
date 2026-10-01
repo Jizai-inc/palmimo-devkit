@@ -452,6 +452,8 @@ def test_backend_close_failure_keeps_reservation_for_retry(
             closer.side_effect = lambda: setattr(handle, "is_open", False)
         else:
             closer.side_effect = None
+        if backend_name == "display" and not backend.is_connected:
+            backend.connect()
         close_backend(backend)
     assert contender(backend_name, directory).returncode == 0
 
@@ -595,3 +597,24 @@ def test_mcp_probe_propagates_external_resource_holder(
         assert caught.value.holder_app == "companion"
     finally:
         close_backend(backend)
+
+
+def test_display_reconnects_after_close_failure(directory: Path) -> None:
+    first, second = MagicMock(), MagicMock()
+    first.close.side_effect = OSError("USB disconnected")
+    second.readline.return_value = b"OK\n"
+    display = FaceDisplay(port="fake", serial_factory=MagicMock(side_effect=[first, second]))
+    try:
+        display.connect()
+        with pytest.raises(OSError):
+            display.disconnect()
+        assert not display.is_connected
+        assert contender("display", directory).returncode == 23
+        display.connect()
+        assert display.set_expression("happy") == "OK"
+        second.write.assert_called_once()
+        assert display.is_connected
+    finally:
+        first.close.side_effect = None
+        display.disconnect()
+    assert contender("display", directory).returncode == 0

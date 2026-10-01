@@ -2066,6 +2066,7 @@ class Palmimo:
         ``join`` it and read its ``error`` to tell speech from silence, or
         ``None`` when no speaker is attached (a no-op, mirroring
         :meth:`set_expression` with no display).
+        Reservation errors can be raised synchronously before a handle is returned.
         """
         if self._speaker is not None:
             return self._speaker.say(text, lang)

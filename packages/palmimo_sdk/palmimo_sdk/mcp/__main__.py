@@ -766,6 +766,7 @@ def _build_http_app(server: Server[Any], host: str = "127.0.0.1", token: str | N
 
 def main(argv: list[str] | None = None) -> None:
     """Build the robot, attach an MCP server, and serve until interrupted."""
+    os.environ.setdefault("PALMIMO_APP_ID", "palmimo-mcp")
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
     include = _split_names(args.include)
@@ -835,6 +836,9 @@ def main(argv: list[str] | None = None) -> None:
                     port=args.port,
                     log_level="warning",
                 )
+        except ReservationError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            raise SystemExit(1) from None
         finally:
             # Rebuilt from the probes when serving was never reached: each
             # probe *opens* what it returns, so a signal landing between two of
