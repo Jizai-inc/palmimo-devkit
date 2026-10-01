@@ -19,10 +19,10 @@
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.4",
-    "@astrojs/starlight": "^0.42.2",
-    "astro": "^7.3.3",
+    "@astrojs/starlight": "^0.42.4",
+    "astro": "^7.3.5",
     "pyodide": "^314.0.7",
-    "sharp": "^0.35.3",
-    "three": "^0.186.0"
+    "sharp": "^0.35.5",
+    "three": "^0.186.1"
   }
 }
