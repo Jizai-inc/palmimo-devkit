@@ -29,13 +29,13 @@ firmware release.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import queue
 import threading
 from collections.abc import Callable
 from typing import Any
 
+from ..reservation import Reservation, acquire_resource
 from ._timeout import ProbeTimeoutError, run_with_timeout
 
 
@@ -145,6 +145,7 @@ class FaceDisplay:
         self._serial_factory = serial_factory
         self._connect_timeout = connect_timeout
         self._ser: Any = None
+        self._reservation: Reservation | None = None
         # The reader thread (when on_power_event is set), a lock that serializes
         # command writes + their reply wait, and the queue the reader hands
         # command replies back on (reads happen only on the reader thread).
@@ -183,7 +184,7 @@ class FaceDisplay:
         # can name the real port even when the hang happened later.
         resolved_port: list[str] = []
 
-        def _open() -> tuple[str, Any]:
+        def _open() -> tuple[str, Any, Reservation]:
             port = self._port or find_face_port()
             if port is None:
                 raise FaceDisplayError(
@@ -191,27 +192,38 @@ class FaceDisplay:
                     f"{DISPLAY_USB_VID:#06x}). Pass port=... explicitly, or check the cable."
                 )
             resolved_port.append(port)
+            reservation = acquire_resource("display")
             try:
                 ser = factory(port, BAUDRATE, timeout=self._timeout)
-            except Exception as exc:  # re-raised as our error type
+            except BaseException as exc:
+                reservation.release()
+                if not isinstance(exc, Exception):
+                    raise
                 raise FaceDisplayError(f"Could not open face display on {port!r}: {exc}") from exc
-            return port, ser
+            return port, ser, reservation
 
-        def _on_late_open(opened: tuple[str, Any]) -> None:
+        def _on_late_open(opened: tuple[str, Any, Reservation]) -> None:
             # Connect finished after the timeout already raised: nobody owns
             # this serial object, so close it instead of leaking an open port.
-            late_port, ser = opened
+            late_port, ser, reservation = opened
             logger.warning(
                 "Face display connect on %r finished after its %.1fs timeout had already fired; "
                 "closing the orphaned, late-arriving serial port.",
                 late_port,
                 self._connect_timeout,
             )
-            with contextlib.suppress(Exception):
+            try:
                 ser.close()
+            except Exception:
+                logger.exception("Late display close failed; retaining display reservation")
+            else:
+                reservation.release()
 
+        previous_reservation = self._reservation
         try:
-            port, self._ser = run_with_timeout(_open, timeout=self._connect_timeout, on_late_result=_on_late_open)
+            port, self._ser, self._reservation = run_with_timeout(
+                _open, timeout=self._connect_timeout, on_late_result=_on_late_open
+            )
         except ProbeTimeoutError as exc:
             port_desc = resolved_port[0] if resolved_port else (self._port or "auto-detected face-display port")
             raise FaceDisplayConnectTimeoutError(
@@ -219,24 +231,36 @@ class FaceDisplay:
                 f"{self._connect_timeout:.1f}s (no response opening the serial port). Check that "
                 "the face display is powered and this is the correct port."
             ) from exc
+        if previous_reservation is not None:
+            previous_reservation.release()
         self._port = port
 
         if self._on_power_event is not None:
             self._stop.clear()
             self._reader = threading.Thread(target=self._read_loop, name="face-evt", daemon=True)
-            self._reader.start()
+            try:
+                self._reader.start()
+            except BaseException:
+                self._reader = None
+                self.disconnect()
+                raise
 
     def disconnect(self) -> None:
-        """Stop the reader thread (if any) and close the port."""
+        """Stop the reader thread (if any) and close the port.
+
+        A failed close clears the connection but retains its reservation until
+        a successful reconnect and disconnect.
+        """
         self._stop.set()
         if self._reader is not None:
             self._reader.join(timeout=self._timeout + 0.5)
             self._reader = None
         if self._ser is not None:
-            try:
-                self._ser.close()
-            finally:
-                self._ser = None
+            ser, self._ser = self._ser, None
+            ser.close()
+            if self._reservation is not None:
+                self._reservation.release()
+                self._reservation = None
 
     def __enter__(self) -> FaceDisplay:
         self.connect()
@@ -338,9 +362,15 @@ class FaceDisplay:
                 # is_connected reports False — callers can detect the drop and
                 # decide whether to reconnect (the SDK doesn't auto-retry).
                 logger.debug("face read loop stopped: %s", exc)
-                self._ser = None
-                with contextlib.suppress(Exception):
+                try:
                     ser.close()
+                except Exception:
+                    logger.exception("Display reader cleanup failed; retaining display reservation")
+                else:
+                    self._ser = None
+                    if self._reservation is not None:
+                        self._reservation.release()
+                        self._reservation = None
                 return
             line = raw.decode("ascii", "ignore").strip()
             if not line:

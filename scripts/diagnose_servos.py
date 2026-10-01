@@ -10,8 +10,8 @@ Subcommands:
   oscillate  Swing one servo +/-15 degrees around ITS CURRENT POSITION for assembly checks.
 
 Only `recover` (reboots servos) and `oscillate` (drives a servo) touch state;
-the rest are read-only. Every subcommand opens the serial port itself, so stop
-any app or holder using the same port first — only one process can hold it.
+the rest are read-only. Every subcommand reserves the servo bus before opening
+the serial port and reports the holder if another process is using it.
 """
 
 import argparse
@@ -25,6 +25,7 @@ from dynamixel_sdk import COMM_SUCCESS, PacketHandler, PortHandler
 from tqdm import tqdm
 
 from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, PortDetectionError, find_servo_port
+from palmimo_sdk.reservation import ReservationError, reserve
 
 
 PROTOCOL_VERSION = 2.0
@@ -1463,8 +1464,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _build_parser().parse_args()
-    exit_code: int = args.handler(args)
-    return exit_code
+    try:
+        with reserve("servo_bus"):
+            exit_code: int = args.handler(args)
+            return exit_code
+    except ReservationError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

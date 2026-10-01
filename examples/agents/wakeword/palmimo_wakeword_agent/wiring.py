@@ -32,6 +32,16 @@ if TYPE_CHECKING:
     from palmimo_sdk import ServoDriver, SpeechHandle
 
 
+# Released SDK versions before reservations have no reservation exceptions.
+_RESERVATION_ERRORS: tuple[type[Exception], ...]
+try:
+    from palmimo_sdk.reservation import ReservationError
+except ImportError:
+    _RESERVATION_ERRORS = ()
+else:
+    _RESERVATION_ERRORS = (ReservationError,)
+
+
 logger = logging.getLogger(__name__)
 
 #: Google's OpenAI-compatible endpoint: chat.completions + tool calling work
@@ -64,7 +74,8 @@ def _build_servo_driver(
         port couldn't be auto-detected, an explicit ``--servo-port`` was wrong,
         or (without the SDK's ``hardware`` extra installed) ``dynamixel_sdk``
         itself is missing. A one-line warning is printed in every failure case
-        instead of raising, so the agent still starts compute-only.
+        instead of raising, so the agent still starts compute-only. Reservation
+        errors propagate to the caller.
 
     ``DynamixelDriver.__init__`` never touches hardware: port auto-detection and
     the actual serial handshake both happen inside :meth:`connect`. So probing
@@ -89,6 +100,8 @@ def _build_servo_driver(
     except PortDetectionError as exc:
         print(f"servo bus not available -- motions run compute-only ({exc})")
         return None
+    except _RESERVATION_ERRORS:
+        raise
     except Exception as exc:  # missing hardware extra, serial-layer error, etc.
         print(f"servo bus not available -- motions run compute-only ({exc})")
         return None

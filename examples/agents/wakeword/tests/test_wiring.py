@@ -107,3 +107,17 @@ def test_build_servo_driver_returns_none_on_generic_exception(capsys: pytest.Cap
 
     assert driver is None
     assert "servo bus not available" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("error_name", ["ResourceBusyError", "ReservationSetupError"])
+def test_build_servo_driver_propagates_reservation_errors(error_name: str) -> None:
+    reservation = pytest.importorskip("palmimo_sdk.reservation")
+    error_type = getattr(reservation, error_name)
+    error = error_type("servo_bus")
+
+    class RaisingDriver(FakeServoDriver):
+        def connect(self) -> None:
+            raise error
+
+    with pytest.raises(error_type):
+        _build_servo_driver(_settings(servo=True), driver_factory=RaisingDriver)

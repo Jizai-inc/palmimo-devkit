@@ -46,6 +46,7 @@ from collections.abc import Callable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 from ..audio.processor import int16_to_wav, wav_to_int16
+from ..reservation import Reservation, ReservationError, acquire_resource
 from . import _mic_registry
 
 
@@ -331,26 +332,35 @@ class MicStream:
                     "capture thread is still running (its close() likely timed out) and "
                     "still owns the old stream"
                 )
-            _mic_registry.register(self.device_key, self)
+            reservation = acquire_resource("microphone")
             stream: Any | None = None
             try:
+                _mic_registry.register(self.device_key, self)
                 stream = self._build_stream(capture_channels, required_by)
                 stream.start()
                 stop = threading.Event()
                 thread = threading.Thread(
                     target=self._run,
-                    args=(stream, stop, processors, capture_channels),
+                    args=(stream, stop, processors, capture_channels, reservation),
                     name="palmimo-micstream",
                     daemon=True,
                 )
                 thread.start()
-            except Exception as exc:
+            except BaseException as exc:
                 _mic_registry.unregister(self.device_key, self)
                 if stream is not None:
                     with contextlib.suppress(Exception):
                         stream.stop()
-                    with contextlib.suppress(Exception):
+                    try:
                         stream.close()
+                    except Exception:
+                        self._log.exception("MicStream open cleanup failed; retaining microphone reservation")
+                    else:
+                        reservation.release()
+                else:
+                    reservation.release()
+                if isinstance(exc, ReservationError) or not isinstance(exc, Exception):
+                    raise
                 raise RuntimeError(f"Cannot open mic stream (device_key={self.device_key!r}): {exc}") from exc
             self._stop = stop
             self._thread = thread
@@ -494,7 +504,7 @@ class MicStream:
                     self._log.warning(
                         "MicStream.close: capture thread for device_key=%r did not stop within "
                         "%.1fs; it still owns the stream and will release it itself once its "
-                        "current read() returns",
+                        "current read() returns; retaining the microphone reservation until then",
                         self.device_key,
                         _JOIN_TIMEOUT_S,
                     )
@@ -610,7 +620,12 @@ class MicStream:
     # Capture thread
     # ------------------------------------------------------------------
     def _run(
-        self, stream: Any, stop: threading.Event, processors: Sequence[AudioProcessor], capture_channels: int
+        self,
+        stream: Any,
+        stop: threading.Event,
+        processors: Sequence[AudioProcessor],
+        capture_channels: int,
+        reservation: Reservation,
     ) -> None:
         """Background thread body: read continuously, process, fan out, backoff on failure.
 
@@ -709,8 +724,12 @@ class MicStream:
             # is the only place it's ever released, however _run exits.
             with contextlib.suppress(Exception):
                 stream.stop()
-            with contextlib.suppress(Exception):
+            try:
                 stream.close()
+            except Exception:
+                self._log.exception("MicStream stream close failed; retaining microphone reservation")
+            else:
+                reservation.release()
             if self.blocks > 0:
                 mean_share = self.process_seconds / (self.blocks * self.blocksize / self.sample_rate)
                 self._log.info(

@@ -15,7 +15,8 @@ the servo bus (mirroring
 connect/open it right away, catching failure (missing optional dependency,
 no hardware attached, wrong port, ...) and warning instead of raising, so the
 server still starts compute-only / voice-less / camera-less rather than
-refusing to run at all. Warnings go to **stderr** -- stdio transport reserves
+refusing to run at all. Reservation errors instead abort startup and identify
+the holder or storage problem. Warnings go to **stderr** -- stdio transport reserves
 stdout for the MCP protocol stream itself, so anything printed to stdout
 there would corrupt it. Each ``--no-*`` flag skips probing (and therefore
 opening) the matching peripheral outright -- e.g. so a developer running this
@@ -77,6 +78,7 @@ from palmimo_sdk import FaceDisplay, HeadCamera, Palmimo, PortDetectionError, Sp
 from palmimo_sdk._signals import signals_ignored
 from palmimo_sdk.agent import AgentToolSet
 from palmimo_sdk.agent.toolset import TOOL_MODELS
+from palmimo_sdk.reservation import ReservationError
 
 from .server import TOOL_CALL_LOG_DETAILS, build_mcp_server
 
@@ -367,6 +369,8 @@ def _build_servo_driver(servo_port: str | None) -> ServoDriver | None:
     except PortDetectionError as exc:
         print(f"servo bus not available -- motions run compute-only ({exc})", file=sys.stderr)
         return None
+    except ReservationError:
+        raise
     except Exception as exc:  # missing `hardware` extra, serial-layer error, etc.
         print(f"servo bus not available -- motions run compute-only ({exc})", file=sys.stderr)
         return None
@@ -381,6 +385,8 @@ def _build_display() -> FaceDisplay | None:
     display = FaceDisplay()
     try:
         display.connect()
+    except ReservationError:
+        raise
     except Exception as exc:  # no display attached, missing `face` extra (pyserial), etc.
         print(f"face display not available -- expressions disabled ({exc})", file=sys.stderr)
         return None
@@ -401,6 +407,8 @@ def _build_speaker(device_name_hint: str | None = None) -> Speaker | None:
     speaker = Speaker(SpeakerConfig(device_name_hint=device_name_hint))
     try:
         speaker.open()
+    except ReservationError:
+        raise
     except Exception as exc:  # piper missing, missing `speech` extra, etc.
         print(f"speaker not available -- speech disabled ({exc})", file=sys.stderr)
         return None
@@ -415,6 +423,8 @@ def _build_camera() -> HeadCamera | None:
     camera = HeadCamera()
     try:
         camera.open()
+    except ReservationError:
+        raise
     except Exception as exc:  # no camera attached, missing `vision` extra (opencv), etc.
         print(f"head camera not available -- capture disabled ({exc})", file=sys.stderr)
         return None
@@ -756,6 +766,7 @@ def _build_http_app(server: Server[Any], host: str = "127.0.0.1", token: str | N
 
 def main(argv: list[str] | None = None) -> None:
     """Build the robot, attach an MCP server, and serve until interrupted."""
+    os.environ.setdefault("PALMIMO_APP_ID", "palmimo-mcp")
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
     include = _split_names(args.include)
@@ -825,6 +836,9 @@ def main(argv: list[str] | None = None) -> None:
                     port=args.port,
                     log_level="warning",
                 )
+        except ReservationError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            raise SystemExit(1) from None
         finally:
             # Rebuilt from the probes when serving was never reached: each
             # probe *opens* what it returns, so a signal landing between two of

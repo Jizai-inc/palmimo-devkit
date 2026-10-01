@@ -21,10 +21,12 @@ from __future__ import annotations
 import logging
 import math
 import platform
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from ..reservation import Reservation, ReservationError, acquire_resource
 from . import _mic_registry
 from .alsa_devices import resolve_alsa_device
 
@@ -152,6 +154,8 @@ class Microphone:
         self._runner = runner
         self._system = system or platform.system()
         self._opened = False
+        self._lifecycle_lock = threading.Lock()
+        self._reservation: Reservation | None = None
         self._processors = processors
         self._log = logging.getLogger(__name__)
         # Config with `device` filled in, resolved on first use rather than
@@ -217,26 +221,39 @@ class Microphone:
         hardware, so an ``arecord``/``rec`` probe here would just fail with
         the device busy. :meth:`record` delegates to that stream too.
         """
+        with self._lifecycle_lock:
+            self._open_locked()
+
+    def _open_locked(self) -> None:
+        """Probe and reserve while holding the lifecycle lock."""
         if self._opened:
             return
-        if _mic_registry.get(self.config.device_key) is not None:
-            self._opened = True
-            return
-        # Resolved once and held: a miss is deliberately not remembered (see
-        # _capture_config), so asking again in the failure path below would
-        # fork a second `arecord -l`, could name a device this probe never
-        # touched, and would memoize that late hit as a side effect of
-        # formatting an error string.
-        config = self._capture_config()
+        self._reservation = acquire_resource("microphone")
         try:
-            result = self._run(_record_command(self._system, config, 1), timeout=5)
-        except FileNotFoundError as exc:
-            raise RuntimeError(f"Recorder not found: {exc}") from exc
-        except Exception as exc:  # timeouts etc. — surface as our error type
-            raise RuntimeError(f"Microphone probe failed: {exc}") from exc
-        if result.returncode != 0:
-            raise RuntimeError(f"Cannot access microphone {config.device!r}")
-        self._opened = True
+            if _mic_registry.get(self.config.device_key) is not None:
+                self._opened = True
+                return
+            # Resolved once and held: a miss is deliberately not remembered (see
+            # _capture_config), so asking again in the failure path below would
+            # fork a second `arecord -l`, could name a device this probe never
+            # touched, and would memoize that late hit as a side effect of
+            # formatting an error string.
+            config = self._capture_config()
+            try:
+                result = self._run(_record_command(self._system, config, 1), timeout=5)
+            except ReservationError:
+                raise
+            except FileNotFoundError as exc:
+                raise RuntimeError(f"Recorder not found: {exc}") from exc
+            except Exception as exc:  # timeouts etc. — surface as our error type
+                raise RuntimeError(f"Microphone probe failed: {exc}") from exc
+            if result.returncode != 0:
+                raise RuntimeError(f"Cannot access microphone {config.device!r}")
+            self._opened = True
+        except BaseException:
+            self._reservation.release()
+            self._reservation = None
+            raise
 
     def record(self, seconds: float) -> bytes | None:
         """Capture ``seconds`` of audio; return WAV bytes, or ``None`` on failure.
@@ -246,7 +263,7 @@ class Microphone:
         can't both hold the device. Otherwise auto-opens and shells out as
         usual. Mirrors :meth:`HeadCamera.read`: a capture failure (missing
         tool, device busy, empty stream) is reported as ``None`` rather than
-        raised, so callers can skip a bad take.
+        raised, so callers can skip a bad take. Reservation errors always propagate.
 
         ``processors`` (see the constructor) is applied only on this direct
         ``arecord``/``rec`` path, in order — NOT on the ``MicStream``
@@ -256,20 +273,28 @@ class Microphone:
         exception is logged and the whole recording is discarded (``None``),
         the same failure semantics as any other capture failure here.
         """
+        try:
+            self.open()
+        except ReservationError:
+            raise
+        except RuntimeError:
+            return None
         stream = _mic_registry.get(self.config.device_key)
         if stream is not None:
             return stream.record(seconds)  # type: ignore[attr-defined]
-        try:
-            self.open()
-        except RuntimeError:
-            return None
+        capture_reservation = acquire_resource("microphone")
         try:
             result = self._run(
                 _record_command(self._system, self._capture_config(), seconds),
                 timeout=seconds + 5,
             )
+        except ReservationError:
+            raise
         except Exception:
             return None
+        finally:
+            # close() can drop intent while the recorder still owns the device.
+            capture_reservation.release()
         if result.returncode != 0 or not result.stdout:
             return None
         wav = result.stdout
@@ -282,7 +307,11 @@ class Microphone:
         return wav
 
     def close(self) -> None:
-        self._opened = False
+        with self._lifecycle_lock:
+            self._opened = False
+            if self._reservation is not None:
+                self._reservation.release()
+                self._reservation = None
 
     def __enter__(self) -> Microphone:
         self.open()

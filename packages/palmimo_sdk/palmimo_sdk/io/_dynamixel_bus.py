@@ -23,6 +23,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..reservation import Reservation, acquire_resource
+
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +189,8 @@ class DynamixelBus:
     ) -> None:
         import dynamixel_sdk as dxl
 
+        self._reservation: Reservation | None = None
+        self._pending_baudrate: int | None = None
         self.port = port
         self.motors = motors
         self.model = model
@@ -204,11 +208,17 @@ class DynamixelBus:
         return self.port_handler.is_open
 
     def set_baudrate(self, baudrate: int) -> None:
-        """Set the bus baud rate, verifying the change took effect.
+        """Set the bus baud rate, verifying the change took effect when connected.
+
+        Before connect, store the request without opening an unreserved port.
 
         Raises:
             RuntimeError: The SDK failed to apply the requested baud rate.
         """
+        self._pending_baudrate = baudrate
+        if not self.is_connected:
+            # PortHandler.setBaudRate opens the port; defer until it is reserved.
+            return
         if self.port_handler.getBaudRate() == baudrate:
             return
         self.port_handler.setBaudRate(baudrate)
@@ -222,23 +232,43 @@ class DynamixelBus:
             ConnectionError: The port could not be opened.
             RuntimeError: A motor is missing or reports an unexpected model number.
         """
+        if self.is_connected:
+            return
+        self._reservation = acquire_resource("servo_bus")
         try:
-            if not self.port_handler.openPort():
-                raise OSError(f"Failed to open port '{self.port}'.")
-        except OSError as exc:
-            raise ConnectionError(
-                f"Could not connect on port '{self.port}'. Make sure it is the correct port."
-            ) from exc
-        self._handshake()
-        self.port_handler.setPacketTimeoutMillis(_DEFAULT_TIMEOUT_MS)
+            try:
+                if not self.port_handler.openPort():
+                    raise OSError(f"Failed to open port '{self.port}'.")
+            except OSError as exc:
+                raise ConnectionError(
+                    f"Could not connect on port '{self.port}'. Make sure it is the correct port."
+                ) from exc
+            if self._pending_baudrate is not None:
+                self.set_baudrate(self._pending_baudrate)
+            self._handshake()
+            self.port_handler.setPacketTimeoutMillis(_DEFAULT_TIMEOUT_MS)
+        except BaseException:
+            self._close_port()
+            raise
+
+    def _close_port(self) -> None:
+        try:
+            if self.port_handler.is_open:
+                self.port_handler.closePort()
+        finally:
+            if not self.port_handler.is_open and self._reservation is not None:
+                self._reservation.release()
+                self._reservation = None
 
     def disconnect(self, disable_torque: bool = True) -> None:
-        """Close the port, optionally cutting torque on every motor first."""
-        if disable_torque:
-            self.port_handler.clearPort()
-            self.port_handler.is_using = False
-            self.disable_torque(num_retry=5)
-        self.port_handler.closePort()
+        """Close the port, even if cutting torque on a motor fails."""
+        try:
+            if disable_torque and self.is_connected:
+                self.port_handler.clearPort()
+                self.port_handler.is_using = False
+                self.disable_torque(num_retry=5)
+        finally:
+            self._close_port()
 
     def _handshake(self) -> None:
         """Ping every expected motor and verify presence and model number."""
