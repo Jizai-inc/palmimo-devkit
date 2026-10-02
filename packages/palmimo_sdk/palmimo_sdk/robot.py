@@ -2293,9 +2293,13 @@ class Palmimo:
 
         The queue keeps the most recent 64; older trips are dropped when it overflows.
         """
-        trips = list(self._overload_trips)
-        self._overload_trips.clear()
-        return trips
+        trips: list[OverloadTrip] = []
+        # Popped one at a time: a trip the stepping thread appends meanwhile is kept, not cleared.
+        while True:
+            try:
+                trips.append(self._overload_trips.popleft())
+            except IndexError:
+                return trips
 
     @property
     def last_overload_trip(self) -> OverloadTrip | None:
