@@ -119,6 +119,10 @@ Drive the new motion through the Python API with no driver attached (see
 inspect the `step()` output.
 
 ### Verify Safety
+- A new gesture that raises a leg as a hand must be added to
+  `Palmimo._wave_arm_legs()`, so the overload guard watches that leg at the arm
+  threshold and the gesture tuning treats it as the arm; otherwise the leg is
+  judged at the higher leg threshold
 - All servo positions within 0-4095
 - No extreme values (< 200 or > 3900)
 - Smooth transition from neutral -> motion -> neutral

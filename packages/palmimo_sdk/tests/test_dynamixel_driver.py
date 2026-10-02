@@ -1057,6 +1057,7 @@ def test_read_telemetry_returns_each_signal_in_its_own_unit() -> None:
     driver.connect()
     bus.telemetry["leg_1_yaw"] = {
         "Present_Current": 812,
+        "Present_Position": 2100,
         "Present_Input_Voltage": 47,
         "Present_Temperature": 41,
     }
@@ -1064,12 +1065,13 @@ def test_read_telemetry_returns_each_signal_in_its_own_unit() -> None:
     telemetry = driver.read_telemetry()
 
     assert telemetry.current["leg_1_yaw"] == 812
+    assert telemetry.position["leg_1_yaw"] == 2100
     assert telemetry.voltage["leg_1_yaw"] == pytest.approx(4.7)
     assert telemetry.temperature["leg_1_yaw"] == 41
 
 
 def test_read_telemetry_reads_every_signal_in_one_sweep() -> None:
-    """Three signals, one bus transaction — the whole point of the span read."""
+    """Four signals, one bus transaction — the whole point of the span read."""
     driver, bus, _ = make_driver()
     driver.connect()
 
@@ -1077,7 +1079,7 @@ def test_read_telemetry_reads_every_signal_in_one_sweep() -> None:
 
     assert len(bus.span_reads) == 1
     fields, _motors = bus.span_reads[0]
-    assert set(fields) == {"Present_Current", "Present_Input_Voltage", "Present_Temperature"}
+    assert set(fields) == {"Present_Current", "Present_Position", "Present_Input_Voltage", "Present_Temperature"}
 
 
 def test_read_telemetry_omits_a_motor_that_did_not_answer() -> None:
@@ -1091,6 +1093,7 @@ def test_read_telemetry_omits_a_motor_that_did_not_answer() -> None:
     assert "leg_1_pitch1" not in telemetry.current
     assert "leg_1_pitch1" not in telemetry.voltage
     assert "leg_1_pitch1" not in telemetry.temperature
+    assert "leg_1_pitch1" not in telemetry.position
     assert "leg_1_pitch1" in telemetry.silent
 
 
@@ -1116,6 +1119,48 @@ def test_read_telemetry_sweeps_only_the_requested_motors() -> None:
 
     assert set(telemetry.current) == {"leg_2_yaw"}
     assert bus.span_reads[0][1] == ("leg_2_yaw",)
+
+
+def test_read_telemetry_span_stays_inside_the_current_to_temperature_range() -> None:
+    """Position rides inside the existing sweep: the span must not grow past Present_Current..Present_Temperature."""
+    from palmimo_sdk.io._dynamixel_bus import CONTROL_TABLE, span_of
+    from palmimo_sdk.io.dynamixel import TELEMETRY_REGISTERS
+
+    start, length = span_of(TELEMETRY_REGISTERS)
+    assert start == CONTROL_TABLE["Present_Current"][0]
+    assert start + length == CONTROL_TABLE["Present_Temperature"][0] + CONTROL_TABLE["Present_Temperature"][1]
+
+
+def test_set_torque_enabled_writes_each_requested_motor() -> None:
+    """Torque goes on/off per named motor with one acknowledged write each, leaving the rest alone."""
+    driver, bus, _ = make_driver()
+    driver.connect()
+    bus.writes.clear()
+
+    driver.set_torque_enabled(False, ["leg_3_yaw", "leg_3_pitch1"])
+    driver.set_torque_enabled(True, ["leg_3_yaw"])
+
+    assert bus.writes == [
+        ("Torque_Enable", "leg_3_yaw", 0),
+        ("Torque_Enable", "leg_3_pitch1", 0),
+        ("Torque_Enable", "leg_3_yaw", 1),
+    ]
+
+
+def test_set_torque_enabled_without_motors_writes_every_motor() -> None:
+    driver, bus, _ = make_driver()
+    driver.connect()
+    bus.writes.clear()
+
+    driver.set_torque_enabled(False)
+
+    assert [w[1] for w in bus.writes] == list(MOTOR_NAMES)
+
+
+def test_set_torque_enabled_requires_a_connection() -> None:
+    driver, _bus, _ = make_driver()
+    with pytest.raises(RuntimeError, match="not connected"):
+        driver.set_torque_enabled(False)
 
 
 def test_read_telemetry_requires_a_connection() -> None:

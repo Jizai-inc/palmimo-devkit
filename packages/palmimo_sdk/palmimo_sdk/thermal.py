@@ -25,6 +25,8 @@ import time
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
+from .telemetry import READ_FAILURE_LOG_INTERVAL_S, TelemetryPoller
+
 
 if TYPE_CHECKING:
     from .io.base import ServoDriver
@@ -44,11 +46,6 @@ NECK_COOL_C = 55
 # time with the position writes every frame already needs, and neck
 # temperature does not move fast enough for a faster poll to matter.
 NECK_POLL_INTERVAL_S = 1.0
-
-# How often a read failure (or a sweep missing one or more neck motors) is
-# allowed to re-log, so a persistently flaky bus does not spam the log once
-# per poll.
-_READ_FAILURE_LOG_INTERVAL_S = 5.0
 
 # How long a judgement is trusted without a fresh, COMPLETE sweep behind it.
 # A motor that never comes back (a dead connector, a bus wedge on just that
@@ -123,16 +120,13 @@ class NeckThermalGuard:
         self._now = now
         self._state = NeckThermalState.UNMONITORED
         self._temperature_c: float | None = None
-        self._last_poll: float | None = None
-        self._last_failure_log: float | None = None
+        self._poller = TelemetryPoller(
+            self._motors, NECK_POLL_INTERVAL_S, guard_name="neck thermal guard", logger=logger
+        )
         self._last_missing_log: float | None = None
         # Monotonic timestamp of the last sweep that read every tracked motor
         # (see NECK_STALE_S / _check_stale). None until the first one lands.
         self._last_complete_read_at: float | None = None
-        # Latched once a driver's read_telemetry() proves unsupported (raises
-        # NotImplementedError) -- the capability cannot change mid-connection,
-        # so re-checking every poll would only repeat the warning below.
-        self._unsupported = False
         # See neck_lock_active. Survives the state falling to UNMONITORED
         # (a stale or incomplete sweep); only a driver=None poll or a
         # complete sweep at/below NECK_COOL_C clears it.
@@ -179,9 +173,7 @@ class NeckThermalGuard:
         new one has its own problem rather than being silently suppressed by
         a timer left over from the old one.
         """
-        self._unsupported = False
-        self._last_poll = None
-        self._last_failure_log = None
+        self._poller.reset()
         self._last_missing_log = None
 
     def poll(self, driver: ServoDriver | None) -> None:
@@ -198,37 +190,30 @@ class NeckThermalGuard:
             self._temperature_c = None
             self._neck_lock_active = False
             return
-        if self._unsupported:
+        if self._poller.disabled:
             return
         now = self._now()
-        if self._last_poll is not None and now - self._last_poll < NECK_POLL_INTERVAL_S:
+        if not self._poller.due(now):
             return
-        self._last_poll = now
-        try:
-            telemetry = driver.read_telemetry(self._motors)
-        except NotImplementedError:
-            self._unsupported = True
+        telemetry = self._poller.read(
+            driver,
+            now,
+            "neck telemetry read failed before any thermal judgement was reached"
+            if self._last_complete_read_at is None
+            else "neck telemetry read failed, keeping the last thermal judgement",
+        )
+        if self._poller.disabled:
             self._state = NeckThermalState.UNMONITORED
             self._temperature_c = None
             self._neck_lock_active = False
-            logger.warning(
-                "%s does not support read_telemetry(); the neck thermal guard is disabled.",
-                type(driver).__name__,
-            )
             return
-        except Exception as exc:
-            if self._last_failure_log is None or now - self._last_failure_log >= _READ_FAILURE_LOG_INTERVAL_S:
-                if self._last_complete_read_at is None:
-                    logger.warning("neck telemetry read failed before any thermal judgement was reached: %s", exc)
-                else:
-                    logger.warning("neck telemetry read failed, keeping the last thermal judgement: %s", exc)
-                self._last_failure_log = now
+        if telemetry is None:
             self._check_stale(now)
             return
         readings = {m: telemetry.temperature[m] for m in self._motors if m in telemetry.temperature}
         if len(readings) < len(self._motors):
             missing = [m for m in self._motors if m not in readings]
-            if self._last_missing_log is None or now - self._last_missing_log >= _READ_FAILURE_LOG_INTERVAL_S:
+            if self._last_missing_log is None or now - self._last_missing_log >= READ_FAILURE_LOG_INTERVAL_S:
                 logger.warning(
                     "neck telemetry sweep missing %s; the guard cannot judge from it -- keeping the last "
                     "judgement (and lock, if one is active) until it is %.0fs stale.",

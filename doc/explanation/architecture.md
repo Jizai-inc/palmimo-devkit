@@ -299,15 +299,31 @@ stops or an SSH session drops.
   read in `io/_dynamixel_bus.py`). One sweep rather than one read per signal is what
   lets a guard sample inside the control loop's frame budget. A motor that does not
   answer is reported as unread, never as a zero — an invented reading would be taken
-  for evidence of health
+  for evidence of health. Present position rides in the same span at no extra bus time.
+  Both guards read through `telemetry.py`'s `TelemetryPoller`, which owns the poll
+  interval and what a read that cannot be made means, so the two cannot drift apart
 - **Stopping a motion, not cutting torque** — when a guard does act, the intended
   response is to end the motion (`motion → IDLE`) and leave torque on. Cutting torque
   on a servo makes that joint go limp, and a limp joint on a standing robot drops it —
   worse than the fault being guarded against. The servo's own firmware remains the
   breaker of last resort. The neck thermal guard follows the same rule: its `HOT`
   response forces a motion (the neck to center) rather than cutting anything (see
-  below) — this codebase deliberately carries no guard response that reduces
-  holding torque
+  below). The one deliberate exception is the overload guard's reaction on a
+  gripped arm, described next
+- **Leg current IS acted on** (`overload.py`'s `OverloadGuard`, polled at up to 30 Hz
+  from `Palmimo.step()`) — a leg axis that is held or blocked draws current until the
+  servo latches its own Overload error and goes limp, which drops the body
+  unpredictably; stopping first lets the robot choose where it ends up. Three
+  consecutive samples at or above a per-channel threshold drop the motion to `IDLE`.
+  The raised arm of a wave is the exception to "leave torque on": someone holding it
+  fights a stiff servo, so on an arm trip that arm alone is lowered to a soft gain and
+  eased back to neutral, and only if the gain cannot be written is its torque cut. The
+  soft gain is one more state of the gesture-tuning sync in `robot.py`, because the
+  release of the wave's own tuning on the next frame would otherwise overwrite it. A
+  leg trip touches no gain. Position, not current, decides when the arm is home:
+  a gripped arm draws little current at the soft gain but stays away from neutral.
+  See [the API reference](../reference/api-reference.md#overload-guard) for thresholds,
+  the trip API and the scope, which is that of the neck guard
 - **Leg temperature is reported, not acted on** — a leg servo that is already hot
   does not cool at the speed a guard could react, so ending the motion buys little;
   and over an eight-hour exhibition day these servos measured around 50 °C, well

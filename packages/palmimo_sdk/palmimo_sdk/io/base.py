@@ -38,6 +38,7 @@ class ServoTelemetry:
         current (Mapping[str, int]): Motor name -> present current, raw signed units.
         voltage (Mapping[str, float]): Motor name -> present input voltage, in volts.
         temperature (Mapping[str, int]): Motor name -> present temperature, in °C.
+        position (Mapping[str, int]): Motor name -> present position, raw Dynamixel tick.
         silent (tuple[str, ...]): Motors that were asked and did not answer.
         unreached (tuple[str, ...]): Motors the sweep stopped short of, which is
             evidence about the sweep rather than about those motors.
@@ -46,6 +47,7 @@ class ServoTelemetry:
     current: Mapping[str, int] = field(default_factory=dict)
     voltage: Mapping[str, float] = field(default_factory=dict)
     temperature: Mapping[str, int] = field(default_factory=dict)
+    position: Mapping[str, int] = field(default_factory=dict)
     silent: tuple[str, ...] = ()
     unreached: tuple[str, ...] = ()
 
@@ -224,3 +226,14 @@ class ServoDriver(ABC):
         backend can't ramp gain.
         """
         raise NotImplementedError(f"{type(self).__name__} does not support set_position_p_gain().")
+
+    def set_torque_enabled(self, enabled: bool, motors: Sequence[str] | None = None) -> None:
+        """Switch servo torque on or off.
+
+        Args:
+            enabled (bool): ``False`` lets the joint go limp.
+            motors (Sequence[str], optional): Motors to switch; ``None`` switches every motor.
+
+        Optional capability; the default raises :class:`NotImplementedError`.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support set_torque_enabled().")

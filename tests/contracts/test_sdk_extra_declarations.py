@@ -73,10 +73,14 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk.mcp.server": frozenset({"mcp"}),
     # difflib / unicodedata name folding; no third-party package involved.
     "palmimo_sdk.name_match": _NO_EXTRA,
+    # Pure classifiers over ServoTelemetry numbers (stdlib only).
+    "palmimo_sdk.overload": _NO_EXTRA,
     "palmimo_sdk.reservation": _NO_EXTRA,
     "palmimo_sdk.robot": _NO_EXTRA,
     # signal disposition and the park -- signal, contextlib, threading, time.
     "palmimo_sdk.shutdown": _NO_EXTRA,
+    # Scheduled read_telemetry() calls for the guards (stdlib logging only).
+    "palmimo_sdk.telemetry": _NO_EXTRA,
     # A pure state machine over ServoTelemetry (stdlib logging/enum/time only).
     "palmimo_sdk.thermal": _NO_EXTRA,
 }
@@ -136,6 +140,10 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:NeckThermalState": _NO_EXTRA,
     "palmimo_sdk:NeckYawDegrees": _NO_EXTRA,
     "palmimo_sdk:NeckYawNormalized": _NO_EXTRA,
+    "palmimo_sdk:ARM_OVERLOAD_CURRENT": _NO_EXTRA,
+    "palmimo_sdk:LEG_OVERLOAD_CURRENT": _NO_EXTRA,
+    "palmimo_sdk:OVERLOAD_CONSECUTIVE": _NO_EXTRA,
+    "palmimo_sdk:OverloadTrip": _NO_EXTRA,
     "palmimo_sdk:Palmimo": _NO_EXTRA,
     "palmimo_sdk:ReservationSetupError": _NO_EXTRA,
     "palmimo_sdk:ResourceBusyError": _NO_EXTRA,

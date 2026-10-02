@@ -135,7 +135,7 @@ class MotionEngine:
     LEFT_LEGS: ClassVar[list[int]] = list(kinematics.LEFT_LEGS)
     RIGHT_LEGS: ClassVar[list[int]] = list(kinematics.RIGHT_LEGS)
 
-    ALL_LEGS: ClassVar[list[int]] = [1, 2, 3, 4, 5, 6]
+    ALL_LEGS: ClassVar[list[int]] = list(kinematics.ALL_LEGS)
 
     def __init__(
         self,
@@ -594,7 +594,7 @@ class MotionEngine:
     def _apply_idle(self) -> None:
         """Smoothly return all legs to neutral."""
         for leg_id in range(1, 7):
-            for suffix in ("yaw", "pitch1", "pitch2"):
+            for suffix in kinematics.LEG_AXES:
                 key = f"leg_{leg_id}_{suffix}"
                 current = self._leg[key]
                 if abs(current - self.NEUTRAL) < 10:
