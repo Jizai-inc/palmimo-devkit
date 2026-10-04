@@ -129,7 +129,7 @@ in `toolset.py` saying so).
 
 ## Hardware Safety
 
-- **The neck has thermal protection; the legs have current protection, not thermal.**
+- **The neck has thermal protection; the legs have current and supply-rail protection, not thermal.**
   `Palmimo.step()` polls neck temperature once a second (`palmimo_sdk/thermal.py`'s
   `NeckThermalGuard`) and, at >= 62°C (`HOT`), forces the neck to center and
   downgrades NOD/HEAD_SHAKE to IDLE. This holds until the neck cools to
@@ -142,11 +142,14 @@ in `toolset.py` saying so).
   during long or stalled runs. Leg current is acted on by the overload guard
   (`palmimo_sdk/overload.py`): see
   [doc/reference/api-reference.md](doc/reference/api-reference.md#overload-guard).
+  A sagging supply rail is acted on by the rail guard (`palmimo_sdk/rail.py`):
+  see
+  [doc/reference/api-reference.md](doc/reference/api-reference.md#rail-undervoltage-guard).
 - **The guards only cover callers that go through `Palmimo.step()`** — `run()`
   / `play()`, the MCP server, and the agent tool layer (`palmimo_sdk/agent/`).
   **The LeRobot teleop integration (`integrations/lerobot/`) drives the engine
   directly and is NOT covered** — see that package's `palmimo.py` module
-  docstring. The overload guard likewise does not watch `wake()`, `sleep()` or
+  docstring. The overload and rail guards likewise do not watch `wake()`, `sleep()` or
   `return_to_neutral()`, which write the driver directly.
 - Always smooth transitions — abrupt jumps damage gears
 - `stop()` returns to neutral gradually; NEVER skip it

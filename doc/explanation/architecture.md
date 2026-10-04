@@ -324,6 +324,20 @@ stops or an SSH session drops.
   a gripped arm draws little current at the soft gain but stays away from neutral.
   See [the API reference](../reference/api-reference.md#overload-guard) for thresholds,
   the trip API and the scope, which is that of the neck guard
+- **Rail voltage IS acted on** (`rail.py`'s `RailGuard`, fed by the same 30 Hz leg
+  telemetry sweep as the overload guard — no extra bus read) — resistance in the
+  supply path pulls every axis's input voltage down together when the summed current
+  is high. A sag that persists makes the servos latch an Input Voltage error and drop
+  torque, while each axis's own current stays inside its limit, so the per-axis
+  overload guard cannot see it. Every axis measures the same rail, so the guard treats
+  the sweep's lowest voltage as one signal for the whole body, not one per axis. Six
+  consecutive sweeps below 3.8 V (200 ms) drop the motion to `IDLE`; torque stays on,
+  and no gain is touched. The streak belongs to the rail rather than to a motion, so it
+  survives a motion change. Across a full-motion measurement of an assembled robot,
+  the longest stretch below 3.8 V during normal walking was 67 ms, and the servo's
+  Min Voltage Limit is 3.5 V. How quickly a servo latches under a sag has not been
+  measured, so the guard is not claimed to fire before the latch. See
+  [the API reference](../reference/api-reference.md#rail-undervoltage-guard)
 - **Leg temperature is reported, not acted on** — a leg servo that is already hot
   does not cool at the speed a guard could react, so ending the motion buys little;
   and over an eight-hour exhibition day these servos measured around 50 °C, well
