@@ -75,6 +75,8 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk.name_match": _NO_EXTRA,
     # Pure classifiers over ServoTelemetry numbers (stdlib only).
     "palmimo_sdk.overload": _NO_EXTRA,
+    # A pure classifier over ServoTelemetry voltages (stdlib only).
+    "palmimo_sdk.rail": _NO_EXTRA,
     "palmimo_sdk.reservation": _NO_EXTRA,
     "palmimo_sdk.robot": _NO_EXTRA,
     # signal disposition and the park -- signal, contextlib, threading, time.
@@ -144,6 +146,9 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:LEG_OVERLOAD_CURRENT": _NO_EXTRA,
     "palmimo_sdk:OVERLOAD_CONSECUTIVE": _NO_EXTRA,
     "palmimo_sdk:OverloadTrip": _NO_EXTRA,
+    "palmimo_sdk:RAIL_CONSECUTIVE": _NO_EXTRA,
+    "palmimo_sdk:RAIL_UNDERVOLTAGE_V": _NO_EXTRA,
+    "palmimo_sdk:RailTrip": _NO_EXTRA,
     "palmimo_sdk:Palmimo": _NO_EXTRA,
     "palmimo_sdk:ReservationSetupError": _NO_EXTRA,
     "palmimo_sdk:ResourceBusyError": _NO_EXTRA,

@@ -92,6 +92,7 @@ from .overload import (
     OVERLOAD_CONSECUTIVE,
     OverloadTrip,
 )
+from .rail import RAIL_CONSECUTIVE, RAIL_UNDERVOLTAGE_V, RailTrip
 from .reservation import ReservationSetupError, ResourceBusyError
 from .robot import (
     MotionCancelled,
@@ -110,6 +111,8 @@ __all__ = [
     "LEG_OVERLOAD_CURRENT",
     "OVERLOAD_CONSECUTIVE",
     "PALMIMO_NAMES",
+    "RAIL_CONSECUTIVE",
+    "RAIL_UNDERVOLTAGE_V",
     "SAFE_MAX_TICK",
     "SAFE_MIN_TICK",
     "SUPPORTED_MOTOR_MODELS",
@@ -142,6 +145,7 @@ __all__ = [
     "Palmimo",
     "PiperEngine",
     "PortDetectionError",
+    "RailTrip",
     "ReservationSetupError",
     "ResourceBusyError",
     "RoutineStep",
