@@ -8,6 +8,9 @@ the conductor, using Textual's own :class:`~textual.pilot.Pilot` test driver.
 
 from __future__ import annotations
 
+import asyncio
+import os
+import signal
 from typing import ClassVar, cast
 
 import pytest
@@ -190,3 +193,43 @@ def test_run_tui_propagates_a_connect_failure_without_running_the_app(monkeypatc
         tui_module.run_tui(_settings())
 
     assert _FakeApp.instances == []  # the app must never even be constructed on a connect failure
+
+
+async def test_app_ignores_history_events_after_unmount(caplog: pytest.LogCaptureFixture) -> None:
+    app = tui_module.CompanionAgentApp(_build_test_runtime())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+    app.runtime.history.add(KeyboardEvent("after exit"))
+    assert not caplog.records
+    await app.runtime.aclose()
+
+
+@pytest.mark.parametrize("terminal_lost", [False, True])
+def test_run_tui_requests_exit_and_finishes_terminal_cleanup(
+    monkeypatch: pytest.MonkeyPatch, terminal_lost: bool
+) -> None:
+    runtime = _build_test_runtime()
+    finished: list[str] = []
+
+    class App:
+        def __init__(self, runtime: Runtime) -> None:
+            self.stopped = asyncio.Event()
+
+        def exit(self) -> None:
+            self.stopped.set()
+
+        async def run_async(self) -> None:
+            asyncio.get_running_loop().call_soon(os.kill, os.getpid(), signal.SIGHUP)
+            await self.stopped.wait()
+            finished.append("app")
+            if terminal_lost:
+                raise OSError("terminal disconnected")
+
+    async def close() -> None:
+        finished.append("park")
+
+    monkeypatch.setattr(runtime, "aclose", close)
+    monkeypatch.setattr(tui_module, "build_runtime", lambda settings: runtime)
+    monkeypatch.setattr(tui_module, "CompanionAgentApp", App)
+    tui_module.run_tui(_settings())
+    assert finished == ["app", "park"]

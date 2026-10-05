@@ -215,6 +215,7 @@ async def test_run_cli_waits_for_connect_before_disconnecting_on_signal(monkeypa
 
     class _BlockingPalmimo:
         has_connectable_resource = True
+        is_connected = True
 
         def __init__(self) -> None:
             self.connect_started = threading.Event()
@@ -228,7 +229,7 @@ async def test_run_cli_waits_for_connect_before_disconnecting_on_signal(monkeypa
             self.allow_connect_to_finish.wait()
             self.connect_finished.set()
 
-        def disconnect(self) -> None:
+        def disconnect(self, *, park: bool = True) -> None:
             self.disconnect_started.set()
             self.disconnect_overlapped_connect = not self.connect_finished.is_set()
 

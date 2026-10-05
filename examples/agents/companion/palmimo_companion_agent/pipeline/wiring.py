@@ -33,6 +33,7 @@ from palmimo_sdk import (
     TtsEngine,
 )
 from palmimo_sdk.agent.toolset import AgentToolSet
+from palmimo_sdk.shutdown import park_async
 
 from ..core.hearing import NameCallWatch
 from ..core.perception import merge
@@ -250,8 +251,7 @@ class Runtime:
                 await task
         self._tasks.clear()
         await self._wait_for_connect()
-        with contextlib.suppress(Exception):
-            await asyncio.to_thread(self.palmimo.disconnect)
+        await park_async(self.palmimo)
         if self.event_log is not None:
             with contextlib.suppress(Exception):
                 self.event_log.close()

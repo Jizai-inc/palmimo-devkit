@@ -18,8 +18,7 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, Input, RichLog
 
-from palmimo_sdk.shutdown import StopRequest, loop_stop_on_signals, signals_ignored
-
+from ...shutdown import stop_scope
 from ..wiring import Runtime, build_runtime
 
 
@@ -89,6 +88,8 @@ class CompanionAgentApp(App):
         self.query_one("#cmd", Input).focus()
 
     def _on_event(self, event: Event) -> None:
+        if not self.is_running:
+            return
         rendered = _format(event)
         if rendered:
             self.query_one("#log", RichLog).write(rendered)
@@ -119,23 +120,23 @@ def run_tui(settings: PipelineSettings) -> None:
     async def run() -> None:
         own_task = asyncio.current_task()
         assert own_task is not None
-        stopping = False
+        app: CompanionAgentApp | None = None
 
         def request_stop() -> None:
-            nonlocal stopping
-            if not stopping:
-                stopping = True
+            if app is None:
                 own_task.cancel()
+            else:
+                app.exit()
 
-        with loop_stop_on_signals(StopRequest(), request_stop):
-            try:
-                with contextlib.suppress(asyncio.CancelledError):
-                    await runtime.connect()
-                    await CompanionAgentApp(runtime).run_async()
-            finally:
-                stopping = True
-                with signals_ignored():
-                    await runtime.aclose()
+        async with stop_scope(runtime.aclose, request_stop) as stop:
+            with contextlib.suppress(asyncio.CancelledError):
+                await runtime.connect()
+                app = CompanionAgentApp(runtime)
+                try:
+                    await app.run_async()
+                except OSError:
+                    if not stop.is_set():
+                        raise
 
     asyncio.run(run())
 

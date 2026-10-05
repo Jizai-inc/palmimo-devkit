@@ -11,8 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from palmimo_sdk.shutdown import STOP_SIGNALS
-
 
 _CHILD = textwrap.dedent("""\
     import asyncio
@@ -47,24 +45,39 @@ _CHILD = textwrap.dedent("""\
     if frontend == "cli":
         cli.build_runtime = lambda settings: runtime
         asyncio.run(cli.run_cli(settings, read_stdin=False))
-    elif frontend == "tui":
+    elif frontend in ("tui", "tui-terminal"):
         tui.build_runtime = lambda settings: runtime
         class App(tui.CompanionAgentApp):
             def on_mount(self):
+                if frontend == "tui-terminal":
+                    def close():
+                        raise OSError("terminal disconnected")
+                    self._driver.close = close
                 self.run_worker(self.runtime.start())
         tui.CompanionAgentApp = lambda runtime: App(runtime)
         tui.run_tui(settings)
     else:
-        from palmimo_companion_agent.realtime.app import RealtimeSession, _wake_and_disconnect
+        from palmimo_companion_agent.realtime.app import RealtimeSession
         from palmimo_companion_agent.realtime.state import Sleeping
 
         class Hardware:
+            has_connectable_resource = True
+            is_connected = True
+            camera = None
+
+            def connect(self):
+                if frontend == "realtime-connect":
+                    (directory / "ready").touch()
+                    time.sleep(0.5)
+                    (directory / "connected").touch()
+
             def wake(self):
-                (directory / "ready").touch()
-                (directory / "closing").touch()
-                time.sleep(0.5)
+                time.sleep(0.1)
 
             def disconnect(self, park=True):
+                if frontend == "realtime-connect":
+                    assert (directory / "connected").exists(), "park raced with connect"
+                (directory / "closing").touch()
                 time.sleep(0.5)
                 (directory / "parked").touch()
 
@@ -84,8 +97,33 @@ _CHILD = textwrap.dedent("""\
 
         sleeping = Sleeping()
         sleeping.asleep = True
-        if frontend == "realtime-fallback":
-            asyncio.run(_wake_and_disconnect(Hardware(), sleeping))
+        if frontend in ("realtime-fallback", "realtime-connect", "realtime-update"):
+            import os
+            import contextlib
+            from palmimo_companion_agent.realtime import app
+            from palmimo_companion_agent.realtime.settings import RealtimeSettings
+            os.environ["OPENAI_API_KEY"] = "test"
+            hardware = Hardware()
+            app.load_settings = lambda **kwargs: RealtimeSettings()
+            app.build_robot = lambda settings: (hardware, None)
+            app.FaceLocator = lambda: None
+            app.build_toolset = lambda *args: None
+            app.ToolView = lambda *args, **kwargs: SimpleNamespace(to_openai_tools=lambda: [])
+            app.build_vision = lambda *args: Watch()
+            @contextlib.asynccontextmanager
+            async def connect(**kwargs):
+                if frontend == "realtime-update":
+                    class Client:
+                        async def send(self, message):
+                            (directory / "ready").touch()
+                            await asyncio.Event().wait()
+                    yield Client()
+                else:
+                    (directory / "ready").touch()
+                    await asyncio.Event().wait()
+                    yield None
+            app.RealtimeClient.connect = connect
+            asyncio.run(app._run(app._build_parser().parse_args(["--model", "gpt-realtime", "--voice", "coral"])))
         else:
             session = RealtimeSession(
                 client=None, services=[Service()], bridge=Bridge(),
@@ -106,11 +144,16 @@ def _wait_for_marker(process: subprocess.Popen[str], marker: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX process signals")
-@pytest.mark.parametrize("frontend", ["cli", "tui", "realtime", "realtime-fallback"])
-@pytest.mark.parametrize("stop_signal", STOP_SIGNALS)
-@pytest.mark.parametrize("repeat", [False, True], ids=["single", "repeated"])
+@pytest.mark.parametrize(
+    ("frontend", "stop_signal"),
+    [
+        (name, signal.SIGTERM)
+        for name in ("cli", "tui", "realtime", "realtime-fallback", "realtime-connect", "realtime-update")
+    ]
+    + [("cli", signal.SIGINT), ("tui-terminal", signal.SIGHUP)],
+)
 def test_frontend_parks_before_exiting_on_stop_signals(
-    tmp_path: Path, frontend: str, stop_signal: signal.Signals, repeat: bool
+    tmp_path: Path, frontend: str, stop_signal: signal.Signals
 ) -> None:
     with subprocess.Popen(
         [sys.executable, "-c", _CHILD, str(tmp_path), frontend],
@@ -123,11 +166,12 @@ def test_frontend_parks_before_exiting_on_stop_signals(
             _wait_for_marker(process, tmp_path / "ready")
             process.send_signal(stop_signal)
             _wait_for_marker(process, tmp_path / "closing")
-            if repeat:
-                process.send_signal(stop_signal)
+            process.send_signal(stop_signal)
             stdout, stderr = process.communicate(timeout=15)
             assert process.returncode == 0, stdout + stderr
             assert (tmp_path / "parked").exists()
+            assert "Traceback" not in stderr
+            assert "Task exception was never retrieved" not in stderr
         finally:
             if process.poll() is None:
                 process.kill()

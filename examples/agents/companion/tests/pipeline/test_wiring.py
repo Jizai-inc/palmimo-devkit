@@ -446,7 +446,7 @@ async def test_runtime_aclose_cancels_tasks_disconnects_the_robot_and_closes_the
     monkeypatch.setattr(type(palmimo), "has_connectable_resource", property(lambda self: True))
     monkeypatch.setattr(palmimo, "connect", lambda: None)
     disconnect_calls = []
-    monkeypatch.setattr(palmimo, "disconnect", lambda: disconnect_calls.append(1))
+    monkeypatch.setattr(palmimo, "disconnect", lambda **kwargs: disconnect_calls.append(1))
     conductor = FakeConductor()
     log = io.StringIO()
     rt = _lifecycle_runtime(conductor, palmimo, event_log=log)

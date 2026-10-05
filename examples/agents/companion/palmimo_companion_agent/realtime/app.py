@@ -24,7 +24,6 @@ import contextlib
 import os
 import sys
 import time
-from collections.abc import Iterator
 from typing import Any
 
 from palmimo_sdk import (
@@ -37,12 +36,13 @@ from palmimo_sdk import (
     resolve_alsa_device,
 )
 from palmimo_sdk.agent.toolset import AgentToolSet
-from palmimo_sdk.shutdown import StopRequest, loop_stop_on_signals, signals_ignored
+from palmimo_sdk.shutdown import park_async
 
 from ..core.tools import COMPANION_TOOL_MODELS, make_look_at_face_tool
 from ..core.toolview import IDLE_TOOL_NAMES, ToolView
 from ..core.vision import FaceLocator, FacePresenceDetector, VisionWatch, WaveDetector
 from ..output import configure_output
+from ..shutdown import stop_scope
 from .bridge import ToolBridge
 from .client import RealtimeClient, RealtimeClientLike
 from .log import EventLog
@@ -164,51 +164,29 @@ def build_vision(palmimo: Palmimo, face_locator: FaceLocator) -> VisionWatch:
     return VisionWatch(camera, detectors)
 
 
-@contextlib.contextmanager
-def _signal_stop(stop: asyncio.Event) -> Iterator[None]:
-    """Route SIGTERM, SIGINT, and SIGHUP to the session's stop watcher.
-
-    The watcher cancels services blocked on I/O. Keep this context through
-    shutdown and ignore further stop signals until parking completes.
-    SIGKILL and a service manager's stop timeout bound a stuck shutdown.
-    """
-    with loop_stop_on_signals(StopRequest(), stop.set):
-        yield
-
-
 class _Stop(Exception):  # noqa: N818 -- internal control-flow signal, not a reported error
     """Raised by :meth:`RealtimeSession._watch_stop` to end the session's task group promptly."""
 
 
 async def _wake_and_disconnect(palmimo: Palmimo, sleeping: Sleeping) -> None:
-    """Park the robot: wake first if asleep, then disconnect.
+    """Wake a sleeping robot, then park through the SDK shutdown helper.
 
-    Shared between :meth:`RealtimeSession._shutdown` (the common case: the
-    session ran, and this is the last step of its own unwind) and ``_run``'s
-    outer ``finally`` (the field-common failure case: something between a
-    successful ``Palmimo.connect()`` and the session's first
-    ``await session.run(...)`` -- most often ``RealtimeClient.connect()``
-    itself, on a bad key or no network -- raised before a
-    :class:`RealtimeSession` even existed to park on its own). ``_run`` only
-    calls this when no session was built, so the two callers never race or
-    double-park the same robot.
-
-    A robot that is *asleep* is woken before the park, because
-    ``disconnect()`` parks by streaming the stand-up pose, and asleep means
-    the legs are on the reduced-gain ``sleep()`` left them at -- seconds of a
-    goal they cannot reach. If waking fails, the park is skipped rather than
-    fought.
+    Sleeping legs have reduced gains, so returning them to standing without
+    waking would stream a goal they cannot reach. If waking fails, skip only
+    the leg return; the neck release and torque-off still run. Callers keep
+    their stop scope active through this entire operation.
     """
-    with signals_ignored():
-        if sleeping.asleep:
-            try:
-                await asyncio.to_thread(palmimo.wake)
-            except Exception:
-                with contextlib.suppress(Exception):
-                    await asyncio.to_thread(palmimo.disconnect, park=False)
-                return
-        with contextlib.suppress(Exception):
-            await asyncio.to_thread(palmimo.disconnect)
+    legs = True
+    if sleeping.asleep:
+        wake = asyncio.get_running_loop().run_in_executor(None, palmimo.wake)
+        while not wake.done():
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await asyncio.shield(wake)
+        try:
+            wake.result()
+        except Exception:
+            legs = False
+    await park_async(palmimo, legs=legs)
 
 
 class RealtimeSession:
@@ -257,17 +235,14 @@ class RealtimeSession:
         router would otherwise leave the other services running.
         """
         started = time.monotonic()
-        with _signal_stop(self._stop):
+        async with stop_scope(self._shutdown, self._stop.set):
             try:
-                try:
-                    async with asyncio.timeout(seconds), asyncio.TaskGroup() as tg:
-                        tg.create_task(self._watch_stop())
-                        for service in self._services:
-                            tg.create_task(service.run())
-                except* (_Stop, TimeoutError, _SessionClosed):
-                    pass
-            finally:
-                await self._shutdown()
+                async with asyncio.timeout(seconds), asyncio.TaskGroup() as tg:
+                    tg.create_task(self._watch_stop())
+                    for service in self._services:
+                        tg.create_task(service.run())
+            except* (_Stop, TimeoutError, _SessionClosed):
+                pass
         print(f"\n{self._usage.report(time.monotonic() - started)}", flush=True)
         print(f"frames sent: {self._frame.pushed}", flush=True)
 
@@ -287,14 +262,14 @@ class RealtimeSession:
         wake-before-park step itself is :func:`_wake_and_disconnect`, shared
         with ``_run``'s own outer ``finally`` -- see its docstring.
         """
-        # systemd signals the cgroup, and uv also forwards the signal to Python.
-        with signals_ignored():
+        try:
             await self._bridge.settle(_SETTLE_TIMEOUT_S)
             if self._reflexes is not None:
                 await self._reflexes.settle(_SETTLE_TIMEOUT_S)
             self._playback.close()
             with contextlib.suppress(Exception):
                 await self._watch.aclose()
+        finally:
             await _wake_and_disconnect(self._palmimo, self._sleeping)
 
 
@@ -310,71 +285,78 @@ async def _run(args: argparse.Namespace) -> int:
     instructions = load_prompt("respond", args.reply_chars)
     idle_prompt = load_prompt("idle")
     palmimo, _mic = build_robot(settings)
-    face_locator = FaceLocator()
-    toolset = build_toolset(palmimo, face_locator)
-    respond_view = ToolView(toolset, squash_say=True)
-    idle_tools = flatten(ToolView(toolset, allow=IDLE_TOOL_NAMES, squash_say=True).to_openai_tools())
-    tools = flatten(respond_view.to_openai_tools())
     sleeping = Sleeping()
-    usage = Usage(args.model)
-    frame = LiveFrame(palmimo.camera)
-    watch = build_vision(palmimo, face_locator)
-
-    await asyncio.to_thread(palmimo.connect)
-    # `session` stays None until RealtimeSession is actually constructed.
-    # Anything between here and that point raising -- most commonly
-    # RealtimeClient.connect() itself, on a bad key or no network -- must
-    # still park the robot: the outer `finally` below owns that case, since
-    # once `session` exists, `session.run()`'s own `finally` (RealtimeSession
-    # ._shutdown) always runs before this coroutine can unwind any further.
     session: RealtimeSession | None = None
-    try:
-        async with RealtimeClient.connect(model=args.model, api_key=key) as client:
-            await client.send(
-                SessionUpdate(
-                    instructions=instructions,
-                    tools=tools,
-                    voice=args.voice,
-                    rate=API_RATE,
-                    transcription_language=settings.language,
-                )
-            )
-            pitch = PitchShifter(args.pitch) if args.pitch != 1.0 else None
-            # Resolved here, not inside Playback: the session is already up, so
-            # the card listing is settled, and a resolved string keeps the
-            # writer thread's hot path free of a subprocess call.
-            playback = Playback(pitch, device=resolve_alsa_device(settings.speaker_device, kind="playback"))
-            pacer = IdlePacer()
-            bridge = ToolBridge(client, toolset, sleeping, log)
-            barge_in = BargeIn(playback, bridge, pacer)
-            router = EventRouter(client, playback, barge_in, bridge, pacer, sleeping, usage, log)
-            idle = IdleTicker(client, pacer, sleeping, idle_prompt, idle_tools, log)
-            frames_service = FramePusher(client, frame, pacer, sleeping, args.frame_seconds, log)
-            mic_feed = MicrophoneFeed(_mic, client)
-            reflexes = build_reflex_runner(toolset, watch, client, sleeping, log)
+    connect: asyncio.Future[Palmimo] | None = None
 
-            print(
-                f"{args.model}, voice {args.voice}, pitch x{args.pitch:.2f}, {len(tools)} tools, "
-                f"a frame every {args.frame_seconds:.0f}s, {args.seconds:.0f}s\n",
-                flush=True,
-            )
-            session = RealtimeSession(
-                client=client,
-                services=[mic_feed, router, idle, frames_service, reflexes],
-                bridge=bridge,
-                playback=playback,
-                watch=watch,
-                palmimo=palmimo,
-                sleeping=sleeping,
-                usage=usage,
-                frame=frame,
-                reflexes=reflexes,
-            )
-            await session.run(args.seconds)
-    finally:
-        if session is None:
-            await _wake_and_disconnect(palmimo, sleeping)
-        log.close()
+    async def cleanup() -> None:
+        if connect is not None:
+            while not connect.done():
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await asyncio.shield(connect)
+            with contextlib.suppress(BaseException):
+                connect.result()
+        try:
+            if session is None:
+                await _wake_and_disconnect(palmimo, sleeping)
+        finally:
+            log.close()
+
+    async with stop_scope(cleanup):
+        with contextlib.suppress(asyncio.CancelledError):
+            face_locator = FaceLocator()
+            toolset = build_toolset(palmimo, face_locator)
+            respond_view = ToolView(toolset, squash_say=True)
+            idle_tools = flatten(ToolView(toolset, allow=IDLE_TOOL_NAMES, squash_say=True).to_openai_tools())
+            tools = flatten(respond_view.to_openai_tools())
+            usage = Usage(args.model)
+            frame = LiveFrame(palmimo.camera)
+            watch = build_vision(palmimo, face_locator)
+
+            connect = asyncio.get_running_loop().run_in_executor(None, palmimo.connect)
+            await asyncio.shield(connect)
+            async with RealtimeClient.connect(model=args.model, api_key=key) as client:
+                await client.send(
+                    SessionUpdate(
+                        instructions=instructions,
+                        tools=tools,
+                        voice=args.voice,
+                        rate=API_RATE,
+                        transcription_language=settings.language,
+                    )
+                )
+                pitch = PitchShifter(args.pitch) if args.pitch != 1.0 else None
+                # Resolved here, not inside Playback: the session is already up, so
+                # the card listing is settled, and a resolved string keeps the
+                # writer thread's hot path free of a subprocess call.
+                playback = Playback(pitch, device=resolve_alsa_device(settings.speaker_device, kind="playback"))
+                pacer = IdlePacer()
+                bridge = ToolBridge(client, toolset, sleeping, log)
+                barge_in = BargeIn(playback, bridge, pacer)
+                router = EventRouter(client, playback, barge_in, bridge, pacer, sleeping, usage, log)
+                idle = IdleTicker(client, pacer, sleeping, idle_prompt, idle_tools, log)
+                frames_service = FramePusher(client, frame, pacer, sleeping, args.frame_seconds, log)
+                mic_feed = MicrophoneFeed(_mic, client)
+                reflexes = build_reflex_runner(toolset, watch, client, sleeping, log)
+
+                print(
+                    f"{args.model}, voice {args.voice}, pitch x{args.pitch:.2f}, {len(tools)} tools, "
+                    f"a frame every {args.frame_seconds:.0f}s, {args.seconds:.0f}s\n",
+                    flush=True,
+                )
+                session = RealtimeSession(
+                    client=client,
+                    services=[mic_feed, router, idle, frames_service, reflexes],
+                    bridge=bridge,
+                    playback=playback,
+                    watch=watch,
+                    palmimo=palmimo,
+                    sleeping=sleeping,
+                    usage=usage,
+                    frame=frame,
+                    reflexes=reflexes,
+                )
+                await session.run(args.seconds)
     return 0
 
 

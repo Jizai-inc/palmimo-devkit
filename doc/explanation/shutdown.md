@@ -29,7 +29,8 @@ per entry point, because it is the part that genuinely must differ.
 |---|---|---|
 | Yes — it sits in an `await` | `loop_stop_on_signals` (`loop.add_signal_handler`) | The handler runs as an ordinary callback *in* the loop, so it can do real work: cancel the task that is waiting, set the event the session watches. |
 | No — it blocks synchronously (a mic queue, a blocking read) | `stop_flag_on_signals` | A cancellation is delivered at an `await` the loop never reaches, so it would sit unread. The handler sets a flag; the loop decides when to look. |
-| There is no loop of ours — control is inside a third-party runner | `interrupt_on_signals` | Textual and uvicorn own the loop. Converting the signal to `KeyboardInterrupt` gets our own `finally` back, which is all we need. |
+| We await a third-party runner with a cooperative exit API | `loop_stop_on_signals` | Ask the runner to exit (Textual `App.exit()`) and await its cleanup before parking. |
+| There is no loop of ours — control is inside a third-party runner | `interrupt_on_signals` | A synchronous third-party runner owns the loop. Converting the signal to `KeyboardInterrupt` gets our own `finally` back, which is all we need. |
 
 The three are **correctly different**. Picking one idiom for all of them breaks
 at least one:
@@ -58,7 +59,8 @@ entry points in this repository have **not** all moved onto it yet:
 |---|---|
 | A user script (`with Palmimo() as robot:`) | Covered. `Palmimo.disconnect()` enforces the rule on its own — see below — without the caller touching this module. |
 | MCP server (`palmimo_sdk/mcp/__main__.py`) | Parks on a terminating signal, using its own equivalent of `interrupt_on_signals` plus `_signals.signals_ignored`. It moves onto this module in a follow-up; the behaviour does not change when it does. |
-| companion TUI / CLI / realtime, wake-word agent | Not yet. Each carries its own stop handling, and the gaps are known — the wake-word agent's is described above. They move onto this module one at a time. |
+| companion TUI / CLI / realtime | Covered. A shared scope uses `loop_stop_on_signals` from robot startup through teardown, latches the first stop, and keeps further signals from interrupting cleanup. TUI requests `App.exit()`; CLI and realtime startup cancel their own task; the realtime session sets its stop event. All park through `park_async`. |
+| wake-word agent | Not yet. Its blocking-loop gap is described above. |
 
 Adding the module before its callers is deliberate: it is the half that has to
 be identical everywhere, and a guard that only some entry points can reach is

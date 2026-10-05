@@ -28,6 +28,9 @@ from palmimo_sdk.agent.toolset import AgentToolSet
 class _Recorder:
     """Records the order of the shutdown steps that touch hardware/audio."""
 
+    has_connectable_resource = True
+    is_connected = True
+
     def __init__(self) -> None:
         self.order: list[str] = []
         self.park: bool | None = None

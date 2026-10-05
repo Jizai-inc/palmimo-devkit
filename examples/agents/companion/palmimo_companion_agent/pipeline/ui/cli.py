@@ -19,8 +19,7 @@ import sys
 import threading
 from typing import TYPE_CHECKING, TextIO
 
-from palmimo_sdk.shutdown import StopRequest, loop_stop_on_signals, signals_ignored
-
+from ...shutdown import stop_scope
 from ..event_log import emit_event
 from ..wiring import Runtime, build_runtime
 
@@ -137,27 +136,11 @@ async def run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> Non
     runtime = build_runtime(settings)
     runtime.history.subscribe(lambda event: emit_event(event, out=sys.stdout))
 
-    own_task = asyncio.current_task()
-    assert own_task is not None  # run_cli always runs as a task (awaited or ensure_future'd)
-    stopping = False
-
-    def request_stop() -> None:
-        nonlocal stopping
-        if not stopping:
-            stopping = True
-            own_task.cancel()
-
-    with loop_stop_on_signals(StopRequest(), request_stop):
-        try:
-            with contextlib.suppress(asyncio.CancelledError):
-                await runtime.start()
-                session_task = asyncio.ensure_future(_stdin_loop(runtime) if read_stdin else asyncio.Event().wait())
-                await session_task
-        finally:
-            stopping = True
-            # systemd signals the cgroup, and uv forwards that signal to Python too.
-            with signals_ignored():
-                await runtime.aclose()
+    async with stop_scope(runtime.aclose):
+        with contextlib.suppress(asyncio.CancelledError):
+            await runtime.start()
+            session_task = asyncio.ensure_future(_stdin_loop(runtime) if read_stdin else asyncio.Event().wait())
+            await session_task
 
 
 __all__ = ["run_cli"]

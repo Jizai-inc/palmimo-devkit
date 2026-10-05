@@ -321,6 +321,7 @@ Ctrl+C, `SIGTERM`, and `SIGHUP` end the session and park the robot on the way
 out in both pipeline frontends and the realtime session. Further stop signals
 are ignored until cleanup and parking finish. To force termination, use
 `SIGKILL`; under systemd, `TimeoutStopSec` bounds shutdown.
+If terminal cleanup hangs, press `Ctrl+\` (SIGQUIT) or use `kill -9 <pid>`; this skips parking.
 In-flight tool work is cancelled and given a few seconds to settle first, so
 a motion is never still writing to the servo bus while the robot disconnects.
 
