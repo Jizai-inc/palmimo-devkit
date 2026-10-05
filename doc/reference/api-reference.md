@@ -275,7 +275,8 @@ goal matches where it is, but the robot does silently stiffen. Wake it first.
 Ease all servos back to neutral. With *duration* (seconds), a single timed glide;
 without it, advances control cycles (up to *max_steps*, a safety cap) until every
 joint has settled within *settle_ticks* of its target. Releases any active wave
-tuning first (see below).
+tuning first (see below). The timed glide needs a connected driver and raises
+`RuntimeError` without one; the default path also works compute-only.
 
 ### `robot.set_p_gain(value: int | None) -> None`
 Set Position_P_Gain on all motors (`None` restores per-motor defaults captured at

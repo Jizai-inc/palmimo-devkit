@@ -63,9 +63,9 @@ Palmimo.forward() → step() → MotionEngine computes → {servo_name: tick} �
 - **Python API core** — `palmimo_sdk.Palmimo` drives one `MotionEngine`; example
   agent apps (see [Examples](examples/README.md)) build on it as front-ends.
 - **Dry-run first** — every motion computes without hardware, so you can explore
-  the motion API with no robot attached. Calls that need a servo bus, face
-  display, or speaker are no-ops without one; see the
-  [API reference](doc/reference/api-reference.md).
+  the motion API with no robot attached. Most calls that need a servo bus, face
+  display, or speaker are no-ops without one; the
+  [API reference](doc/reference/api-reference.md) names the ones that raise.
 
 <div align="center">
 
