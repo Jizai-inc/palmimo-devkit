@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import json
 
+import pytest
+
 from palmimo_companion_agent.pipeline.event_log import emit_event
 from palmimo_companion_agent.pipeline.history import KeyboardEvent, ToolExecEvent
 
@@ -50,3 +52,17 @@ def test_emit_event_keeps_non_ascii_text_readable() -> None:
     out = io.StringIO()
     emit_event(KeyboardEvent("こんにちは"), out=out)
     assert "こんにちは" in out.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "logged"),
+    [
+        ('{"reason": "\\u58c1\\u306e\\u82b1\\u67c4"}', {"reason": "壁の花柄"}),
+        ('{"reason": "unterminated', '{"reason": "unterminated'),
+    ],
+)
+def test_emit_event_logs_tool_arguments_as_json_when_they_parse(arguments: str, logged: object) -> None:
+    out = io.StringIO()
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="discover", arguments=arguments, result="ok"), out=out)
+    assert json.loads(out.getvalue())["arguments"] == logged
+    assert "\\u58c1" not in out.getvalue()
