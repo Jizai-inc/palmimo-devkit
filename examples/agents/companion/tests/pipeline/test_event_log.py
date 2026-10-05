@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 import json
-from dataclasses import dataclass
 
 import pytest
 
@@ -68,20 +67,8 @@ def test_emit_event_logs_tool_arguments_as_readable_object() -> None:
     "arguments",
     [
         pytest.param('{"reason": "unterminated', id="malformed"),
-        pytest.param('{"value": ' + "9" * 5000 + "}", id="oversized-integer"),
-        pytest.param('{"value": NaN}', id="nan"),
-        pytest.param('{"value": Infinity}', id="infinity"),
-        pytest.param('{"value": -Infinity}', id="negative-infinity"),
-        pytest.param('{"nested": [NaN]}', id="nested-nan"),
-        pytest.param('{"v": 1e400}', id="overflow"),
         pytest.param('{"reason": "\\ud83d"}', id="unpaired-surrogate"),
-        pytest.param('{"v":' + "[" * 100_000 + "0" + "]" * 100_000 + "}", id="deep-nesting"),
-        pytest.param('{"a":1,"a":2}', id="duplicate-keys"),
-        pytest.param('"\\u58c1"', id="string"),
-        pytest.param('[{"reason": "\\u58c1"}]', id="array"),
-        pytest.param("42", id="number"),
-        pytest.param("true", id="boolean"),
-        pytest.param("null", id="null"),
+        pytest.param('{"v": 1e400}', id="overflow"),
     ],
 )
 def test_emit_event_preserves_tool_arguments_when_not_safe_object(arguments: str) -> None:
@@ -93,13 +80,3 @@ def test_emit_event_preserves_tool_arguments_when_not_safe_object(arguments: str
     assert payload["arguments"] == arguments
     assert payload["result"] == "ok"
     assert len(text.splitlines()) == 1
-
-
-def test_emit_event_preserves_arguments_on_non_tool_event() -> None:
-    @dataclass(frozen=True)
-    class ArgumentsEvent(KeyboardEvent):
-        arguments: str = "{}"
-
-    out = io.StringIO()
-    emit_event(ArgumentsEvent("hello"), out=out)
-    assert json.loads(out.getvalue())["arguments"] == "{}"

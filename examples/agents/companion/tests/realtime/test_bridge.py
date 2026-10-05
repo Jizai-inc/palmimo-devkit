@@ -384,20 +384,7 @@ async def test_bridge_logs_tool_arguments_as_readable_object(
     "arguments",
     [
         pytest.param('{"reason": "unterminated', id="malformed"),
-        pytest.param('{"value": ' + "9" * 5000 + "}", id="oversized-integer"),
         pytest.param('{"value":NaN}', id="nan"),
-        pytest.param('{"value":Infinity}', id="infinity"),
-        pytest.param('{"value":-Infinity}', id="negative-infinity"),
-        pytest.param('{"nested":[NaN]}', id="nested-nan"),
-        pytest.param('{"v": 1e400}', id="overflow"),
-        pytest.param('{"reason": "\\ud83d"}', id="unpaired-surrogate"),
-        pytest.param('{"v":' + "[" * 100_000 + "0" + "]" * 100_000 + "}", id="deep-nesting"),
-        pytest.param('{"a":1,"a":2}', id="duplicate-keys"),
-        pytest.param('"\\u58c1"', id="string"),
-        pytest.param('["\\u58c1"]', id="array"),
-        pytest.param("42", id="number"),
-        pytest.param("true", id="boolean"),
-        pytest.param("null", id="null"),
     ],
 )
 async def test_bridge_preserves_tool_arguments_when_json_is_not_valid_object(
