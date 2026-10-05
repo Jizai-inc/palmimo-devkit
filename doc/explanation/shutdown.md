@@ -123,6 +123,12 @@ is for *doing* something in the loop, never for a checkpoint.
   teardown rather than past it, so a second Ctrl+C during task cancellation
   *shortens* the shutdown without skipping the torque-off — which keeps the
   operator's escape from a slow one.
+- Companion keeps its loop signal handlers active from startup through all
+  cleanup. It deliberately ignores every further SIGINT/SIGTERM/SIGHUP until
+  parking finishes: systemd signals the cgroup and uv forwards that signal to
+  Python, so a second delivery can be part of a single stop request. Unlike
+  the shared teardown rule above, a second Ctrl+C does not shorten companion
+  cleanup. Its forced-termination escape is SIGKILL.
 - `shutdown.park()` ignores stop signals for its own duration (`SIG_IGN`, not a
   mask: a blocked signal stays pending and fires on unblock, which would just
   move the kill to immediately after the park). The way out of a park that will

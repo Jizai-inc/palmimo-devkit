@@ -40,6 +40,7 @@ from ..core.perception import merge
 from ..core.reflexes import ReflexEngine
 from ..core.tools import COMPANION_TOOL_MODELS, make_look_at_face_tool
 from ..core.vision import FaceLocator, FacePresenceDetector, VisionWatch, WaveDetector
+from ..shutdown import ParkOutput, wait_until_done
 from .bus import Bus
 from .conductor import Conductor
 from .history import History, SystemNoteEvent
@@ -198,20 +199,6 @@ class Runtime:
             self._connect_task = asyncio.create_task(asyncio.to_thread(self.palmimo.connect))
             await asyncio.shield(self._connect_task)
 
-    async def _wait_for_connect(self) -> None:
-        """Wait for a connect worker that continues after its caller is cancelled."""
-        if self._connect_task is None:
-            return
-        while not self._connect_task.done():
-            try:
-                await asyncio.shield(self._connect_task)
-            except asyncio.CancelledError:
-                continue
-            except Exception:
-                break
-        with contextlib.suppress(BaseException):
-            self._connect_task.result()
-
     async def start(self) -> None:
         """Connect the robot (if not already) and launch every background task this runtime owns.
 
@@ -236,10 +223,9 @@ class Runtime:
     async def aclose(self) -> None:
         """Cancel every task this runtime launched, disconnect the robot, close the event log.
 
-        Best-effort and idempotent-safe regardless of which peripherals were
-        attached -- unlike :meth:`connect`, this doesn't gate on
-        ``has_connectable_resource``: ``Palmimo.disconnect()`` is always safe
-        to call (even compute-only, or never connected).
+        The SDK park helper skips compute-only facades and disconnects any
+        connectable facade, including one that never finished connecting.
+        Diagnostic output failures do not prevent the park.
         """
         if self.vision_watch is not None:
             with contextlib.suppress(Exception):
@@ -250,8 +236,10 @@ class Runtime:
             with contextlib.suppress(BaseException):
                 await task
         self._tasks.clear()
-        await self._wait_for_connect()
-        await park_async(self.palmimo)
+        if self._connect_task is not None:
+            with contextlib.suppress(BaseException):
+                await wait_until_done(self._connect_task)
+        await park_async(self.palmimo, out=ParkOutput().as_text_io())
         if self.event_log is not None:
             with contextlib.suppress(Exception):
                 self.event_log.close()

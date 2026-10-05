@@ -1,10 +1,12 @@
-"""Signal delivery shared by the companion front ends."""
+"""Shutdown coordination shared by the companion front ends."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import TextIO, cast
 
 from palmimo_sdk.shutdown import StopRequest, loop_stop_on_signals
 
@@ -41,3 +43,32 @@ async def stop_scope(
         finally:
             stopping = True
             await cleanup()
+
+
+class ParkOutput:
+    """Keep shutdown diagnostics best-effort when the terminal is gone."""
+
+    def __init__(self, stream: TextIO | None = None) -> None:
+        self._stream = sys.stderr if stream is None else stream
+
+    def write(self, text: str) -> int:
+        try:
+            return self._stream.write(text)
+        except (OSError, ValueError):
+            return len(text)
+
+    def flush(self) -> None:
+        with contextlib.suppress(OSError, ValueError):
+            self._stream.flush()
+
+    def as_text_io(self) -> TextIO:
+        """Expose the write/flush interface used by the SDK's park helper."""
+        return cast(TextIO, self)
+
+
+async def wait_until_done[T](future: asyncio.Future[T]) -> T:
+    """Wait through caller cancellation, then return or raise the worker result."""
+    while not future.done():
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await asyncio.shield(future)
+    return future.result()

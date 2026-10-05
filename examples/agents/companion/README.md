@@ -317,11 +317,16 @@ pipeline's: the model's own audio is played by `Playback`'s `aplay`, not
 synthesized through the SDK's `Speaker`, so the hint is resolved in
 `realtime/app.py` and handed to `Playback` as a device string.
 
-Ctrl+C, `SIGTERM`, and `SIGHUP` end the session and park the robot on the way
-out in both pipeline frontends and the realtime session. Further stop signals
-are ignored until cleanup and parking finish. To force termination, use
-`SIGKILL`; under systemd, `TimeoutStopSec` bounds shutdown.
-If terminal cleanup hangs, press `Ctrl+\` (SIGQUIT) or use `kill -9 <pid>`; this skips parking.
+In the pipeline CLI and the realtime session, Ctrl+C, `SIGTERM`, and `SIGHUP`
+end the session and park the robot on the way out. In the pipeline TUI, type
+`/exit` in the input field, or send `kill -TERM <pid>` from another terminal.
+Textual disables terminal signal generation while it owns the terminal:
+Ctrl+C shows its quit help, and Ctrl+\ is a key rather than SIGQUIT.
+`SIGTERM` and `SIGHUP` still request orderly shutdown in the TUI.
+Further stop signals are ignored until cleanup and parking finish. To force
+termination, use `SIGKILL`; under systemd, `TimeoutStopSec` bounds shutdown.
+If TUI terminal cleanup hangs, use `kill -9 <pid>` from another terminal; this skips parking.
+In the CLI and realtime session, Ctrl+\ (SIGQUIT) also forces termination without parking.
 In-flight tool work is cancelled and given a few seconds to settle first, so
 a motion is never still writing to the servo bus while the robot disconnects.
 

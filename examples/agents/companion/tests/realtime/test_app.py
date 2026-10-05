@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import signal
 import time
 from typing import Any, cast
+
+import pytest
 
 from palmimo_companion_agent.realtime import app as app_module
 from palmimo_companion_agent.realtime.app import RealtimeSession
@@ -21,6 +24,7 @@ from palmimo_companion_agent.realtime.services.frames import LiveFrame
 from palmimo_companion_agent.realtime.services.reflexes import ReflexRunner
 from palmimo_companion_agent.realtime.services.router import _SessionClosed
 from palmimo_companion_agent.realtime.state import Sleeping
+from palmimo_companion_agent.shutdown import stop_scope
 from palmimo_sdk import Palmimo
 from palmimo_sdk.agent.toolset import AgentToolSet
 
@@ -96,7 +100,7 @@ async def test_a_closed_socket_ends_the_session_cleanly_and_still_parks() -> Non
         frame=LiveFrame(camera=None),
     )
 
-    await session.run(30.0)  # must return normally, not raise, and not wait out the 30s timeout
+    await session.run(30.0, stop=asyncio.Event())  # must return normally, not raise, and not wait out the 30s timeout
 
     assert recorder.order == ["bridge.settle", "playback.close", "watch.aclose", "disconnect"]
 
@@ -172,10 +176,7 @@ async def test_shutdown_skips_the_park_when_waking_a_sleeping_robot_fails() -> N
 
 
 async def test_wake_and_disconnect_parks_a_robot_that_never_became_a_session() -> None:
-    """Mirrors _run()'s own outer `finally`: a failure between Palmimo.connect() succeeding
-    and a RealtimeSession ever being built (most commonly RealtimeClient.connect() itself,
-    on a bad key or no network) must still park the robot -- this is the function that guard
-    calls, so exercising it directly proves the fix without needing a live websocket/hardware."""
+    """A failure after connect but before session creation must still park the robot."""
     recorder = _Recorder()
 
     await app_module._wake_and_disconnect(cast(Palmimo, recorder), Sleeping())
@@ -215,3 +216,19 @@ async def test_bridge_settle_does_not_wait_forever_on_an_uncancellable_tool() ->
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGHUP"), reason="requires POSIX loop signal handlers")
+async def test_session_keeps_outer_stop_handler_during_remaining_cleanup() -> None:
+    recorder = _Recorder()
+    session = _session(recorder, asleep=False)
+    session._usage = cast(Any, app_module.Usage("gpt-realtime-2.1"))
+    session._frame = LiveFrame(camera=None)
+
+    async def cleanup() -> None:
+        pass
+
+    loop = asyncio.get_running_loop()
+    async with stop_scope(cleanup):
+        await session.run(0.01, stop=asyncio.Event())
+        assert signal.SIGTERM in cast(Any, loop)._signal_handlers

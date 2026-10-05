@@ -42,7 +42,7 @@ from ..core.tools import COMPANION_TOOL_MODELS, make_look_at_face_tool
 from ..core.toolview import IDLE_TOOL_NAMES, ToolView
 from ..core.vision import FaceLocator, FacePresenceDetector, VisionWatch, WaveDetector
 from ..output import configure_output
-from ..shutdown import stop_scope
+from ..shutdown import ParkOutput, stop_scope, wait_until_done
 from .bridge import ToolBridge
 from .client import RealtimeClient, RealtimeClientLike
 from .log import EventLog
@@ -179,14 +179,11 @@ async def _wake_and_disconnect(palmimo: Palmimo, sleeping: Sleeping) -> None:
     legs = True
     if sleeping.asleep:
         wake = asyncio.get_running_loop().run_in_executor(None, palmimo.wake)
-        while not wake.done():
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await asyncio.shield(wake)
         try:
-            wake.result()
+            await wait_until_done(wake)
         except Exception:
             legs = False
-    await park_async(palmimo, legs=legs)
+    await park_async(palmimo, legs=legs, out=ParkOutput().as_text_io())
 
 
 class RealtimeSession:
@@ -216,17 +213,16 @@ class RealtimeSession:
         self._usage = usage
         self._frame = frame
         self._reflexes = reflexes
-        self._stop = asyncio.Event()
 
-    async def _watch_stop(self) -> None:
-        await self._stop.wait()
+    async def _watch_stop(self, stop: asyncio.Event) -> None:
+        await stop.wait()
         raise _Stop
 
-    async def run(self, seconds: float) -> None:
-        """Run every service until *seconds* elapse, a service raises, or a signal arrives.
+    async def run(self, seconds: float, *, stop: asyncio.Event) -> None:
+        """Run every service until *seconds* elapse, a service raises, or *stop* is set.
 
-        Further stop signals are ignored through shutdown so forwarded
-        signals cannot interrupt parking. Use SIGKILL to force termination.
+        The caller keeps its stop scope active through session shutdown and
+        the remaining websocket and log cleanup.
 
         ``_SessionClosed`` (raised by :class:`~.services.router.EventRouter`
         when the server closes the socket) joins ``_Stop``/``TimeoutError``
@@ -235,14 +231,15 @@ class RealtimeSession:
         router would otherwise leave the other services running.
         """
         started = time.monotonic()
-        async with stop_scope(self._shutdown, self._stop.set):
-            try:
-                async with asyncio.timeout(seconds), asyncio.TaskGroup() as tg:
-                    tg.create_task(self._watch_stop())
-                    for service in self._services:
-                        tg.create_task(service.run())
-            except* (_Stop, TimeoutError, _SessionClosed):
-                pass
+        try:
+            async with asyncio.timeout(seconds), asyncio.TaskGroup() as tg:
+                tg.create_task(self._watch_stop(stop))
+                for service in self._services:
+                    tg.create_task(service.run())
+        except* (_Stop, TimeoutError, _SessionClosed):
+            pass
+        finally:
+            await self._shutdown()
         print(f"\n{self._usage.report(time.monotonic() - started)}", flush=True)
         print(f"frames sent: {self._frame.pushed}", flush=True)
 
@@ -260,7 +257,7 @@ class RealtimeSession:
         not before: :meth:`~.services.audio.Playback.close` blocks the loop
         for seconds and nothing can be cancelled meanwhile. The
         wake-before-park step itself is :func:`_wake_and_disconnect`, shared
-        with ``_run``'s own outer ``finally`` -- see its docstring.
+        with ``_run``'s stop-scope cleanup when no session was built.
         """
         try:
             await self._bridge.settle(_SETTLE_TIMEOUT_S)
@@ -287,22 +284,25 @@ async def _run(args: argparse.Namespace) -> int:
     palmimo, _mic = build_robot(settings)
     sleeping = Sleeping()
     session: RealtimeSession | None = None
-    connect: asyncio.Future[Palmimo] | None = None
 
     async def cleanup() -> None:
-        if connect is not None:
-            while not connect.done():
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await asyncio.shield(connect)
-            with contextlib.suppress(BaseException):
-                connect.result()
         try:
             if session is None:
                 await _wake_and_disconnect(palmimo, sleeping)
         finally:
             log.close()
 
-    async with stop_scope(cleanup):
+    stop = asyncio.Event()
+    task = asyncio.current_task()
+    assert task is not None
+
+    def request_stop() -> None:
+        if session is None:
+            task.cancel()
+        else:
+            stop.set()
+
+    async with stop_scope(cleanup, request_stop):
         with contextlib.suppress(asyncio.CancelledError):
             face_locator = FaceLocator()
             toolset = build_toolset(palmimo, face_locator)
@@ -314,6 +314,7 @@ async def _run(args: argparse.Namespace) -> int:
             watch = build_vision(palmimo, face_locator)
 
             connect = asyncio.get_running_loop().run_in_executor(None, palmimo.connect)
+            connect.add_done_callback(lambda future: None if future.cancelled() else future.exception())
             await asyncio.shield(connect)
             async with RealtimeClient.connect(model=args.model, api_key=key) as client:
                 await client.send(
@@ -356,7 +357,7 @@ async def _run(args: argparse.Namespace) -> int:
                     frame=frame,
                     reflexes=reflexes,
                 )
-                await session.run(args.seconds)
+                await session.run(args.seconds, stop=stop)
     return 0
 
 

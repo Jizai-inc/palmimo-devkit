@@ -11,7 +11,10 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
-from typing import ClassVar, cast
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, ClassVar, cast
 
 import pytest
 
@@ -204,6 +207,7 @@ async def test_app_ignores_history_events_after_unmount(caplog: pytest.LogCaptur
     await app.runtime.aclose()
 
 
+@pytest.mark.skipif(not hasattr(signal, "SIGHUP"), reason="requires SIGHUP")
 @pytest.mark.parametrize("terminal_lost", [False, True])
 def test_run_tui_requests_exit_and_finishes_terminal_cleanup(
     monkeypatch: pytest.MonkeyPatch, terminal_lost: bool
@@ -219,7 +223,10 @@ def test_run_tui_requests_exit_and_finishes_terminal_cleanup(
             self.stopped.set()
 
         async def run_async(self) -> None:
-            asyncio.get_running_loop().call_soon(os.kill, os.getpid(), signal.SIGHUP)
+            loop = asyncio.get_running_loop()
+            assert callable(signal.getsignal(signal.SIGHUP)), "SIGHUP disposition is not callable"
+            assert signal.SIGHUP in cast(Any, loop)._signal_handlers, "SIGHUP handler is not installed"
+            loop.call_soon(os.kill, os.getpid(), signal.SIGHUP)
             await self.stopped.wait()
             finished.append("app")
             if terminal_lost:
@@ -233,3 +240,26 @@ def test_run_tui_requests_exit_and_finishes_terminal_cleanup(
     monkeypatch.setattr(tui_module, "CompanionAgentApp", App)
     tui_module.run_tui(_settings())
     assert finished == ["app", "park"]
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGHUP"), reason="requires SIGHUP")
+def test_run_tui_test_refuses_hangup_without_installed_handler() -> None:
+    script = """
+import asyncio
+import runpy
+import sys
+import pytest
+
+module = runpy.run_path(sys.argv[1])
+with pytest.MonkeyPatch.context() as patch:
+    patch.setattr(asyncio.SelectorEventLoop, "add_signal_handler", lambda *args: None)
+    module["test_run_tui_requests_exit_and_finishes_terminal_cleanup"](patch, False)
+"""
+    child = subprocess.run(
+        [sys.executable, "-c", script, str(Path(__file__).resolve())],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert child.returncode > 0, child.stdout + child.stderr
+    assert "AssertionError" in child.stderr

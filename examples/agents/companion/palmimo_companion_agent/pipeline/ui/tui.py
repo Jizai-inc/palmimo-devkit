@@ -105,7 +105,7 @@ class CompanionAgentApp(App):
         self.runtime.conductor.submit_user_text(text)
 
     async def action_quit(self) -> None:
-        """Textual's default quit action (Ctrl+C etc.) also goes through graceful shutdown."""
+        """Exit Textual through the same graceful shutdown as the /exit command."""
         self.exit()
 
 
