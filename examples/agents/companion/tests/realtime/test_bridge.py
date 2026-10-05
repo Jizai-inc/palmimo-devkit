@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, cast
+from unittest.mock import AsyncMock
+
+import pytest
 
 from palmimo_companion_agent.realtime.bridge import ToolBridge
 from palmimo_companion_agent.realtime.log import EventLog
@@ -352,3 +355,54 @@ async def test_a_plan_with_no_function_calls_is_a_no_op(fake_client: type) -> No
 
     assert toolset.calls == []
     assert client.sent == []
+
+
+async def test_bridge_logs_tool_arguments_as_readable_object(
+    fake_client: type, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bridge = _bridge(ScriptedToolset(), fake_client())
+    response = Response(
+        id="r1",
+        output=[
+            {
+                "type": "function_call",
+                "name": "nod",
+                "call_id": "c1",
+                "arguments": '{"reason":"\\u58c1\\u306e\\u82b1\\u67c4"}',
+            }
+        ],
+    )
+    await bridge.handle(response)
+    await asyncio.gather(*bridge.tasks)
+    output = capsys.readouterr().out
+    assert output.splitlines()[0] == 'tool    > nod({"reason": "壁の花柄"})'
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param('{"reason": "unterminated', id="malformed"),
+        pytest.param('{"value": ' + "9" * 5000 + "}", id="oversized-integer"),
+        pytest.param('{"value":NaN}', id="nan"),
+        pytest.param('{"value":Infinity}', id="infinity"),
+        pytest.param('{"value":-Infinity}', id="negative-infinity"),
+        pytest.param('{"nested":[NaN]}', id="nested-nan"),
+        pytest.param('"\\u58c1"', id="string"),
+        pytest.param('["\\u58c1"]', id="array"),
+        pytest.param("42", id="number"),
+        pytest.param("true", id="boolean"),
+        pytest.param("null", id="null"),
+    ],
+)
+async def test_bridge_preserves_tool_arguments_when_json_is_not_valid_object(
+    arguments: str, fake_client: type, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bridge = _bridge(ScriptedToolset(), fake_client())
+    monkeypatch.setattr(bridge.view, "call", AsyncMock(return_value=ToolResult(text="done")))
+    response = Response(
+        id="r1",
+        output=[{"type": "function_call", "name": "nod", "arguments": arguments, "call_id": "c1"}],
+    )
+    await bridge.handle(response)
+    await asyncio.gather(*bridge.tasks)
+    assert capsys.readouterr().out.splitlines()[0] == f"tool    > nod({arguments})"

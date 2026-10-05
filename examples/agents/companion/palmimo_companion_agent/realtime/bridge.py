@@ -47,6 +47,7 @@ from collections.abc import Iterable
 
 from palmimo_sdk.agent.toolset import AgentToolSet
 
+from ..core.tool_arguments import parse_tool_arguments
 from ..core.toolview import ToolView
 from .client import RealtimeClientLike
 from .log import EventLog
@@ -178,7 +179,10 @@ class ToolBridge:
             args = json.loads(call.arguments) if call.arguments else {}
         except ValueError:
             args = {}
-        print(f"tool    > {name}({call.arguments})", flush=True)
+        logged_arguments = parse_tool_arguments(call.arguments)
+        if isinstance(logged_arguments, dict):
+            logged_arguments = json.dumps(logged_arguments, ensure_ascii=False)
+        print(f"tool    > {name}({logged_arguments})", flush=True)
         result = await self._view.call(name, args)
         print(f"          -> {result.text[:120]}", flush=True)
         interrupted = result.text.startswith(_INTERRUPTED_PREFIX)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+from dataclasses import dataclass
 
 import pytest
 
@@ -54,15 +55,47 @@ def test_emit_event_keeps_non_ascii_text_readable() -> None:
     assert "こんにちは" in out.getvalue()
 
 
+def test_emit_event_logs_tool_arguments_as_readable_object() -> None:
+    out = io.StringIO()
+    arguments = '{"reason": "\\u58c1\\u306e\\u82b1\\u67c4"}'
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="discover", arguments=arguments, result="ok"), out=out)
+    assert json.loads(out.getvalue())["arguments"] == {"reason": "壁の花柄"}
+    assert "壁の花柄" in out.getvalue()
+    assert "\\u58c1" not in out.getvalue()
+
+
 @pytest.mark.parametrize(
-    ("arguments", "logged"),
+    "arguments",
     [
-        ('{"reason": "\\u58c1\\u306e\\u82b1\\u67c4"}', {"reason": "壁の花柄"}),
-        ('{"reason": "unterminated', '{"reason": "unterminated'),
+        pytest.param('{"reason": "unterminated', id="malformed"),
+        pytest.param('{"value": ' + "9" * 5000 + "}", id="oversized-integer"),
+        pytest.param('{"value": NaN}', id="nan"),
+        pytest.param('{"value": Infinity}', id="infinity"),
+        pytest.param('{"value": -Infinity}', id="negative-infinity"),
+        pytest.param('{"nested": [NaN]}', id="nested-nan"),
     ],
 )
-def test_emit_event_logs_tool_arguments_as_json_when_they_parse(arguments: str, logged: object) -> None:
+def test_emit_event_preserves_tool_arguments_when_json_is_invalid(arguments: str) -> None:
     out = io.StringIO()
     emit_event(ToolExecEvent(tool_call_id="call-1", name="discover", arguments=arguments, result="ok"), out=out)
-    assert json.loads(out.getvalue())["arguments"] == logged
-    assert "\\u58c1" not in out.getvalue()
+    payload = json.loads(out.getvalue(), parse_constant=lambda value: pytest.fail(f"Invalid JSON constant: {value}"))
+    assert payload["arguments"] == arguments
+    assert payload["result"] == "ok"
+    assert len(out.getvalue().splitlines()) == 1
+
+
+@pytest.mark.parametrize("arguments", ['"\\u58c1"', '[{"reason": "\\u58c1"}]', "42", "true", "null"])
+def test_emit_event_preserves_tool_arguments_when_json_is_not_object(arguments: str) -> None:
+    out = io.StringIO()
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="discover", arguments=arguments, result="ok"), out=out)
+    assert json.loads(out.getvalue())["arguments"] == arguments
+
+
+def test_emit_event_preserves_arguments_on_non_tool_event() -> None:
+    @dataclass(frozen=True)
+    class ArgumentsEvent(KeyboardEvent):
+        arguments: str = "{}"
+
+    out = io.StringIO()
+    emit_event(ArgumentsEvent("hello"), out=out)
+    assert json.loads(out.getvalue())["arguments"] == "{}"
