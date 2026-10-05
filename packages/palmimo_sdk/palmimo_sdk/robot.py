@@ -64,11 +64,11 @@ import math
 import signal
 import threading
 import time
-from collections import deque
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from ._guard import RestingReport, TripLog
 from ._signals import signals_ignored
 from .engine import NECK_GESTURES, Motion, MotionEngine
 from .io import FaceDisplay, HeadCamera, Microphone, MicStream, ServoDriver, Speaker, SpeechHandle
@@ -163,8 +163,7 @@ _NECK_GESTURE_PV = 0
 _NECK_GESTURE_RESTORE_PV_FALLBACK = 300
 # Motions a soft-returning arm may coexist with; anything else ends the soft return.
 _SOFT_RETURN_MOTIONS = (Motion.IDLE, *NECK_GESTURES)
-_OVERLOAD_TRIP_HISTORY = 64
-_RAIL_TRIP_HISTORY = 64
+_TRIP_HISTORY = 64
 # Dance finishing flourish — a lingering hold followed by a slow return,
 # tuned on hardware. After the swaying body ends
 # near-static on the dwell at an extreme, the legs softly hold that ACTUAL pose
@@ -580,15 +579,13 @@ class Palmimo:
         self._overload_scope: tuple[Motion, tuple[int, ...]] | None = None
         # When leg telemetry was last read successfully, or None before the first read.
         self._last_leg_sample: float | None = None
-        self._overload_trips: deque[OverloadTrip] = deque(maxlen=_OVERLOAD_TRIP_HISTORY)
-        self._last_overload_trip: OverloadTrip | None = None
-        self._rail_trips: deque[RailTrip] = deque(maxlen=_RAIL_TRIP_HISTORY)
-        self._last_rail_trip: RailTrip | None = None
-        # Same hold-back as below, for a rail sag with no leg motion running.
-        self._resting_sag_reported = False
+        self._overload_log: TripLog[OverloadTrip] = TripLog(_TRIP_HISTORY)
+        self._rail_log: TripLog[RailTrip] = TripLog(_TRIP_HISTORY)
         # A leg trip with no leg motion running has been recorded and the
         # strain has not cleared since; holds back the repeats.
-        self._resting_strain_reported = False
+        self._resting_strain = RestingReport()
+        # Same hold-back, for a rail sag with no leg motion running.
+        self._resting_sag = RestingReport()
         # Arm axes held at SOFT_RETURN_GAIN after an arm trip (applied by
         # _sync_gesture_tuning), or None.
         self._soft_return: tuple[str, ...] | None = None
@@ -2211,8 +2208,8 @@ class Palmimo:
         self._leg_poller.reset()
         if self._rail is not None:
             self._rail.reset()
-        self._resting_strain_reported = False
-        self._resting_sag_reported = False
+        self._resting_strain.reset()
+        self._resting_sag.reset()
         self._end_soft_return()
 
     def _end_soft_return(self) -> None:
@@ -2284,27 +2281,16 @@ class Palmimo:
             trips.append(self._arm_overload.sample(telemetry.current, arm))
         if self._leg_overload is not None:
             leg_trip = self._leg_overload.sample(telemetry.current, [m for m in LEG_MOTORS if m not in arm])
-            if not resting or (leg_trip is None and not self._leg_overload.strained):
-                self._resting_strain_reported = False
-            elif leg_trip is not None:
-                if self._resting_strain_reported:
-                    leg_trip = None
-                self._resting_strain_reported = True
+            leg_trip = self._resting_strain.filter(leg_trip, resting=resting, breached=self._leg_overload.strained)
             trips.append(leg_trip)
         rail_trip = None
         if self._rail is not None:
             rail_trip = self._rail.sample(telemetry.voltage, LEG_MOTORS)
-            if not resting or (rail_trip is None and not self._rail.sagging):
-                self._resting_sag_reported = False
-            elif rail_trip is not None:
-                if self._resting_sag_reported:
-                    rail_trip = None
-                self._resting_sag_reported = True
+            rail_trip = self._resting_sag.filter(rail_trip, resting=resting, breached=self._rail.sagging)
         found = [replace(t, motion=motion.name.lower()) for t in trips if t is not None]
         found_rail = replace(rail_trip, motion=motion.name.lower()) if rail_trip is not None else None
         for trip in found:
-            self._overload_trips.append(trip)
-            self._last_overload_trip = trip
+            self._overload_log.record(trip)
             logger.warning(
                 "overload guard (%s): %s at %d (threshold %d) for %d samples during %s; %s.",
                 trip.channel,
@@ -2316,8 +2302,7 @@ class Palmimo:
                 "no leg motion to stop" if resting else "stopping",
             )
         if found_rail is not None:
-            self._rail_trips.append(found_rail)
-            self._last_rail_trip = found_rail
+            self._rail_log.record(found_rail)
             logger.warning(
                 "rail guard: %.2f V at %s (threshold %.2f V) for %d samples during %s; %s.",
                 found_rail.voltage,
@@ -2340,36 +2325,24 @@ class Palmimo:
 
         The queue keeps the most recent 64; older trips are dropped when it overflows.
         """
-        trips: list[OverloadTrip] = []
-        # Popped one at a time: a trip the stepping thread appends meanwhile is kept, not cleared.
-        while True:
-            try:
-                trips.append(self._overload_trips.popleft())
-            except IndexError:
-                return trips
+        return self._overload_log.drain()
 
     @property
     def last_overload_trip(self) -> OverloadTrip | None:
         """The most recent overload trip, kept across :meth:`connect`; ``None`` if none has happened."""
-        return self._last_overload_trip
+        return self._overload_log.last
 
     def drain_rail_trips(self) -> list[RailTrip]:
         """Return and clear the rail undervoltage trips recorded since the last call, oldest first.
 
         The queue keeps the most recent 64; older trips are dropped when it overflows.
         """
-        trips: list[RailTrip] = []
-        # Popped one at a time: a trip the stepping thread appends meanwhile is kept, not cleared.
-        while True:
-            try:
-                trips.append(self._rail_trips.popleft())
-            except IndexError:
-                return trips
+        return self._rail_log.drain()
 
     @property
     def last_rail_trip(self) -> RailTrip | None:
         """The most recent rail trip, kept across :meth:`connect`; ``None`` if none has happened."""
-        return self._last_rail_trip
+        return self._rail_log.last
 
     def _log_thermal_lockout(self) -> None:
         """Re-log every :data:`_THERMAL_IGNORE_LOG_INTERVAL_S` while the guard keeps overriding the neck.
