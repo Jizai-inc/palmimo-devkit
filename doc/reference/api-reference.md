@@ -881,7 +881,9 @@ disabled, `step()` never reads the leg telemetry.
 **Judgement.** An axis trips when `abs(current) >= threshold` on
 `OVERLOAD_CONSECUTIVE` (3) samples in a row; one sample below the threshold
 zeroes that axis's count. An axis missing from a sweep (silent or unreached)
-neither advances nor resets its count. A trip clears every count, and when
+neither advances nor resets its count. Samples 0.2 s or more apart are not
+consecutive: after a pause in stepping, or a run of failed reads, every count
+restarts. A trip clears every count, and when
 several axes reach the count together the first in bus order is reported. The
 arm channel covers the three axes of the raised leg (`wave_leg` for `wave`, legs
 3 and 6 for `wave_both` and `clap`); the leg channel covers the remaining
@@ -971,7 +973,8 @@ sweeps in a row; one sweep at or above the threshold zeroes the count. A sweep
 with no leg voltage in it neither advances nor resets the count. A trip clears
 the count, and when several axes read the same lowest value the first in bus
 order is reported. The count belongs to the rail, not to a motion: it survives a
-motion change and restarts only on `connect()` and after a trip. Polling is the
+motion change and restarts on `connect()`, after a trip, and when two sweeps are
+0.2 s or more apart (a pause in stepping, or a run of failed reads). Polling is the
 overload guard's: the injected `thermal_clock`, at most every 1/30 s.
 
 **Reaction.** The motion drops to `IDLE`; torque and gains are untouched. The

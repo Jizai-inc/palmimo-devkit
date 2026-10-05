@@ -78,6 +78,7 @@ from .overload import (
     LEG_OVERLOAD_CURRENT,
     OVERLOAD_POLL_INTERVAL_S,
     SOFT_RETURN_GAIN,
+    STREAK_MAX_GAP_S,
     OverloadGuard,
     OverloadTrip,
     SoftReturnMonitor,
@@ -577,6 +578,8 @@ class Palmimo:
         )
         # (motion, arm legs) the guards' streaks were counted under.
         self._overload_scope: tuple[Motion, tuple[int, ...]] | None = None
+        # When leg telemetry was last read successfully, or None before the first read.
+        self._last_leg_sample: float | None = None
         self._overload_trips: deque[OverloadTrip] = deque(maxlen=_OVERLOAD_TRIP_HISTORY)
         self._last_overload_trip: OverloadTrip | None = None
         self._rail_trips: deque[RailTrip] = deque(maxlen=_RAIL_TRIP_HISTORY)
@@ -2204,6 +2207,7 @@ class Palmimo:
             if guard is not None:
                 guard.reset()
         self._overload_scope = None
+        self._last_leg_sample = None
         self._leg_poller.reset()
         if self._rail is not None:
             self._rail.reset()
@@ -2265,6 +2269,11 @@ class Palmimo:
         telemetry = self._leg_poller.read(driver, now, "leg telemetry read failed, keeping the current streaks")
         if telemetry is None:
             return False
+        if self._last_leg_sample is not None and now - self._last_leg_sample >= STREAK_MAX_GAP_S:
+            for stale in (self._arm_overload, self._leg_overload, self._rail):
+                if stale is not None:
+                    stale.reset()
+        self._last_leg_sample = now
         arm = leg_motors(arm_legs)
         if self._soft_return is not None and self._soft_return_monitor.sample(telemetry.position, self._soft_return):
             self._end_soft_return()

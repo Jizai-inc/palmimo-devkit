@@ -315,6 +315,9 @@ stops or an SSH session drops.
   servo latches its own Overload error and goes limp, which drops the body
   unpredictably; stopping first lets the robot choose where it ends up. Three
   consecutive samples at or above a per-channel threshold drop the motion to `IDLE`.
+  Samples 0.2 s or more apart do not count as consecutive, so a streak left over
+  from before a pause in stepping cannot combine with a fresh one; the rail guard
+  below follows the same rule.
   The raised arm of a wave is the exception to "leave torque on": someone holding it
   fights a stiff servo, so on an arm trip that arm alone is lowered to a soft gain and
   eased back to neutral, and only if the gain cannot be written is its torque cut. The

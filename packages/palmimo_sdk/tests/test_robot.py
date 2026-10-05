@@ -2847,6 +2847,21 @@ def test_reconnect_leaves_no_streak_behind() -> None:
     assert robot.motion == "idle"
 
 
+def test_overload_streak_does_not_carry_across_a_pause_in_stepping() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    driver.currents = {"leg_1_yaw": 1300}
+    _poll_steps(robot, clock, 2)
+
+    clock.advance(60.0)  # the caller stopped stepping for a while
+    _poll_steps(robot, clock, 2)
+    assert robot.motion == "pushup"
+
+    _poll_steps(robot, clock)
+    assert robot.motion == "idle"
+
+
 def test_last_overload_trip_survives_a_reconnect() -> None:
     driver = _OverloadDriver()
     robot, clock = _overload_robot(driver)
@@ -3021,6 +3036,21 @@ def test_switching_motion_keeps_the_rail_streak() -> None:
 
     assert robot.motion == "idle"
     assert [t.motion for t in robot.drain_rail_trips()] == ["forward"]
+
+
+def test_rail_streak_does_not_carry_across_a_pause_in_stepping() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("forward")
+    _sag(driver)
+    _poll_steps(robot, clock, RAIL_CONSECUTIVE - 1)
+
+    clock.advance(60.0)  # the caller stopped stepping for a while
+    _poll_steps(robot, clock, RAIL_CONSECUTIVE - 1)
+    assert robot.motion == "forward"
+
+    _poll_steps(robot, clock)
+    assert robot.motion == "idle"
 
 
 def test_rail_and_overload_trips_in_one_sweep_are_both_recorded_and_stop_the_motion_once() -> None:
