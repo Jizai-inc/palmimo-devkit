@@ -334,7 +334,8 @@ stops or an SSH session drops.
   torque, while each axis's own current stays inside its limit, so the per-axis
   overload guard cannot see it. Every axis measures the same rail, so the guard treats
   the sweep's lowest voltage as one signal for the whole body, not one per axis. Six
-  consecutive sweeps below 3.8 V (200 ms) drop the motion to `IDLE`; torque stays on,
+  consecutive sweeps below 3.8 V (200 ms, up to about 300 ms when polls slip a frame
+  at 60 fps) drop the motion to `IDLE`; torque stays on,
   and no gain is touched. The streak belongs to the rail rather than to a motion, so it
   survives a motion change. Across a full-motion measurement of an assembled robot,
   the longest stretch below 3.8 V during normal walking was 67 ms, and the servo's

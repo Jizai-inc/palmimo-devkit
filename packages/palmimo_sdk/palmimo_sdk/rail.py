@@ -23,7 +23,8 @@ from dataclasses import dataclass
 # measurement of an assembled robot, the longest stretch below 3.8 V during
 # normal walking was 67 ms.
 RAIL_UNDERVOLTAGE_V = 3.8
-# Samples in a row below the threshold before the guard trips (200 ms at the 30 Hz poll).
+# Samples in a row below the threshold before the guard trips (200 ms at the 30 Hz poll;
+# up to about 300 ms when a poll slips to every third frame at 60 fps).
 RAIL_CONSECUTIVE = 6
 
 

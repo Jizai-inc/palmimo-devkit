@@ -962,8 +962,10 @@ robot = Palmimo(
 `RAIL_UNDERVOLTAGE_V`, `RAIL_CONSECUTIVE` and `RailTrip` are exported from
 `palmimo_sdk`. The default sits above the servo's Min Voltage Limit of 3.5 V.
 Across a full-motion measurement of an assembled robot, the longest stretch
-below 3.8 V during normal walking was 67 ms; `RAIL_CONSECUTIVE` (6 sweeps, 200 ms
-at the 30 Hz poll) is three times that. How quickly a servo latches under a sag
+below 3.8 V during normal walking was 67 ms; `RAIL_CONSECUTIVE` (6 sweeps) takes
+at least 200 ms at the 30 Hz poll, three times that. The poll runs on a frame of
+`step()`, so at the default 60 fps a sweep can slip from every second frame to
+every third, and six sweeps can take up to about 300 ms. How quickly a servo latches under a sag
 has not been measured, so the guard is not guaranteed to fire before the latch.
 
 **Judgement.** Every axis measures the same rail, so the lowest voltage among
