@@ -18,6 +18,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from ._guard import Streak
+
 
 # Volts. The servo's Min Voltage Limit is 3.5 V; across a full-motion
 # measurement of an assembled robot, the longest stretch below 3.8 V during
@@ -26,6 +28,7 @@ RAIL_UNDERVOLTAGE_V = 3.8
 # Samples in a row below the threshold before the guard trips (200 ms at the 30 Hz poll;
 # up to about 300 ms when a poll slips to every third frame at 60 fps).
 RAIL_CONSECUTIVE = 6
+_RAIL_KEY = "rail"
 
 
 @dataclass(frozen=True)
@@ -70,7 +73,7 @@ class RailGuard:
             raise ValueError("consecutive must be at least 1.")
         self._threshold = threshold_v
         self._consecutive = consecutive
-        self._streak = 0
+        self._streak = Streak()
 
     @property
     def threshold(self) -> float:
@@ -80,7 +83,7 @@ class RailGuard:
     @property
     def sagging(self) -> bool:
         """Whether the last sweep read below the threshold (``False`` right after a trip)."""
-        return self._streak > 0
+        return self._streak.active
 
     def sample(self, voltages: Mapping[str, float], motors: Sequence[str]) -> RailTrip | None:
         """Fold one sweep into the streak and return a verdict if the rail trips.
@@ -105,15 +108,15 @@ class RailGuard:
             return None
         motor, volts = lowest
         if volts >= self._threshold:
-            self._streak = 0
+            self._streak.drop(_RAIL_KEY)
             return None
-        self._streak += 1
-        if self._streak < self._consecutive:
+        streak = self._streak.advance(_RAIL_KEY)
+        if streak < self._consecutive:
             return None
-        trip = RailTrip(volts, motor, self._threshold, self._streak, "")
-        self._streak = 0
+        trip = RailTrip(volts, motor, self._threshold, streak, "")
+        self._streak.clear()
         return trip
 
     def reset(self) -> None:
         """Forget the streak."""
-        self._streak = 0
+        self._streak.clear()

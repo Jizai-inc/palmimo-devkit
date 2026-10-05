@@ -19,6 +19,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from ._guard import Streak
+
 
 # Raw Present_Current units (signed, compared by magnitude). The arm of a wave
 # runs lighter than a weight-bearing leg, so its threshold is lower.
@@ -92,7 +94,7 @@ class OverloadGuard:
         self._threshold = threshold
         self._consecutive = consecutive
         self._channel: OverloadChannel = channel
-        self._streaks: dict[str, int] = {}
+        self._streaks = Streak()
 
     @property
     def threshold(self) -> int:
@@ -102,7 +104,7 @@ class OverloadGuard:
     @property
     def strained(self) -> bool:
         """Whether any axis was at or above the threshold when last sampled (``False`` right after a trip)."""
-        return bool(self._streaks)
+        return self._streaks.active
 
     def sample(self, currents: Mapping[str, int], motors: Sequence[str]) -> OverloadTrip | None:
         """Fold one sweep into the streaks and return a verdict if an axis trips.
@@ -122,10 +124,9 @@ class OverloadGuard:
                 continue
             current = int(currents[motor])
             if abs(current) < self._threshold:
-                self._streaks.pop(motor, None)
+                self._streaks.drop(motor)
                 continue
-            streak = self._streaks.get(motor, 0) + 1
-            self._streaks[motor] = streak
+            streak = self._streaks.advance(motor)
             if tripped is None and streak >= self._consecutive:
                 tripped = OverloadTrip(motor, current, self._threshold, streak, "", self._channel)
         if tripped is not None:
