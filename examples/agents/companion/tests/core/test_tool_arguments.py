@@ -9,12 +9,20 @@ import pytest
 from palmimo_companion_agent.core.tool_arguments import format_tool_arguments
 
 
-def test_format_tool_arguments_decodes_an_object_into_readable_json() -> None:
-    formatted = format_tool_arguments('{"reason": "\\u58c1\\u306e\\u82b1\\u67c4", "seconds": 2}')
+@pytest.mark.parametrize(
+    ("arguments", "text"),
+    [
+        pytest.param('{"reason": "\\u58c1\\u306e\\u82b1\\u67c4", "seconds": 2}', "壁の花柄", id="japanese"),
+        pytest.param('{"reason": "co\\u00adop"}', "co\u00adop", id="soft-hyphen"),
+        pytest.param('{"reason": "\\ud83d\\udc69\\u200d\\ud83d\\udcbb"}', "\U0001f469\u200d\U0001f4bb", id="zwj-emoji"),
+    ],
+)
+def test_format_tool_arguments_decodes_an_object_into_readable_json(arguments: str, text: str) -> None:
+    formatted = format_tool_arguments(arguments)
 
     assert formatted is not None
-    assert "壁の花柄" in formatted
-    assert json.loads(formatted) == {"reason": "壁の花柄", "seconds": 2}
+    assert text in formatted
+    assert json.loads(formatted) == json.loads(arguments)
 
 
 @pytest.mark.parametrize(
@@ -32,6 +40,7 @@ def test_format_tool_arguments_decodes_an_object_into_readable_json() -> None:
         pytest.param('{"a":1,"a":2}', id="duplicate-keys"),
         pytest.param('{"reason": "\\u009b2J"}', id="c1-control"),
         pytest.param('{"reason": "\\u202eabc"}', id="bidi-override"),
+        pytest.param('{"reason": "a\\u2028b"}', id="line-separator"),
         pytest.param('"\\u58c1"', id="string"),
         pytest.param('[{"reason": "\\u58c1"}]', id="array"),
         pytest.param("42", id="number"),

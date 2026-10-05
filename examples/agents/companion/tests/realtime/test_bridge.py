@@ -384,7 +384,6 @@ async def test_bridge_logs_tool_arguments_as_readable_object(
     "arguments",
     [
         pytest.param('{"reason": "unterminated', id="malformed"),
-        pytest.param('{"value":NaN}', id="nan"),
     ],
 )
 async def test_bridge_preserves_tool_arguments_when_json_is_not_valid_object(

@@ -6,6 +6,7 @@ One event, one line, so a log can be tailed live or aggregated after the fact
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 from datetime import datetime
@@ -32,9 +33,11 @@ def emit_event(event: Event, *, out: TextIO) -> None:
     """
     payload = dataclasses.asdict(event)
     payload["ts"] = datetime.now().astimezone().isoformat(timespec="milliseconds")
-    if isinstance(event, ToolExecEvent):
-        arguments_json = format_tool_arguments(event.arguments)
-        if arguments_json is not None:
-            payload["arguments"] = json.loads(arguments_json)
-    out.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    line = json.dumps(payload, ensure_ascii=False)
+    if isinstance(event, ToolExecEvent) and (arguments_json := format_tool_arguments(event.arguments)) is not None:
+        # The payload nests the arguments one level deeper than the formatter
+        # checked, so a value right at the recursion limit can still fail here.
+        with contextlib.suppress(RecursionError, ValueError):
+            line = json.dumps({**payload, "arguments": json.loads(arguments_json)}, ensure_ascii=False)
+    out.write(line + "\n")
     out.flush()

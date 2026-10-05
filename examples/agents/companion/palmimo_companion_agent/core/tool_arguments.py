@@ -1,6 +1,8 @@
 """Safe JSON object formatting for tool-call argument logs.
 
-Numeric spellings may be normalized, such as ``1.0e0`` to ``1.0``.
+Numbers go through a float round trip, so the log may show ``1.0e0`` as
+``1.0`` and drop digits beyond double precision; the raw string the tool ran
+with is unaffected.
 """
 
 from __future__ import annotations
@@ -10,15 +12,19 @@ import unicodedata
 from typing import Any
 
 
-#: Zero-width joiner: a format character that legitimately joins emoji, unlike
-#: the bidi overrides and other format characters a terminal acts on.
-_ZWJ = "\u200d"
+#: Bidirectional formatting characters (Unicode UAX #9): they reorder how the
+#: rest of a console or journal line is displayed. Other format characters
+#: (ZWJ, ZWNJ, soft hyphen) are ordinary text and stay readable.
+_BIDI_CONTROLS = frozenset("\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 
 
-def _is_terminal_control(char: str) -> bool:
-    """Whether printing *char* raw would act on the operator's terminal (C1 controls, bidi overrides)."""
-    category = unicodedata.category(char)
-    return category == "Cc" or (category == "Cf" and char != _ZWJ)
+def _is_unsafe_to_print(char: str) -> bool:
+    """Whether *char* printed raw would act on a terminal or split a log line.
+
+    C1 controls (``Cc``) drive terminals, bidi controls reorder the line, and
+    the line/paragraph separators (``Zl``/``Zp``) break ``splitlines()``.
+    """
+    return unicodedata.category(char) in ("Cc", "Zl", "Zp") or char in _BIDI_CONTROLS
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -40,7 +46,7 @@ def format_tool_arguments(arguments: str) -> str | None:
         formatted.encode("utf-8", errors="strict")
         # json.dumps escapes only C0 controls; anything else decoded from a
         # \u escape would reach the journal and the terminal as a raw control.
-        if any(_is_terminal_control(char) for char in formatted):
+        if any(_is_unsafe_to_print(char) for char in formatted):
             return None
         return formatted
     except (ValueError, RecursionError, TypeError):

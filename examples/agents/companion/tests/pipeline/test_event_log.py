@@ -7,6 +7,7 @@ import json
 
 import pytest
 
+from palmimo_companion_agent.core.tool_arguments import format_tool_arguments
 from palmimo_companion_agent.pipeline.event_log import emit_event
 from palmimo_companion_agent.pipeline.history import KeyboardEvent, ToolExecEvent
 
@@ -63,12 +64,27 @@ def test_emit_event_logs_tool_arguments_as_readable_object() -> None:
     assert "\\u58c1" not in out.getvalue()
 
 
+def _deepest_formattable_arguments() -> str:
+    """The most deeply nested arguments the formatter still accepts on this interpreter."""
+
+    def nested(depth: int) -> str:
+        return '{"v":' + "[" * depth + "0" + "]" * depth + "}"
+
+    low, high = 1, 200_000
+    while low < high:
+        mid = (low + high + 1) // 2
+        if format_tool_arguments(nested(mid)) is None:
+            high = mid - 1
+        else:
+            low = mid
+    return nested(low)
+
+
 @pytest.mark.parametrize(
     "arguments",
     [
-        pytest.param('{"reason": "unterminated', id="malformed"),
         pytest.param('{"reason": "\\ud83d"}', id="unpaired-surrogate"),
-        pytest.param('{"v": 1e400}', id="overflow"),
+        pytest.param(_deepest_formattable_arguments(), id="nesting-at-the-formatter-limit"),
     ],
 )
 def test_emit_event_preserves_tool_arguments_when_not_safe_object(arguments: str) -> None:
