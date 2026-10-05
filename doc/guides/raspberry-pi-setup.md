@@ -23,7 +23,7 @@ power it on.
 - An SSH public key on your workstation (create one with `ssh-keygen -t ed25519` →
   `~/.ssh/id_ed25519.pub`)
 
-> The DevKit ships with a **Raspberry Pi 5 (16 GB)** as its control host, already
+> The DevKit ships with a **Raspberry Pi 5** as its control host, already
 > imaged. Sections 1-2 write a card from scratch — this is where your own Wi-Fi
 > credentials go onto it — and section 3 installs the runtime the Quickstart
 > assumes; use them to re-image the shipped card or to prepare a Pi of your own.

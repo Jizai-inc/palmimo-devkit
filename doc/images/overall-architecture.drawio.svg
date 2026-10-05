@@ -50,5 +50,5 @@
 <path d="M 545 214 L 545 142" fill="none" stroke="#D79B00" stroke-width="1.5" marker-end="url(#arrow)"/>
 <text x="552" y="182" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#a06a00" text-anchor="start">5 V power</text>
 
-<text x="400" y="290" font-family="Helvetica, Arial, sans-serif" font-size="9" font-style="italic" fill="#555555" text-anchor="middle">Compute and power are off-board — the execution host (Raspberry Pi) and AC adapter sit outside the robot. A PC connects over SSH during development but is not in the control loop.</text>
+<text x="400" y="290" font-family="Helvetica, Arial, sans-serif" font-size="9" font-style="italic" fill="#555555" text-anchor="middle">The execution host (Raspberry Pi) drives the servo bus over USB; the servos run from an external AC adapter (5 V). A PC connects over SSH during development but is not in the control loop.</text>
 </svg>
