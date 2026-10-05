@@ -18,6 +18,8 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, Input, RichLog
 
+from palmimo_sdk.shutdown import StopRequest, loop_stop_on_signals, signals_ignored
+
 from ..wiring import Runtime, build_runtime
 
 
@@ -97,34 +99,45 @@ class CompanionAgentApp(App):
         if not text:
             return
         if _is_exit_command(text):
-            await self._graceful_shutdown()
+            self.exit()
             return
         self.runtime.conductor.submit_user_text(text)
 
     async def action_quit(self) -> None:
         """Textual's default quit action (Ctrl+C etc.) also goes through graceful shutdown."""
-        await self._graceful_shutdown()
-
-    async def _graceful_shutdown(self) -> None:
-        with contextlib.suppress(Exception):
-            await self.runtime.aclose()
         self.exit()
 
 
 def run_tui(settings: PipelineSettings) -> None:
-    """Console-script entry point for ``--ui tui`` (the default).
+    """Connect before launching Textual, and park on every exit path.
 
-    Builds the runtime and connects the robot on a plain, throwaway event
-    loop *before* Textual's own loop takes over: a hardware connect failure
-    must propagate synchronously out of this function so ``main()``'s error
-    handling can report it and exit non-zero. Raising from inside a Textual
-    worker (which is where ``Runtime.start()`` would otherwise run, via
-    ``on_mount``) does not reach the caller of ``App.run()`` -- Textual
-    handles worker exceptions itself instead of re-raising them here.
+    Connection failures propagate to the console entry point, rather than
+    being handled as Textual worker exceptions.
     """
     runtime = build_runtime(settings)
-    asyncio.run(runtime.connect())
-    CompanionAgentApp(runtime).run()
+
+    async def run() -> None:
+        own_task = asyncio.current_task()
+        assert own_task is not None
+        stopping = False
+
+        def request_stop() -> None:
+            nonlocal stopping
+            if not stopping:
+                stopping = True
+                own_task.cancel()
+
+        with loop_stop_on_signals(StopRequest(), request_stop):
+            try:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await runtime.connect()
+                    await CompanionAgentApp(runtime).run_async()
+            finally:
+                stopping = True
+                with signals_ignored():
+                    await runtime.aclose()
+
+    asyncio.run(run())
 
 
 __all__ = ["CompanionAgentApp", "run_tui"]

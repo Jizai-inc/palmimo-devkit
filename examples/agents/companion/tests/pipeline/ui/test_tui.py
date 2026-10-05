@@ -130,7 +130,7 @@ def test_is_exit_command() -> None:
 
 
 # ----------------------------------------------------------------------
-# run_tui -- connects the robot before Textual's own event loop takes over
+# run_tui -- connects the robot before launching Textual
 # ----------------------------------------------------------------------
 
 
@@ -142,7 +142,7 @@ def _runtime_over(palmimo: Palmimo) -> Runtime:
 
 
 class _FakeApp:
-    """Stands in for CompanionAgentApp: records the runtime and whether run() was reached."""
+    """Stands in for CompanionAgentApp: records the runtime and whether run_async() was reached."""
 
     instances: ClassVar[list[_FakeApp]] = []
 
@@ -151,7 +151,7 @@ class _FakeApp:
         self.ran = False
         _FakeApp.instances.append(self)
 
-    def run(self) -> None:
+    async def run_async(self) -> None:
         self.ran = True
 
 

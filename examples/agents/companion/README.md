@@ -317,7 +317,10 @@ pipeline's: the model's own audio is played by `Playback`'s `aplay`, not
 synthesized through the SDK's `Speaker`, so the hint is resolved in
 `realtime/app.py` and handed to `Playback` as a device string.
 
-Ctrl+C and `SIGTERM` both end the session and park the robot on the way out.
+Ctrl+C, `SIGTERM`, and `SIGHUP` end the session and park the robot on the way
+out in both pipeline frontends and the realtime session. Further stop signals
+are ignored until cleanup and parking finish. To force termination, use
+`SIGKILL`; under systemd, `TimeoutStopSec` bounds shutdown.
 In-flight tool work is cancelled and given a few seconds to settle first, so
 a motion is never still writing to the servo bus while the robot disconnects.
 

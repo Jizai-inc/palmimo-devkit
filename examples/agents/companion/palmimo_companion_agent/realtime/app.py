@@ -22,7 +22,6 @@ import argparse
 import asyncio
 import contextlib
 import os
-import signal
 import sys
 import time
 from collections.abc import Iterator
@@ -38,6 +37,7 @@ from palmimo_sdk import (
     resolve_alsa_device,
 )
 from palmimo_sdk.agent.toolset import AgentToolSet
+from palmimo_sdk.shutdown import StopRequest, loop_stop_on_signals, signals_ignored
 
 from ..core.tools import COMPANION_TOOL_MODELS, make_look_at_face_tool
 from ..core.toolview import IDLE_TOOL_NAMES, ToolView
@@ -164,38 +164,16 @@ def build_vision(palmimo: Palmimo, face_locator: FaceLocator) -> VisionWatch:
     return VisionWatch(camera, detectors)
 
 
-_SIGNALS = tuple(s for s in (getattr(signal, n, None) for n in ("SIGINT", "SIGTERM")) if s is not None)
-
-
 @contextlib.contextmanager
 def _signal_stop(stop: asyncio.Event) -> Iterator[None]:
-    """Make SIGINT/SIGTERM end the session promptly, and give the handlers back.
+    """Route SIGTERM, SIGINT, and SIGHUP to the session's stop watcher.
 
-    Setting a flag is not enough: services block on the socket, the camera
-    queue, or a mic read rather than polling one, so a flag alone would sit
-    unread until ``--seconds`` elapses -- past a service manager's stop
-    timeout, which then SIGKILLs the process with the cleanup unrun: no
-    return_to_neutral, no neck release, torque left on. So the handler both
-    sets *stop* (for anything that does poll it) and cancels the running
-    ``asyncio.timeout``/``TaskGroup`` via the event.
-
-    Handlers are removed on the way out. Installing one for SIGINT replaces
-    the KeyboardInterrupt disposition, so leaving it in place through a
-    shutdown that takes seconds would swallow the operator's second and
-    third Ctrl+C -- exactly when a misbehaving robot needs to be killed.
+    The watcher cancels services blocked on I/O. Keep this context through
+    shutdown and ignore further stop signals until parking completes.
+    SIGKILL and a service manager's stop timeout bound a stuck shutdown.
     """
-    loop = asyncio.get_running_loop()
-    installed = []
-    for sig in _SIGNALS:
-        with contextlib.suppress(NotImplementedError):  # not available on Windows
-            loop.add_signal_handler(sig, stop.set)
-            installed.append(sig)
-    try:
+    with loop_stop_on_signals(StopRequest(), stop.set):
         yield
-    finally:
-        for sig in installed:
-            with contextlib.suppress(NotImplementedError):
-                loop.remove_signal_handler(sig)
 
 
 class _Stop(Exception):  # noqa: N818 -- internal control-flow signal, not a reported error
@@ -221,15 +199,16 @@ async def _wake_and_disconnect(palmimo: Palmimo, sleeping: Sleeping) -> None:
     goal they cannot reach. If waking fails, the park is skipped rather than
     fought.
     """
-    if sleeping.asleep:
-        try:
-            await asyncio.to_thread(palmimo.wake)
-        except Exception:
-            with contextlib.suppress(Exception):
-                await asyncio.to_thread(palmimo.disconnect, park=False)
-            return
-    with contextlib.suppress(Exception):
-        await asyncio.to_thread(palmimo.disconnect)
+    with signals_ignored():
+        if sleeping.asleep:
+            try:
+                await asyncio.to_thread(palmimo.wake)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(palmimo.disconnect, park=False)
+                return
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(palmimo.disconnect)
 
 
 class RealtimeSession:
@@ -268,14 +247,8 @@ class RealtimeSession:
     async def run(self, seconds: float) -> None:
         """Run every service until *seconds* elapse, a service raises, or a signal arrives.
 
-        ``_shutdown`` runs OUTSIDE ``_signal_stop``'s ``with`` block, after
-        the signal handlers are removed -- not inside it. ``_signal_stop``'s
-        whole point is giving the operator's SIGINT/SIGTERM disposition back
-        before a shutdown that can itself take seconds (settling tool work,
-        closing the audio pipe, parking the robot); nesting the ``finally``
-        inside the ``with`` would keep the handler installed for that whole
-        stretch and swallow a 2nd/3rd Ctrl+C exactly when a misbehaving robot
-        needs to be killed.
+        Further stop signals are ignored through shutdown so forwarded
+        signals cannot interrupt parking. Use SIGKILL to force termination.
 
         ``_SessionClosed`` (raised by :class:`~.services.router.EventRouter`
         when the server closes the socket) joins ``_Stop``/``TimeoutError``
@@ -284,8 +257,8 @@ class RealtimeSession:
         router would otherwise leave the other services running.
         """
         started = time.monotonic()
-        try:
-            with _signal_stop(self._stop):
+        with _signal_stop(self._stop):
+            try:
                 try:
                     async with asyncio.timeout(seconds), asyncio.TaskGroup() as tg:
                         tg.create_task(self._watch_stop())
@@ -293,8 +266,8 @@ class RealtimeSession:
                             tg.create_task(service.run())
                 except* (_Stop, TimeoutError, _SessionClosed):
                     pass
-        finally:
-            await self._shutdown()
+            finally:
+                await self._shutdown()
         print(f"\n{self._usage.report(time.monotonic() - started)}", flush=True)
         print(f"frames sent: {self._frame.pushed}", flush=True)
 
@@ -314,13 +287,15 @@ class RealtimeSession:
         wake-before-park step itself is :func:`_wake_and_disconnect`, shared
         with ``_run``'s own outer ``finally`` -- see its docstring.
         """
-        await self._bridge.settle(_SETTLE_TIMEOUT_S)
-        if self._reflexes is not None:
-            await self._reflexes.settle(_SETTLE_TIMEOUT_S)
-        self._playback.close()
-        with contextlib.suppress(Exception):
-            await self._watch.aclose()
-        await _wake_and_disconnect(self._palmimo, self._sleeping)
+        # systemd signals the cgroup, and uv also forwards the signal to Python.
+        with signals_ignored():
+            await self._bridge.settle(_SETTLE_TIMEOUT_S)
+            if self._reflexes is not None:
+                await self._reflexes.settle(_SETTLE_TIMEOUT_S)
+            self._playback.close()
+            with contextlib.suppress(Exception):
+                await self._watch.aclose()
+            await _wake_and_disconnect(self._palmimo, self._sleeping)
 
 
 async def _run(args: argparse.Namespace) -> int:

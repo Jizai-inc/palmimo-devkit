@@ -15,10 +15,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import signal
 import sys
 import threading
 from typing import TYPE_CHECKING, TextIO
+
+from palmimo_sdk.shutdown import StopRequest, loop_stop_on_signals, signals_ignored
 
 from ..event_log import emit_event
 from ..wiring import Runtime, build_runtime
@@ -116,9 +117,8 @@ async def run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> Non
     This front end, and only this one, raises the agent's own logger and the
     SDK's to ``INFO``: those records are per utterance and per mic generation,
     which is what a headless run wants on stderr and what would scribble over
-    the TUI's rendering. SIGTERM (and SIGINT, so Ctrl+C also goes through the
-    same graceful path rather than raising ``KeyboardInterrupt`` mid-shutdown)
-    are installed before :meth:`~palmimo_companion_agent.pipeline.wiring.Runtime.start`
+    the TUI's rendering. The SDK stop signals (SIGTERM, SIGINT, and SIGHUP)
+    are handled before :meth:`~palmimo_companion_agent.pipeline.wiring.Runtime.start`
     runs and cancel this coroutine's own task, so a signal arriving while the
     robot is still connecting is caught by the same ``try``/``finally`` as one
     arriving later -- :meth:`~palmimo_companion_agent.pipeline.wiring.Runtime.aclose`
@@ -139,21 +139,25 @@ async def run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> Non
 
     own_task = asyncio.current_task()
     assert own_task is not None  # run_cli always runs as a task (awaited or ensure_future'd)
-    loop = asyncio.get_running_loop()
-    with contextlib.suppress(NotImplementedError):  # add_signal_handler isn't available on Windows
-        loop.add_signal_handler(signal.SIGTERM, own_task.cancel)
-        loop.add_signal_handler(signal.SIGINT, own_task.cancel)
+    stopping = False
 
-    try:
-        with contextlib.suppress(asyncio.CancelledError):
-            await runtime.start()
-            session_task = asyncio.ensure_future(_stdin_loop(runtime) if read_stdin else asyncio.Event().wait())
-            await session_task
-    finally:
-        with contextlib.suppress(NotImplementedError):
-            loop.remove_signal_handler(signal.SIGTERM)
-            loop.remove_signal_handler(signal.SIGINT)
-        await runtime.aclose()
+    def request_stop() -> None:
+        nonlocal stopping
+        if not stopping:
+            stopping = True
+            own_task.cancel()
+
+    with loop_stop_on_signals(StopRequest(), request_stop):
+        try:
+            with contextlib.suppress(asyncio.CancelledError):
+                await runtime.start()
+                session_task = asyncio.ensure_future(_stdin_loop(runtime) if read_stdin else asyncio.Event().wait())
+                await session_task
+        finally:
+            stopping = True
+            # systemd signals the cgroup, and uv forwards that signal to Python too.
+            with signals_ignored():
+                await runtime.aclose()
 
 
 __all__ = ["run_cli"]
