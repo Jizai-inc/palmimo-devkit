@@ -65,26 +65,21 @@ import signal
 import threading
 import time
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from ._guard import RestingReport, TripLog
+from ._leg_safety import _SOFT_RETURN_MOTIONS, LegSafety
 from ._signals import signals_ignored
 from .engine import NECK_GESTURES, Motion, MotionEngine
 from .io import FaceDisplay, HeadCamera, Microphone, MicStream, ServoDriver, Speaker, SpeechHandle
-from .kinematics import LEG_MOTORS, leg_motors
+from .kinematics import leg_motors
 from .overload import (
     ARM_OVERLOAD_CURRENT,
     LEG_OVERLOAD_CURRENT,
-    OVERLOAD_POLL_INTERVAL_S,
     SOFT_RETURN_GAIN,
-    STREAK_MAX_GAP_S,
-    OverloadGuard,
     OverloadTrip,
-    SoftReturnMonitor,
 )
-from .rail import RAIL_UNDERVOLTAGE_V, RailGuard, RailTrip
-from .telemetry import TelemetryPoller
+from .rail import RAIL_UNDERVOLTAGE_V, RailTrip
 from .thermal import NECK_MOTORS as _NECK_MOTORS
 from .thermal import NeckThermalGuard, NeckThermalState
 
@@ -161,9 +156,6 @@ _STRETCH_LEG_PV = 120
 _NECK_GESTURE_MOTORS = ("neck_pitch1", "neck_pitch2", "neck_yaw")
 _NECK_GESTURE_PV = 0
 _NECK_GESTURE_RESTORE_PV_FALLBACK = 300
-# Motions a soft-returning arm may coexist with; anything else ends the soft return.
-_SOFT_RETURN_MOTIONS = (Motion.IDLE, *NECK_GESTURES)
-_TRIP_HISTORY = 64
 # Dance finishing flourish — a lingering hold followed by a slow return,
 # tuned on hardware. After the swaying body ends
 # near-static on the dwell at an extreme, the legs softly hold that ACTUAL pose
@@ -482,13 +474,13 @@ class Palmimo:
     ):
         if fps <= 0:
             raise ValueError("fps must be positive.")
-        self._arm_overload = (
-            None if arm_overload_current is None else OverloadGuard(arm_overload_current, channel="arm")
+        self._leg_safety = LegSafety(
+            arm_overload_current=arm_overload_current,
+            leg_overload_current=leg_overload_current,
+            rail_undervoltage_v=rail_undervoltage_v,
+            clock=thermal_clock or time.monotonic,
+            logger=logger,
         )
-        self._leg_overload = (
-            None if leg_overload_current is None else OverloadGuard(leg_overload_current, channel="leg")
-        )
-        self._rail = None if rail_undervoltage_v is None else RailGuard(rail_undervoltage_v)
         self._engine = MotionEngine(
             gait_speed=gait_speed,
             step_length=step_length,
@@ -569,27 +561,6 @@ class Palmimo:
         # None while the guard isn't currently locked.
         self._thermal_locked_since: float | None = None
         self._last_thermal_lock_log: float | None = None
-        # Leg overload and rail guards (see overload.py, rail.py) -- one sweep of
-        # leg telemetry, polled inside step(), feeds both.
-        self._overload_clock = thermal_clock or time.monotonic
-        self._leg_poller = TelemetryPoller(
-            LEG_MOTORS, OVERLOAD_POLL_INTERVAL_S, guard_name="leg telemetry guard", logger=logger
-        )
-        # (motion, arm legs) the guards' streaks were counted under.
-        self._overload_scope: tuple[Motion, tuple[int, ...]] | None = None
-        # When leg telemetry was last read successfully, or None before the first read.
-        self._last_leg_sample: float | None = None
-        self._overload_log: TripLog[OverloadTrip] = TripLog(_TRIP_HISTORY)
-        self._rail_log: TripLog[RailTrip] = TripLog(_TRIP_HISTORY)
-        # A leg trip with no leg motion running has been recorded and the
-        # strain has not cleared since; holds back the repeats.
-        self._resting_strain = RestingReport()
-        # Same hold-back, for a rail sag with no leg motion running.
-        self._resting_sag = RestingReport()
-        # Arm axes held at SOFT_RETURN_GAIN after an arm trip (applied by
-        # _sync_gesture_tuning), or None.
-        self._soft_return: tuple[str, ...] | None = None
-        self._soft_return_monitor = SoftReturnMonitor(MotionEngine.NEUTRAL)
 
     @property
     def fps(self) -> int:
@@ -749,7 +720,7 @@ class Palmimo:
                 # after a capability probe already latched "unsupported") --
                 # give the thermal guard a fresh chance to read it.
                 self._thermal.reset()
-                self._reset_overload()
+                self._leg_safety.reset()
                 # Inside the try block so a wake failure rolls back every resource
                 # already opened (same as any other connect failure) instead of
                 # leaving the robot half-connected.
@@ -891,7 +862,7 @@ class Palmimo:
                 # to write a centering command to.
                 self._thermal.poll(None)
                 self._engine.neck_hold_center = False
-                self._reset_overload()
+                self._leg_safety.reset()
             finally:
                 self._disconnecting = False
         if interrupt is not None:
@@ -981,7 +952,7 @@ class Palmimo:
         if duration <= 0:
             raise ValueError("duration must be positive.")
         self.stop()
-        self._end_soft_return()
+        self._leg_safety.end_soft_return()
         targets = self._neutral_targets()
         try:
             current = driver.read_positions()
@@ -2183,7 +2154,10 @@ class Palmimo:
         connected_driver = driver if driver is not None and driver.is_connected else None
         self._thermal.poll(connected_driver)
         self._engine.neck_hold_center = self._thermal.neck_lock_active
-        overloaded = self._poll_overload(connected_driver)
+        motion = self._engine.motion
+        overloaded = self._leg_safety.poll(connected_driver, motion, self._wave_arm_legs(motion))
+        if overloaded:
+            self._engine.motion = Motion.IDLE
         pos = self._engine.step()
         self._log_thermal_lockout()
         if connected_driver is not None:
@@ -2195,28 +2169,6 @@ class Palmimo:
             self._on_step(pos)
         return pos
 
-    def _reset_overload(self) -> None:
-        """Forget all per-connection guard state (streaks, latch, poll timers, soft return).
-
-        The trip histories survive: they are records, not connection state.
-        """
-        for guard in (self._arm_overload, self._leg_overload):
-            if guard is not None:
-                guard.reset()
-        self._overload_scope = None
-        self._last_leg_sample = None
-        self._leg_poller.reset()
-        if self._rail is not None:
-            self._rail.reset()
-        self._resting_strain.reset()
-        self._resting_sag.reset()
-        self._end_soft_return()
-
-    def _end_soft_return(self) -> None:
-        """Drop the soft-return state; the next gesture sync restores the arm's gain."""
-        self._soft_return = None
-        self._soft_return_monitor.reset()
-
     def _take_soft_return(self) -> list[str]:
         """End the soft return without restoring the arm's gain, for a caller that ramps it itself.
 
@@ -2224,7 +2176,7 @@ class Palmimo:
             list[str]: The arm axes still at ``SOFT_RETURN_GAIN``; empty when none are.
         """
         tuned = self._gesture_tuned
-        self._end_soft_return()
+        self._leg_safety.end_soft_return()
         if tuned is None or tuned[0] != "soft_return":
             return []
         self._gesture_tuned = None
@@ -2232,7 +2184,7 @@ class Palmimo:
 
     def _cut_arm_torque(self, driver: ServoDriver, arm: Sequence[str], reason: str) -> None:
         """Fallback when the arm cannot be softened: let just those axes go limp."""
-        self._soft_return = None
+        self._leg_safety.abandon_soft_return()
         try:
             driver.set_torque_enabled(False, arm)
         except Exception as exc:
@@ -2240,109 +2192,29 @@ class Palmimo:
         else:
             logger.warning("overload guard: %s; torque cut on %s.", reason, list(arm))
 
-    def _poll_overload(self, driver: ServoDriver | None) -> bool:
-        """Sample leg telemetry at most every ``OVERLOAD_POLL_INTERVAL_S`` and react to a trip.
-
-        Returns:
-            bool: ``True`` if a guard stopped the motion this call (the caller skips the frame's write).
-        """
-        if driver is None or self._leg_poller.disabled:
-            return False
-        if self._arm_overload is None and self._leg_overload is None and self._rail is None:
-            return False
-        motion = self._engine.motion
-        if self._soft_return is not None and motion not in _SOFT_RETURN_MOTIONS:
-            self._end_soft_return()
-        arm_legs = self._wave_arm_legs(motion)
-        scope = (motion, arm_legs)
-        if scope != self._overload_scope:
-            for guard in (self._arm_overload, self._leg_overload):
-                if guard is not None:
-                    guard.reset()
-            self._overload_scope = scope
-        now = self._overload_clock()
-        if not self._leg_poller.due(now):
-            return False
-        telemetry = self._leg_poller.read(driver, now, "leg telemetry read failed, keeping the current streaks")
-        if telemetry is None:
-            return False
-        if self._last_leg_sample is not None and now - self._last_leg_sample >= STREAK_MAX_GAP_S:
-            for stale in (self._arm_overload, self._leg_overload, self._rail):
-                if stale is not None:
-                    stale.reset()
-        self._last_leg_sample = now
-        arm = leg_motors(arm_legs)
-        if self._soft_return is not None and self._soft_return_monitor.sample(telemetry.position, self._soft_return):
-            self._end_soft_return()
-        # IDLE and the neck gestures move no leg, so a trip under them has nothing to stop.
-        resting = motion in _SOFT_RETURN_MOTIONS
-        trips: list[OverloadTrip | None] = []
-        if self._arm_overload is not None and arm:
-            trips.append(self._arm_overload.sample(telemetry.current, arm))
-        if self._leg_overload is not None:
-            leg_trip = self._leg_overload.sample(telemetry.current, [m for m in LEG_MOTORS if m not in arm])
-            leg_trip = self._resting_strain.filter(leg_trip, resting=resting, breached=self._leg_overload.strained)
-            trips.append(leg_trip)
-        rail_trip = None
-        if self._rail is not None:
-            rail_trip = self._rail.sample(telemetry.voltage, LEG_MOTORS)
-            rail_trip = self._resting_sag.filter(rail_trip, resting=resting, breached=self._rail.sagging)
-        found = [replace(t, motion=motion.name.lower()) for t in trips if t is not None]
-        found_rail = replace(rail_trip, motion=motion.name.lower()) if rail_trip is not None else None
-        for trip in found:
-            self._overload_log.record(trip)
-            logger.warning(
-                "overload guard (%s): %s at %d (threshold %d) for %d samples during %s; %s.",
-                trip.channel,
-                trip.motor,
-                trip.current,
-                trip.threshold,
-                trip.samples,
-                trip.motion,
-                "no leg motion to stop" if resting else "stopping",
-            )
-        if found_rail is not None:
-            self._rail_log.record(found_rail)
-            logger.warning(
-                "rail guard: %.2f V at %s (threshold %.2f V) for %d samples during %s; %s.",
-                found_rail.voltage,
-                found_rail.motor,
-                found_rail.threshold,
-                found_rail.samples,
-                found_rail.motion,
-                "no leg motion to stop" if resting else "stopping",
-            )
-        if (not found and found_rail is None) or resting:
-            return False
-        self._engine.motion = Motion.IDLE
-        if any(t.channel == "arm" for t in found):
-            self._soft_return = arm
-            self._soft_return_monitor.reset()
-        return True
-
     def drain_overload_trips(self) -> list[OverloadTrip]:
         """Return and clear the overload trips recorded since the last call, oldest first.
 
         The queue keeps the most recent 64; older trips are dropped when it overflows.
         """
-        return self._overload_log.drain()
+        return self._leg_safety.overload_trips.drain()
 
     @property
     def last_overload_trip(self) -> OverloadTrip | None:
         """The most recent overload trip, kept across :meth:`connect`; ``None`` if none has happened."""
-        return self._overload_log.last
+        return self._leg_safety.overload_trips.last
 
     def drain_rail_trips(self) -> list[RailTrip]:
         """Return and clear the rail undervoltage trips recorded since the last call, oldest first.
 
         The queue keeps the most recent 64; older trips are dropped when it overflows.
         """
-        return self._rail_log.drain()
+        return self._leg_safety.rail_trips.drain()
 
     @property
     def last_rail_trip(self) -> RailTrip | None:
         """The most recent rail trip, kept across :meth:`connect`; ``None`` if none has happened."""
-        return self._rail_log.last
+        return self._leg_safety.rail_trips.last
 
     def _log_thermal_lockout(self) -> None:
         """Re-log every :data:`_THERMAL_IGNORE_LOG_INTERVAL_S` while the guard keeps overriding the neck.
@@ -2414,7 +2286,7 @@ class Palmimo:
 
         motion = self._engine.motion
         arm_legs = self._wave_arm_legs(motion)
-        soft_return = self._soft_return if motion in _SOFT_RETURN_MOTIONS else None
+        soft_return = self._leg_safety.soft_return if motion in _SOFT_RETURN_MOTIONS else None
         if soft_return is not None and not has_gain:
             self._cut_arm_torque(driver, soft_return, "the driver cannot set Position_P_Gain")
             soft_return = None
