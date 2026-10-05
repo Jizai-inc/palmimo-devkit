@@ -86,6 +86,12 @@ from .io import (
     resolve_alsa_device,
 )
 from .name_match import PALMIMO_NAMES, NameMatch, NameMatcher, name_skeleton
+from .overload import (
+    ARM_OVERLOAD_CURRENT,
+    LEG_OVERLOAD_CURRENT,
+    OVERLOAD_CONSECUTIVE,
+    OverloadTrip,
+)
 from .reservation import ReservationSetupError, ResourceBusyError
 from .robot import (
     MotionCancelled,
@@ -100,6 +106,9 @@ from .thermal import NeckThermalState
 
 
 __all__ = [
+    "ARM_OVERLOAD_CURRENT",
+    "LEG_OVERLOAD_CURRENT",
+    "OVERLOAD_CONSECUTIVE",
     "PALMIMO_NAMES",
     "SAFE_MAX_TICK",
     "SAFE_MIN_TICK",
@@ -129,6 +138,7 @@ __all__ = [
     "NeckYawDegrees",
     "NeckYawNormalized",
     "OpenAiEngine",
+    "OverloadTrip",
     "Palmimo",
     "PiperEngine",
     "PortDetectionError",

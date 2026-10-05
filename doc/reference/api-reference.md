@@ -803,8 +803,8 @@ The neck holds the head up continuously, unlike a leg that only bears weight
 during its stance phase, so it has been observed latching an Overheating HW
 error (bit 2) and cutting torque at 71°C after a sustained holding load — one
 degree past the XC330's own Temperature Limit default of 70°C, with no
-software warning beforehand. The legs have no equivalent guard yet (see the
-Hardware Safety section of [AGENTS.md](../../AGENTS.md)).
+software warning beforehand. The legs have no temperature guard; their
+current is watched by the [Overload Guard](#overload-guard) below.
 
 **Scope**: the guard only reaches callers that go through `Palmimo.step()` —
 `run()` / `play()`, the MCP server, and the agent tool layer
@@ -821,7 +821,7 @@ the position write already needs) and classifies the highest reading:
 | `NORMAL` | < 55°C | None |
 | `WARM` | >= 55°C | Logged once on entry; motion is unaffected |
 | `HOT` | >= 62°C | The neck is glided to center every frame, overriding `look()`'s target AND any motion's own neck keyframes (NOD/HEAD_SHAKE, BOW/STRETCH); `look()`, `nod()`, `head_shake()`, and `set_motion("nod"/"head_shake")` return `False` instead of taking effect, until the neck cools to <= 55°C |
-| `UNMONITORED` | No driver, the driver doesn't implement `read_telemetry()`, or the last COMPLETE sweep is older than `NECK_STALE_S` (10s) | `neck_temperature_c` is `None`. `neck_lock_active` stays `True` if the guard was HOT when it lost telemetry (see below) |
+| `UNMONITORED` | No driver, the driver doesn't implement `read_telemetry()` or doesn't carry the neck motors, or the last COMPLETE sweep is older than `NECK_STALE_S` (10s) | `neck_temperature_c` is `None`. `neck_lock_active` stays `True` if the guard was HOT when it lost telemetry (see below) |
 
 `HOT` is latched (hysteresis: released only at <= 55°C, not just below its
 own 62°C entry threshold) — without it, a neck hovering near the boundary
@@ -853,6 +853,89 @@ traceable in the log. `LookTool`/`NodTool`/`HeadShakeTool` (the agent tool
 layer) report the rejection in their result text (e.g. "neck is cooling down
 (63°C), look ignored") instead of claiming the gesture happened.
 
+## Overload Guard
+
+A leg axis that is held or blocked keeps drawing current until the servo latches
+its own Overload HW error and drops torque. `Palmimo.step()` samples the 18 leg
+axes (the neck is not watched) and stops the motion when one holds too much
+current for too long.
+
+```python
+robot = Palmimo(
+    driver=driver,
+    arm_overload_current=700,   # raw |current|, raised arm of wave / wave_both / clap
+    leg_overload_current=1200,  # raw |current|, every other leg axis
+)
+```
+
+| Argument | Default | Meaning |
+|----------|---------|---------|
+| `arm_overload_current` | `ARM_OVERLOAD_CURRENT` (700) | Threshold for the arm channel; `None` disables it; `<= 0` raises `ValueError` |
+| `leg_overload_current` | `LEG_OVERLOAD_CURRENT` (1200) | Threshold for the leg channel; `None` disables it; `<= 0` raises `ValueError` |
+
+Both constants and `OVERLOAD_CONSECUTIVE` are exported from `palmimo_sdk`.
+Thresholds are raw `Present_Current` register units compared by magnitude. With
+both channels disabled the guard never reads the driver.
+
+**Judgement.** An axis trips when `abs(current) >= threshold` on
+`OVERLOAD_CONSECUTIVE` (3) samples in a row; one sample below the threshold
+zeroes that axis's count. An axis missing from a sweep (silent or unreached)
+neither advances nor resets its count. A trip clears every count, and when
+several axes reach the count together the first in bus order is reported. The
+arm channel covers the three axes of the raised leg (`wave_leg` for `wave`, legs
+3 and 6 for `wave_both` and `clap`); the leg channel covers the remaining
+axes. The counts restart whenever the motion or its arm leg changes, and on
+`connect()`.
+
+**Polling.** The clock is the one injected as `thermal_clock`. At most every
+1/30 s, `step()` makes one `read_telemetry()` call for all 18 leg axes.
+
+**Reaction.**
+
+| Channel | On trip |
+|---------|---------|
+| leg | The motion drops to `IDLE`; gains are untouched |
+| arm | The motion drops to `IDLE` and the three arm axes are held at `Position_P_Gain` 100 with torque on (soft return) |
+
+The frame that trips is computed and passed to `on_step`, but not written to the
+driver. `IDLE`, `NOD` and `HEAD_SHAKE` move no leg, so a leg trip under them
+stops nothing: the motion carries on and the frame is written. It is recorded
+once, and not again until every watched axis has read below the threshold or a
+leg motion has started. A soft-returning arm is watched by the leg channel like
+any other leg, so strain on it at the soft gain is recorded in that same way
+and changes neither its gain nor its torque. The soft return
+ends, and the arm's gain goes back to the default, when all three arm axes have
+read within 60 ticks of neutral on 5 consecutive polls, or when any motion
+other than `IDLE`, `NOD` or `HEAD_SHAKE` starts, or on `connect()` or
+`wake()`. `sleep()` ends it too, but ramps those three axes from 100 to
+*end_gain* alongside the other legs instead of restoring the default first. A
+poll that cannot read every arm position does not end it. If the
+gain cannot be written (the driver raises, including `NotImplementedError`),
+torque is cut on those three axes only with `ServoDriver.set_torque_enabled()`
+and stays off until the driver reconnects; a driver without that either only
+records the trip.
+
+**Reading trips.**
+
+| Member | Returns |
+|--------|---------|
+| `robot.drain_overload_trips()` | `list[OverloadTrip]`, oldest first; the call empties the queue, which keeps the newest 64 |
+| `robot.last_overload_trip` | The latest `OverloadTrip` or `None`; survives `connect()` |
+
+`OverloadTrip` is a frozen dataclass: `motor`, `current` (signed raw value),
+`threshold`, `samples`, `motion` (lowercase name) and `channel` (`"arm"` or
+`"leg"`). Each trip is also logged as one warning.
+
+A driver whose `read_telemetry()` raises `NotImplementedError`, or `KeyError`
+because it does not carry all 18 leg motors, disables the guard with one
+warning until the next `connect()`. Any other read failure is logged at most every 5 s,
+keeps the counts and does not stop the motion.
+
+**Scope.** The same as the neck guard: only `Palmimo.step()` callers are
+covered. `wake()`, `sleep()` and `return_to_neutral()` write the driver
+directly, and the LeRobot teleop integration drives the engine directly, so the
+guard does not watch them.
+
 ## Kinematics Helpers
 
 `palmimo_sdk.kinematics` is the shared source of truth for leg geometry. Public
@@ -860,6 +943,8 @@ helpers include `leg_ik()` and `leg_servo_ticks()` for inverse kinematics, plus
 `leg_forward_kinematics(leg_id, ticks)` for converting one leg's three raw servo
 positions into an absolute `(x, y, z)` foot position in the body frame. All
 distances are millimetres; tick dictionaries use the standard `leg_<id>_*` keys.
+Those keys have one home here too: `LEG_MOTORS` is all 18 leg axis names in bus
+order, and `leg_motors(legs)` returns the three axes of each leg given.
 
 The user-facing SDK does not depend on the plotting or tuning scripts. Those
 scripts consume these helpers so their geometry cannot drift from the motion
@@ -1041,6 +1126,13 @@ as `ServoTelemetry` below. Callers that must not mistake a dropped read for a
 real joint position (e.g. a policy loop running at a fixed control rate) use
 this instead of `read_positions()`. Optional capability; the default raises
 `NotImplementedError`.
+
+`ServoDriver.read_telemetry(motors=None)` returns a `ServoTelemetry` of
+`current` (raw signed), `voltage` (V), `temperature` (°C) and `position` (raw
+tick) in one sweep, with the same `silent` / `unreached` bookkeeping.
+`ServoDriver.set_torque_enabled(enabled, motors=None)` switches torque on the
+named motors (every motor when `None`). Both are optional capabilities; the
+defaults raise `NotImplementedError`.
 
 ## Port Auto-Detection
 
