@@ -9,8 +9,9 @@ strain a few samples early, and :class:`SoftReturnMonitor` decides when an arm
 that was softened in response has settled back home.
 
 Both classes only judge numbers they are handed. Reading the driver on a
-schedule and acting on a verdict is :class:`~palmimo_sdk.robot.Palmimo`'s job
-(in :meth:`~palmimo_sdk.robot.Palmimo.step`), which keeps this module free of I/O.
+schedule is :class:`~palmimo_sdk._leg_safety.LegSafety`'s job and acting on a
+verdict is :class:`~palmimo_sdk.robot.Palmimo`'s (in
+:meth:`~palmimo_sdk.robot.Palmimo.step`), which keeps this module free of I/O.
 """
 
 from __future__ import annotations
