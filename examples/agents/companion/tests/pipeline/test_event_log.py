@@ -73,22 +73,26 @@ def test_emit_event_logs_tool_arguments_as_readable_object() -> None:
         pytest.param('{"value": Infinity}', id="infinity"),
         pytest.param('{"value": -Infinity}', id="negative-infinity"),
         pytest.param('{"nested": [NaN]}', id="nested-nan"),
+        pytest.param('{"v": 1e400}', id="overflow"),
+        pytest.param('{"reason": "\\ud83d"}', id="unpaired-surrogate"),
+        pytest.param('{"v":' + "[" * 100_000 + "0" + "]" * 100_000 + "}", id="deep-nesting"),
+        pytest.param('{"a":1,"a":2}', id="duplicate-keys"),
+        pytest.param('"\\u58c1"', id="string"),
+        pytest.param('[{"reason": "\\u58c1"}]', id="array"),
+        pytest.param("42", id="number"),
+        pytest.param("true", id="boolean"),
+        pytest.param("null", id="null"),
     ],
 )
-def test_emit_event_preserves_tool_arguments_when_json_is_invalid(arguments: str) -> None:
-    out = io.StringIO()
+def test_emit_event_preserves_tool_arguments_when_not_safe_object(arguments: str) -> None:
+    buffer = io.BytesIO()
+    out = io.TextIOWrapper(buffer, encoding="utf-8", errors="strict")
     emit_event(ToolExecEvent(tool_call_id="call-1", name="discover", arguments=arguments, result="ok"), out=out)
-    payload = json.loads(out.getvalue(), parse_constant=lambda value: pytest.fail(f"Invalid JSON constant: {value}"))
+    text = buffer.getvalue().decode("utf-8")
+    payload = json.loads(text, parse_constant=lambda value: pytest.fail(f"Invalid JSON constant: {value}"))
     assert payload["arguments"] == arguments
     assert payload["result"] == "ok"
-    assert len(out.getvalue().splitlines()) == 1
-
-
-@pytest.mark.parametrize("arguments", ['"\\u58c1"', '[{"reason": "\\u58c1"}]', "42", "true", "null"])
-def test_emit_event_preserves_tool_arguments_when_json_is_not_object(arguments: str) -> None:
-    out = io.StringIO()
-    emit_event(ToolExecEvent(tool_call_id="call-1", name="discover", arguments=arguments, result="ok"), out=out)
-    assert json.loads(out.getvalue())["arguments"] == arguments
+    assert len(text.splitlines()) == 1
 
 
 def test_emit_event_preserves_arguments_on_non_tool_event() -> None:

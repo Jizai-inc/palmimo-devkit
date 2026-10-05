@@ -11,7 +11,7 @@ import json
 from datetime import datetime
 from typing import TYPE_CHECKING, TextIO
 
-from ..core.tool_arguments import parse_tool_arguments
+from ..core.tool_arguments import format_tool_arguments
 from .history import ToolExecEvent
 
 
@@ -31,8 +31,14 @@ def emit_event(event: Event, *, out: TextIO) -> None:
     the process later exits uncleanly.
     """
     payload = dataclasses.asdict(event)
-    if isinstance(event, ToolExecEvent):
-        payload["arguments"] = parse_tool_arguments(event.arguments)
     payload["ts"] = datetime.now().astimezone().isoformat(timespec="milliseconds")
-    out.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    if isinstance(event, ToolExecEvent):
+        payload.pop("arguments")
+        arguments_json = format_tool_arguments(event.arguments)
+        if arguments_json is None:
+            arguments_json = json.dumps(event.arguments)
+        line = json.dumps(payload, ensure_ascii=False)[:-1] + ', "arguments": ' + arguments_json + "}"
+    else:
+        line = json.dumps(payload, ensure_ascii=False)
+    out.write(line + "\n")
     out.flush()

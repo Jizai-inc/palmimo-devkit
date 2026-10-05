@@ -47,7 +47,7 @@ from collections.abc import Iterable
 
 from palmimo_sdk.agent.toolset import AgentToolSet
 
-from ..core.tool_arguments import parse_tool_arguments
+from ..core.tool_arguments import format_tool_arguments
 from ..core.toolview import ToolView
 from .client import RealtimeClientLike
 from .log import EventLog
@@ -177,11 +177,11 @@ class ToolBridge:
         name = call.name
         try:
             args = json.loads(call.arguments) if call.arguments else {}
-        except ValueError:
+        except (ValueError, RecursionError):
             args = {}
-        logged_arguments = parse_tool_arguments(call.arguments)
-        if isinstance(logged_arguments, dict):
-            logged_arguments = json.dumps(logged_arguments, ensure_ascii=False)
+        logged_arguments = format_tool_arguments(call.arguments)
+        if logged_arguments is None:
+            logged_arguments = call.arguments
         print(f"tool    > {name}({logged_arguments})", flush=True)
         result = await self._view.call(name, args)
         print(f"          -> {result.text[:120]}", flush=True)

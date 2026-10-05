@@ -1,19 +1,31 @@
-"""Shared JSON object parsing for tool-call argument logs."""
+"""Safe JSON object formatting for tool-call argument logs.
+
+Numeric spellings may be normalized, such as ``1.0e0`` to ``1.0``.
+"""
 
 from __future__ import annotations
 
 import json
-from typing import Any, NoReturn
+from typing import Any
 
 
-def _reject_constant(value: str) -> NoReturn:
-    raise ValueError(f"Invalid JSON constant: {value}")
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON object key")
+        result[key] = value
+    return result
 
 
-def parse_tool_arguments(arguments: str) -> dict[str, Any] | str:
-    """Return a parsed JSON object, or preserve the original argument string."""
+def format_tool_arguments(arguments: str) -> str | None:
+    """Return UTF-8-safe object JSON, or None to preserve the original string."""
     try:
-        parsed = json.loads(arguments, parse_constant=_reject_constant)
-    except ValueError:
-        return arguments
-    return parsed if isinstance(parsed, dict) else arguments
+        parsed = json.loads(arguments, object_pairs_hook=_unique_object)
+        if not isinstance(parsed, dict):
+            return None
+        formatted = json.dumps(parsed, ensure_ascii=False, allow_nan=False)
+        formatted.encode("utf-8", errors="strict")
+        return formatted
+    except (ValueError, RecursionError, TypeError):
+        return None

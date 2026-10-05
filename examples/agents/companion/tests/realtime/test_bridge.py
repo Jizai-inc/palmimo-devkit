@@ -9,6 +9,8 @@ instead of racing real motion durations.
 from __future__ import annotations
 
 import asyncio
+import io
+import sys
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
@@ -387,6 +389,10 @@ async def test_bridge_logs_tool_arguments_as_readable_object(
         pytest.param('{"value":Infinity}', id="infinity"),
         pytest.param('{"value":-Infinity}', id="negative-infinity"),
         pytest.param('{"nested":[NaN]}', id="nested-nan"),
+        pytest.param('{"v": 1e400}', id="overflow"),
+        pytest.param('{"reason": "\\ud83d"}', id="unpaired-surrogate"),
+        pytest.param('{"v":' + "[" * 100_000 + "0" + "]" * 100_000 + "}", id="deep-nesting"),
+        pytest.param('{"a":1,"a":2}', id="duplicate-keys"),
         pytest.param('"\\u58c1"', id="string"),
         pytest.param('["\\u58c1"]', id="array"),
         pytest.param("42", id="number"),
@@ -406,3 +412,31 @@ async def test_bridge_preserves_tool_arguments_when_json_is_not_valid_object(
     await bridge.handle(response)
     await asyncio.gather(*bridge.tasks)
     assert capsys.readouterr().out.splitlines()[0] == f"tool    > nod({arguments})"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_args"),
+    [
+        pytest.param('{"reason": "\\ud83d"}', {"reason": "\ud83d"}, id="unpaired-surrogate"),
+        pytest.param('{"v":' + "[" * 100_000 + "0" + "]" * 100_000 + "}", {}, id="deep-nesting"),
+    ],
+)
+async def test_bridge_executes_and_answers_when_arguments_cannot_be_formatted(
+    arguments: str, expected_args: dict[str, Any], fake_client: type, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = fake_client()
+    bridge = _bridge(ScriptedToolset(), client)
+    call = AsyncMock(return_value=ToolResult(text="done"))
+    monkeypatch.setattr(bridge.view, "call", call)
+    buffer = io.BytesIO()
+    out = io.TextIOWrapper(buffer, encoding="utf-8", errors="strict")
+    monkeypatch.setattr(sys, "stdout", out)
+    response = Response(
+        id="r1",
+        output=[{"type": "function_call", "name": "nod", "arguments": arguments, "call_id": "c1"}],
+    )
+    await bridge.handle(response)
+    await asyncio.gather(*bridge.tasks)
+    call.assert_awaited_once_with("nod", expected_args)
+    assert _sent_outputs(client) == [("c1", "done")]
+    assert any(isinstance(event, ResponseCreate) for event in client.sent)
