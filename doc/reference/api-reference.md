@@ -1307,6 +1307,28 @@ tick) in one sweep, with the same `silent` / `unreached` bookkeeping. The
 named motors (every motor when `None`). Both are optional capabilities; the
 defaults raise `NotImplementedError`.
 
+`ServoDriver.read_hardware_errors(motors=None)` returns a `HardwareErrorRead`
+(`palmimo_sdk.io.base.HardwareErrorRead`) in one sweep; `None` selects all motors.
+Its read-only `errors` mapping contains raw unsigned Hardware Error Status
+(register 70, one byte) for every responding motor, **including zero**. A missing
+motor is unknown, not healthy. `silent` lists motors asked without an answer;
+`unreached` lists motors the sweep did not reach (all requested motors if sending
+failed). The `latched` property returns a dict of only nonzero entries.
+
+The servo itself detects and latches the bits until reboot or power cycling.
+Reading does not clear them or change torque. `DynamixelDriver` makes one bus
+request without retrying. A disconnected driver raises `RuntimeError`; an
+unknown motor name raises `KeyError`. Transport failures may raise exceptions;
+callers can log and discard that sweep. This is an optional capability; the
+base implementation raises `NotImplementedError`.
+
+`HardwareErrorRead`, `HARDWARE_ERROR_BITS`, and `describe_hardware_error(bits)`
+are exported from `palmimo_sdk`. The helper returns `"-"` for zero, otherwise
+comma-separated names in ascending bit order (e.g. `0x21` becomes
+`"InputVoltage,Overload"`), with unknown bits named `"bit<N>"`.
+`HARDWARE_ERROR_BITS` maps bit positions to `InputVoltage` (0), `Overheating` (2),
+`MotorEncoder` (3), `ElectricalShock` (4), and `Overload` (5).
+
 ## Port Auto-Detection
 
 ### `find_servo_port() -> str`

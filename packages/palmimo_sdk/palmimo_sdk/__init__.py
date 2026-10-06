@@ -54,6 +54,7 @@ USB-to-servo bridge) without hard-coding platform-specific paths;
 from . import kinematics, shutdown
 from .audio import AudioProcessor, ClipDenoiser, Denoiser, EchoCanceller
 from .engine import Motion, MotionEngine
+from .hardware_error import HARDWARE_ERROR_BITS, describe_hardware_error
 from .io import (
     SAFE_MAX_TICK,
     SAFE_MIN_TICK,
@@ -85,6 +86,7 @@ from .io import (
     palmimo_motor_ids,
     resolve_alsa_device,
 )
+from .io.base import HardwareErrorRead
 from .keyframes import MAX_JOINT_SPEED_DEG_S, Keyframe, load_keyframes, save_keyframes
 from .name_match import PALMIMO_NAMES, NameMatch, NameMatcher, name_skeleton
 from .overload import (
@@ -109,6 +111,7 @@ from .thermal import NeckThermalState
 
 __all__ = [
     "ARM_OVERLOAD_CURRENT",
+    "HARDWARE_ERROR_BITS",
     "LEG_OVERLOAD_CURRENT",
     "MAX_JOINT_SPEED_DEG_S",
     "OVERLOAD_CONSECUTIVE",
@@ -127,6 +130,7 @@ __all__ = [
     "FaceDisplay",
     "FaceDisplayConnectTimeoutError",
     "FaceDisplayError",
+    "HardwareErrorRead",
     "HeadCamera",
     "HeadCameraConfig",
     "Keyframe",
@@ -161,6 +165,7 @@ __all__ = [
     "Subscription",
     "TtsEngine",
     "TtsVoice",
+    "describe_hardware_error",
     "find_face_port",
     "find_servo_port",
     "kinematics",
