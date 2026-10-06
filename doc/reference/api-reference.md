@@ -875,12 +875,15 @@ robot = Palmimo(
 
 Both constants and `OVERLOAD_CONSECUTIVE` are exported from `palmimo_sdk`.
 Thresholds are raw `Present_Current` register units compared by magnitude. With
-both channels disabled the guard never reads the driver.
+both channels and the [Rail Undervoltage Guard](#rail-undervoltage-guard)
+disabled, `step()` never reads the leg telemetry.
 
 **Judgement.** An axis trips when `abs(current) >= threshold` on
 `OVERLOAD_CONSECUTIVE` (3) samples in a row; one sample below the threshold
 zeroes that axis's count. An axis missing from a sweep (silent or unreached)
-neither advances nor resets its count. A trip clears every count, and when
+neither advances nor resets its count. Samples 0.2 s or more apart are not
+consecutive: after a pause in stepping, or a run of failed reads, every count
+restarts. A trip clears every count, and when
 several axes reach the count together the first in bus order is reported. The
 arm channel covers the three axes of the raised leg (`wave_leg` for `wave`, legs
 3 and 6 for `wave_both` and `clap`); the leg channel covers the remaining
@@ -927,14 +930,75 @@ records the trip.
 `"leg"`). Each trip is also logged as one warning.
 
 A driver whose `read_telemetry()` raises `NotImplementedError`, or `KeyError`
-because it does not carry all 18 leg motors, disables the guard with one
-warning until the next `connect()`. Any other read failure is logged at most every 5 s,
+because it does not carry all 18 leg motors, disables this guard and the rail
+guard with one warning until the next `connect()`. Any other read failure is logged at most every 5 s,
 keeps the counts and does not stop the motion.
 
 **Scope.** The same as the neck guard: only `Palmimo.step()` callers are
 covered. `wake()`, `sleep()` and `return_to_neutral()` write the driver
 directly, and the LeRobot teleop integration drives the engine directly, so the
 guard does not watch them.
+
+## Rail Undervoltage Guard
+
+Resistance in the supply path pulls every axis's input voltage down together
+when the summed current is high. A sag that persists makes the servos latch an
+Input Voltage error and drop torque, while each axis's own current stays inside
+its limit, which the [Overload Guard](#overload-guard) cannot see.
+`Palmimo.step()` reads `telemetry.voltage` from the same leg sweep the overload
+guard takes (no extra bus read) and stops the motion when the rail stays low.
+
+```python
+robot = Palmimo(
+    driver=driver,
+    rail_undervoltage_v=3.8,  # volts, lowest leg-axis input voltage
+)
+```
+
+| Argument | Default | Meaning |
+|----------|---------|---------|
+| `rail_undervoltage_v` | `RAIL_UNDERVOLTAGE_V` (3.8) | Threshold in volts; `None` disables the guard; `<= 0` raises `ValueError` |
+
+`RAIL_UNDERVOLTAGE_V`, `RAIL_CONSECUTIVE` and `RailTrip` are exported from
+`palmimo_sdk`. The default sits above the servo's Min Voltage Limit of 3.5 V.
+Across a full-motion measurement of an assembled robot, the longest stretch
+below 3.8 V during normal walking was 67 ms; `RAIL_CONSECUTIVE` (6 sweeps) takes
+at least 200 ms at the 30 Hz poll, three times that. The poll runs on a frame of
+`step()`, so at the default 60 fps a sweep can slip from every second frame to
+every third, and six sweeps can take up to about 300 ms. How quickly a servo latches under a sag
+has not been measured, so the guard is not guaranteed to fire before the latch.
+
+**Judgement.** Every axis measures the same rail, so the lowest voltage among
+the 18 leg axes in a sweep is one signal, with one count rather than one per
+axis. The rail trips when that value is below the threshold on `RAIL_CONSECUTIVE`
+sweeps in a row; one sweep at or above the threshold zeroes the count. A sweep
+with no leg voltage in it neither advances nor resets the count. A trip clears
+the count, and when several axes read the same lowest value the first in bus
+order is reported. The count belongs to the rail, not to a motion: it survives a
+motion change and restarts on `connect()`, after a trip, and when two sweeps are
+0.2 s or more apart (a pause in stepping, or a run of failed reads). Polling is the
+overload guard's: the injected `thermal_clock`, at most every 1/30 s.
+
+**Reaction.** The motion drops to `IDLE`; torque and gains are untouched. The
+frame that trips is computed and passed to `on_step`, but not written to the
+driver. `IDLE`, `NOD` and `HEAD_SHAKE` move no leg, so a trip under them stops
+nothing: it is recorded once, and not again until a sweep has read at or above
+the threshold or a leg motion has started. When an overload trip and a rail trip
+land on the same sweep, both are recorded and the motion is stopped once.
+
+**Reading trips.**
+
+| Member | Returns |
+|--------|---------|
+| `robot.drain_rail_trips()` | `list[RailTrip]`, oldest first; the call empties the queue, which keeps the newest 64 |
+| `robot.last_rail_trip` | The latest `RailTrip` or `None`; survives `connect()` |
+
+`RailTrip` is a frozen dataclass: `voltage` (the sweep's lowest, in volts),
+`motor` (the axis that read it), `threshold`, `samples` and `motion` (lowercase
+name). Each trip is also logged as one warning.
+
+**Scope.** The same as the overload guard: only `Palmimo.step()` callers are
+covered.
 
 ## Kinematics Helpers
 
@@ -1129,7 +1193,8 @@ this instead of `read_positions()`. Optional capability; the default raises
 
 `ServoDriver.read_telemetry(motors=None)` returns a `ServoTelemetry` of
 `current` (raw signed), `voltage` (V), `temperature` (°C) and `position` (raw
-tick) in one sweep, with the same `silent` / `unreached` bookkeeping.
+tick) in one sweep, with the same `silent` / `unreached` bookkeeping. The
+[Rail Undervoltage Guard](#rail-undervoltage-guard) reads `voltage`.
 `ServoDriver.set_torque_enabled(enabled, motors=None)` switches torque on the
 named motors (every motor when `None`). Both are optional capabilities; the
 defaults raise `NotImplementedError`.

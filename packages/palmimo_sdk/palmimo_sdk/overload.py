@@ -27,6 +27,8 @@ LEG_OVERLOAD_CURRENT = 1200
 # Samples in a row at or above the threshold before the guard trips.
 OVERLOAD_CONSECUTIVE = 3
 OVERLOAD_POLL_INTERVAL_S = 1.0 / 30.0
+# Samples further apart than this are not consecutive: the streaks restart.
+STREAK_MAX_GAP_S = 6 * OVERLOAD_POLL_INTERVAL_S
 
 # Position_P_Gain an arm is held at while it eases back to neutral.
 SOFT_RETURN_GAIN = 100

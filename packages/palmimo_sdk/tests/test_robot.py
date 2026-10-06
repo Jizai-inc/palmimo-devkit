@@ -25,6 +25,7 @@ from palmimo_sdk.engine import MotionEngine
 from palmimo_sdk.io.base import ServoTelemetry
 from palmimo_sdk.kinematics import LEG_MOTORS, leg_motors
 from palmimo_sdk.overload import OVERLOAD_POLL_INTERVAL_S, SOFT_RETURN_GAIN
+from palmimo_sdk.rail import RAIL_CONSECUTIVE
 from palmimo_sdk.robot import NeckPitchDegrees, NeckPitchNormalized, NeckYawDegrees, NeckYawNormalized
 from palmimo_sdk.thermal import NECK_COOL_C, NECK_HOT_C, NECK_MOTORS, NECK_STALE_S, NECK_WARM_C
 
@@ -2135,7 +2136,11 @@ def test_telemetry_is_read_at_most_once_per_poll_interval() -> None:
     driver = _NeckTelemetryDriver(_neck_temps(30))
     # The overload guard polls on its own faster cadence; this test is about the neck guard.
     robot = Palmimo(
-        driver=cast(ServoDriver, driver), thermal_clock=clock, arm_overload_current=None, leg_overload_current=None
+        driver=cast(ServoDriver, driver),
+        thermal_clock=clock,
+        arm_overload_current=None,
+        leg_overload_current=None,
+        rail_undervoltage_v=None,
     )
 
     read_calls = 0
@@ -2427,6 +2432,7 @@ class _OverloadDriver(ServoDriver):
     def __init__(self, *, gain_raises: bool = False, torque_supported: bool = True) -> None:
         self.currents: dict[str, int] = {}
         self.positions: dict[str, int] = dict.fromkeys(LEG_MOTORS, 2500)
+        self.voltages: dict[str, float] = dict.fromkeys(LEG_MOTORS, 4.2)
         self.writes: list[dict[str, int]] = []
         self.telemetry_requests: list[tuple[str, ...] | None] = []
         self.gain_calls: list[tuple[int | None, tuple[str, ...] | None]] = []
@@ -2461,6 +2467,7 @@ class _OverloadDriver(ServoDriver):
         return ServoTelemetry(
             current={m: self.currents[m] for m in wanted if m in self.currents},
             position={m: self.positions[m] for m in wanted if m in self.positions},
+            voltage={m: self.voltages[m] for m in wanted if m in self.voltages},
         )
 
     def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
@@ -2754,9 +2761,11 @@ def test_overload_channels_can_be_disabled_independently() -> None:
     assert robot.motion == "idle"  # the arm channel still watches
 
 
-def test_overload_guard_reads_no_telemetry_when_both_channels_are_disabled() -> None:
+def test_leg_guards_read_no_telemetry_when_all_are_disabled() -> None:
     driver = _OverloadDriver()
-    robot, clock = _overload_robot(driver, arm_overload_current=None, leg_overload_current=None)
+    robot, clock = _overload_robot(
+        driver, arm_overload_current=None, leg_overload_current=None, rail_undervoltage_v=None
+    )
     robot.wave()
     driver.currents = dict.fromkeys(LEG_MOTORS, 5000)
 
@@ -2838,6 +2847,21 @@ def test_reconnect_leaves_no_streak_behind() -> None:
     assert robot.motion == "idle"
 
 
+def test_overload_streak_does_not_carry_across_a_pause_in_stepping() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    driver.currents = {"leg_1_yaw": 1300}
+    _poll_steps(robot, clock, 2)
+
+    clock.advance(60.0)  # the caller stopped stepping for a while
+    _poll_steps(robot, clock, 2)
+    assert robot.motion == "pushup"
+
+    _poll_steps(robot, clock)
+    assert robot.motion == "idle"
+
+
 def test_last_overload_trip_survives_a_reconnect() -> None:
     driver = _OverloadDriver()
     robot, clock = _overload_robot(driver)
@@ -2894,7 +2918,7 @@ def test_driver_without_telemetry_disables_the_overload_guard_with_one_warning(
             robot.step()
 
     assert robot.motion == "pushup"
-    assert len([r for r in caplog.records if "overload guard is disabled" in r.getMessage()]) == 1
+    assert len([r for r in caplog.records if "leg telemetry guard is disabled" in r.getMessage()]) == 1
 
 
 def test_driver_missing_a_leg_motor_disables_the_overload_guard_with_one_warning(
@@ -2909,4 +2933,135 @@ def test_driver_missing_a_leg_motor_disables_the_overload_guard_with_one_warning
         _poll_steps(robot, clock, 5)
 
     assert driver.telemetry_requests.count(LEG_MOTORS) == 1
-    assert len([r for r in caplog.records if "overload guard is disabled" in r.getMessage()]) == 1
+    assert len([r for r in caplog.records if "leg telemetry guard is disabled" in r.getMessage()]) == 1
+
+
+# ================================================================
+# RAIL UNDERVOLTAGE GUARD WIRING (rail.py's RailGuard, wired into step())
+# ================================================================
+
+_SAG_V = 3.5
+
+
+def _sag(driver: _OverloadDriver, volts: float = _SAG_V, motor: str = "leg_4_pitch2") -> None:
+    driver.voltages = {**dict.fromkeys(LEG_MOTORS, 4.2), motor: volts}
+
+
+def test_invalid_rail_undervoltage_threshold_is_rejected() -> None:
+    with pytest.raises(ValueError, match="threshold"):
+        Palmimo(rail_undervoltage_v=0)
+
+
+def test_sustained_rail_sag_drops_to_idle_and_records_the_trip() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("forward")
+    _sag(driver)
+    _poll_steps(robot, clock, RAIL_CONSECUTIVE - 1)
+    assert robot.motion == "forward"
+    _poll_steps(robot, clock)
+
+    assert robot.motion == "idle"
+    (trip,) = robot.drain_rail_trips()
+    assert (trip.motor, trip.voltage, trip.threshold, trip.samples) == ("leg_4_pitch2", _SAG_V, 3.8, RAIL_CONSECUTIVE)
+    assert trip.motion == "forward"
+    assert robot.drain_rail_trips() == []
+    assert robot.last_rail_trip == trip
+    assert robot.drain_overload_trips() == []
+    assert driver.gain_calls == [] or all(c[0] != SOFT_RETURN_GAIN for c in driver.gain_calls)
+
+
+def test_short_rail_sag_does_not_stop_the_motion() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("forward")
+    _sag(driver)
+    _poll_steps(robot, clock, RAIL_CONSECUTIVE - 1)
+    _sag(driver, 4.2)
+    _poll_steps(robot, clock, 10)
+
+    assert robot.motion == "forward"
+    assert robot.last_rail_trip is None
+
+
+def test_rail_guard_is_off_when_undervoltage_threshold_is_none() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver, rail_undervoltage_v=None)
+    robot.set_motion("forward")
+    _sag(driver)
+    _poll_steps(robot, clock, 3 * RAIL_CONSECUTIVE)
+
+    assert robot.motion == "forward"
+    assert robot.last_rail_trip is None
+
+
+def test_rail_guard_runs_when_both_overload_channels_are_disabled() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver, arm_overload_current=None, leg_overload_current=None)
+    robot.set_motion("forward")
+    _sag(driver)
+    _poll_steps(robot, clock, RAIL_CONSECUTIVE)
+
+    assert robot.motion == "idle"
+
+
+def test_rail_sag_while_idle_is_recorded_once_until_it_clears() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    _sag(driver)
+    _poll_steps(robot, clock, 4 * RAIL_CONSECUTIVE)
+    assert robot.motion == "idle"
+    (trip,) = robot.drain_rail_trips()
+    assert trip.motion == "idle"
+
+    _sag(driver, 4.2)
+    _poll_steps(robot, clock)
+    _sag(driver)
+    _poll_steps(robot, clock, RAIL_CONSECUTIVE)
+
+    assert [t.motion for t in robot.drain_rail_trips()] == ["idle"]
+
+
+def test_switching_motion_keeps_the_rail_streak() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    _sag(driver)
+    _poll_steps(robot, clock, RAIL_CONSECUTIVE - 2)
+    robot.set_motion("forward")
+    _poll_steps(robot, clock, 1)
+    assert robot.motion == "forward"
+
+    _poll_steps(robot, clock)
+
+    assert robot.motion == "idle"
+    assert [t.motion for t in robot.drain_rail_trips()] == ["forward"]
+
+
+def test_rail_streak_does_not_carry_across_a_pause_in_stepping() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("forward")
+    _sag(driver)
+    _poll_steps(robot, clock, RAIL_CONSECUTIVE - 1)
+
+    clock.advance(60.0)  # the caller stopped stepping for a while
+    _poll_steps(robot, clock, RAIL_CONSECUTIVE - 1)
+    assert robot.motion == "forward"
+
+    _poll_steps(robot, clock)
+    assert robot.motion == "idle"
+
+
+def test_rail_and_overload_trips_in_one_sweep_are_both_recorded_and_stop_the_motion_once() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_motion("pushup")
+    _sag(driver)
+    _poll_steps(robot, clock, RAIL_CONSECUTIVE - 3)
+    driver.currents = {"leg_1_yaw": 1300}  # both streaks reach their limit on this sweep
+    _poll_steps(robot, clock, 3)
+
+    assert robot.motion == "idle"
+    assert len(robot.drain_rail_trips()) == 1
+    assert len(robot.drain_overload_trips()) == 1
