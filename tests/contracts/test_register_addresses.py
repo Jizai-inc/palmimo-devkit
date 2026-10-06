@@ -27,6 +27,7 @@ BUS_MODULE = REPO_ROOT / "packages" / "palmimo_sdk" / "palmimo_sdk" / "io" / "_d
 ADDRESS_CONSTANTS = {
     "ADDR_OPERATING_MODE": "Operating_Mode",
     "ADDR_TORQUE_ENABLE": "Torque_Enable",
+    "ADDR_HARDWARE_ERROR": "Hardware_Error_Status",
     "ADDR_POSITION_P_GAIN": "Position_P_Gain",
     "ADDR_PROFILE_ACCELERATION": "Profile_Acceleration",
     "ADDR_PROFILE_VELOCITY": "Profile_Velocity",
