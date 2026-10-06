@@ -57,3 +57,11 @@ def test_hardware_error_api_is_exported_from_package_root() -> None:
     assert HARDWARE_ERROR_BITS is ERROR_BITS
     assert describe_hardware_error is describe
     assert {"HardwareErrorRead", "HARDWARE_ERROR_BITS", "describe_hardware_error"} <= set(palmimo_sdk.__all__)
+
+
+def test_hardware_error_read_is_exported_from_io() -> None:
+    from palmimo_sdk import HardwareErrorRead, io
+    from palmimo_sdk.io import HardwareErrorRead as IoHardwareErrorRead
+
+    assert IoHardwareErrorRead is HardwareErrorRead
+    assert "HardwareErrorRead" in io.__all__

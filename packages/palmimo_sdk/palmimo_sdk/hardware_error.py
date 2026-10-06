@@ -2,11 +2,10 @@
 # Copyright 2026 Jizai Inc.
 """Descriptions of the servos' latched hardware error bits."""
 
-# Bit definitions: ROBOTIS e-Manual, X series Hardware Error Status(70).
+# Bit definitions: ROBOTIS e-Manual, XC330-M288 Hardware Error Status(70).
 HARDWARE_ERROR_BITS: dict[int, str] = {
     0: "InputVoltage",
     2: "Overheating",
-    3: "MotorEncoder",
     4: "ElectricalShock",
     5: "Overload",
 }

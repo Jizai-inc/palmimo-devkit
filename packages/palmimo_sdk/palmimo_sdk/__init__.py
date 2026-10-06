@@ -64,6 +64,7 @@ from .io import (
     FaceDisplay,
     FaceDisplayConnectTimeoutError,
     FaceDisplayError,
+    HardwareErrorRead,
     HeadCamera,
     HeadCameraConfig,
     Microphone,
@@ -86,7 +87,6 @@ from .io import (
     palmimo_motor_ids,
     resolve_alsa_device,
 )
-from .io.base import HardwareErrorRead
 from .name_match import PALMIMO_NAMES, NameMatch, NameMatcher, name_skeleton
 from .overload import (
     ARM_OVERLOAD_CURRENT,

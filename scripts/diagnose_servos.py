@@ -24,7 +24,7 @@ from typing import NamedTuple
 from dynamixel_sdk import COMM_SUCCESS, PacketHandler, PortHandler
 from tqdm import tqdm
 
-from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, PortDetectionError, find_servo_port
+from palmimo_sdk import HARDWARE_ERROR_BITS, SAFE_MAX_TICK, SAFE_MIN_TICK, PortDetectionError, find_servo_port
 from palmimo_sdk.reservation import ReservationError, reserve
 
 
@@ -180,15 +180,6 @@ READ_ATTEMPTS = 4
 # an error (`not_alert_error = error & ~ERRBIT_ALERT`).
 ERRBIT_ALERT = 0x80
 
-# Hardware_Error_Status bit meanings, for readable output.
-_HW_BITS = {
-    0: "InputVoltage",
-    2: "Overheating",
-    3: "MotorEncoder",
-    4: "ElectricalShock",
-    5: "Overload",
-}
-
 _DEAD_BUS_MESSAGE = (
     "\n  0/21 respond -> the bus is electrically dead (no power / loose "
     "connection).\n  Reboot CANNOT help here: fix the servo supply/wiring "
@@ -236,7 +227,7 @@ def _s32(value: int) -> int:
 
 
 def _err_names(flags: int) -> str:
-    names = [name for bit, name in _HW_BITS.items() if flags & (1 << bit)]
+    names = [name for bit, name in HARDWARE_ERROR_BITS.items() if flags & (1 << bit)]
     return ",".join(names) if names else "-"
 
 
