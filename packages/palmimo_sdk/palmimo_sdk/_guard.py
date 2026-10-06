@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Jizai Inc.
-"""Small building blocks shared by the overload and rail guards and their facade wiring."""
+"""Small building blocks shared by the overload and rail guards and by LegSafety, which wires them."""
 
 from __future__ import annotations
 
