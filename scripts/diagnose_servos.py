@@ -24,7 +24,7 @@ from typing import NamedTuple
 from dynamixel_sdk import COMM_SUCCESS, PacketHandler, PortHandler
 from tqdm import tqdm
 
-from palmimo_sdk import HARDWARE_ERROR_BITS, SAFE_MAX_TICK, SAFE_MIN_TICK, PortDetectionError, find_servo_port
+from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, PortDetectionError, describe_hardware_error, find_servo_port
 from palmimo_sdk.reservation import ReservationError, reserve
 
 
@@ -226,11 +226,6 @@ def _s32(value: int) -> int:
     return value - 4294967296 if value >= 2147483648 else value
 
 
-def _err_names(flags: int) -> str:
-    names = [name for bit, name in HARDWARE_ERROR_BITS.items() if flags & (1 << bit)]
-    return ",".join(names) if names else "-"
-
-
 def _drive_mode_names(flags: int) -> str:
     """Describe a Drive_Mode value: rotation direction and profile kind."""
     direction = "reverse" if flags & (1 << DRIVE_MODE_REVERSE_BIT) else "normal"
@@ -321,7 +316,7 @@ def _print_error_report(port_name: str, found: dict[int, tuple[int | None, int |
             print(f"  id{i:2d}: NO-RESPONSE")
             continue
         hw, tq, v = found[i]
-        hw_s = f"0x{hw:02x}({_err_names(hw)})" if hw is not None else "?"
+        hw_s = f"0x{hw:02x}({describe_hardware_error(hw)})" if hw is not None else "?"
         flag = "  <== HW ERROR" if (hw is not None and hw != 0) else ""
         if hw is not None and hw != 0:
             errored.append(i)
@@ -1340,7 +1335,7 @@ def _cmd_recover(args: argparse.Namespace) -> int:
                 still_errored.append(i)
                 continue
             hw, tq, _ = after[i]
-            hw_s = f"0x{hw:02x}({_err_names(hw)})" if hw is not None else "?"
+            hw_s = f"0x{hw:02x}({describe_hardware_error(hw)})" if hw is not None else "?"
             cleared = hw == 0
             if not cleared:
                 still_errored.append(i)
