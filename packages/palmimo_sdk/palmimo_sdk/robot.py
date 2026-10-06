@@ -68,7 +68,7 @@ from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from ._leg_safety import _SOFT_RETURN_MOTIONS, LegSafety
+from ._leg_safety import LegSafety
 from ._signals import signals_ignored
 from .engine import NECK_GESTURES, Motion, MotionEngine
 from .io import FaceDisplay, HeadCamera, Microphone, MicStream, ServoDriver, Speaker, SpeechHandle
@@ -2286,7 +2286,7 @@ class Palmimo:
 
         motion = self._engine.motion
         arm_legs = self._wave_arm_legs(motion)
-        soft_return = self._leg_safety.soft_return if motion in _SOFT_RETURN_MOTIONS else None
+        soft_return = self._leg_safety.soft_return_under(motion)
         if soft_return is not None and not has_gain:
             self._cut_arm_torque(driver, soft_return, "the driver cannot set Position_P_Gain")
             soft_return = None

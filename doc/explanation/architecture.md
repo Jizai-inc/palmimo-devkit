@@ -319,8 +319,9 @@ stops or an SSH session drops.
   consecutive samples at or above a per-channel threshold drop the motion to `IDLE`.
   Samples 0.2 s or more apart do not count as consecutive, so a streak left over
   from before a pause in stepping cannot combine with a fresh one; the rail guard
-  below follows the same rule. `LegSafety` reads and judges; `robot.py` keeps the
-  reaction (dropping the motion, the soft-return gain).
+  below follows the same rule. `LegSafety` reads and judges, including which arm axes
+  go soft and under which motions; `robot.py` keeps the reaction (dropping the motion,
+  writing the soft-return gain).
   The raised arm of a wave is the exception to "leave torque on": someone holding it
   fights a stiff servo, so on an arm trip that arm alone is lowered to a soft gain and
   eased back to neutral, and only if the gain cannot be written is its torque cut. The

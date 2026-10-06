@@ -77,10 +77,17 @@ class LegSafety:
         self._soft_return: tuple[str, ...] | None = None
         self._soft_return_monitor = SoftReturnMonitor(MotionEngine.NEUTRAL)
 
-    @property
-    def soft_return(self) -> tuple[str, ...] | None:
-        """Arm axes held at ``SOFT_RETURN_GAIN`` after an arm trip, or ``None``."""
-        return self._soft_return
+    def soft_return_under(self, motion: Motion) -> tuple[str, ...] | None:
+        """Arm axes to hold at ``SOFT_RETURN_GAIN`` while *motion* runs.
+
+        Args:
+            motion (Motion): The motion currently running.
+
+        Returns:
+            tuple[str, ...] | None: The soft-returning arm axes, or ``None`` when there is no
+                soft return or *motion* is one it cannot coexist with.
+        """
+        return self._soft_return if motion in _SOFT_RETURN_MOTIONS else None
 
     def poll(self, driver: ServoDriver | None, motion: Motion, arm_legs: tuple[int, ...]) -> bool:
         """Sample leg telemetry at most every ``OVERLOAD_POLL_INTERVAL_S`` and judge it.
