@@ -13,7 +13,7 @@ from palmimo_sdk import HardwareErrorRead, describe_hardware_error
         (0x21, "InputVoltage,Overload"),
         (0x02, "bit1"),
         (0x04, "Overheating"),
-        (0x08, "MotorEncoder"),
+        (0x08, "bit3"),
         (0x10, "ElectricalShock"),
         (0x80, "bit7"),
         (0xA2, "bit1,Overload,bit7"),

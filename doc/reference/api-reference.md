@@ -1314,6 +1314,8 @@ Its read-only `errors` mapping contains raw unsigned Hardware Error Status
 motor is unknown, not healthy. `silent` lists motors asked without an answer;
 `unreached` lists motors the sweep did not reach (all requested motors if sending
 failed). The `latched` property returns a dict of only nonzero entries.
+An empty `latched` dict does not establish that all motors are healthy if
+`silent` or `unreached` is nonempty. Judge each motor using `errors`.
 
 The servo itself detects and latches the bits until reboot or power cycling.
 Reading does not clear them or change torque. `DynamixelDriver` makes one bus
@@ -1327,7 +1329,8 @@ are exported from `palmimo_sdk`. The helper returns `"-"` for zero, otherwise
 comma-separated names in ascending bit order (e.g. `0x21` becomes
 `"InputVoltage,Overload"`), with unknown bits named `"bit<N>"`.
 `HARDWARE_ERROR_BITS` maps bit positions to `InputVoltage` (0), `Overheating` (2),
-`MotorEncoder` (3), `ElectricalShock` (4), and `Overload` (5).
+`ElectricalShock` (4), and `Overload` (5). Bit 3 is reserved in the XC330-M288
+e-Manual and is described as `"bit3"`.
 
 ## Port Auto-Detection
 

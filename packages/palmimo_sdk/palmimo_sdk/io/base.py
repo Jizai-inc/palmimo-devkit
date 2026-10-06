@@ -60,6 +60,9 @@ class HardwareErrorRead:
     remain in the mapping even when their raw bits are zero. The mapping is
     typed read-only, like :class:`ServoTelemetry`.
 
+    An empty ``latched`` mapping does not establish that all motors are healthy
+    if ``silent`` or ``unreached`` is nonempty. Judge each motor using ``errors``.
+
     Attributes:
         errors (Mapping[str, int]): Responding motor name -> raw unsigned bits;
             zero means the motor answered with no latched hardware error.
@@ -74,7 +77,11 @@ class HardwareErrorRead:
 
     @property
     def latched(self) -> dict[str, int]:
-        """Return only responding motors with nonzero hardware error bits."""
+        """Return only responding motors with nonzero hardware error bits.
+
+        An empty result does not establish that all motors are healthy if
+        ``silent`` or ``unreached`` is nonempty. Judge each motor using ``errors``.
+        """
         return {motor: bits for motor, bits in self.errors.items() if bits != 0}
 
 
