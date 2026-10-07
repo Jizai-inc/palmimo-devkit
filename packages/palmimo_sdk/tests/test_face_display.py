@@ -110,6 +110,16 @@ def test_ping_true_on_pong() -> None:
         assert face.ping() is True
 
 
+def test_version_returns_reported_version_and_none_on_legacy_firmware() -> None:
+    """VERSION <ver> yields the version; an ERR reply from older firmware yields None."""
+    fakes: list[FakeSerial] = []
+    with FaceDisplay(port="COM_TEST", serial_factory=_factory(fakes)) as face:
+        fakes[0].queue("VERSION 0.1.0+abc1234.dirty", "ERR VERSION (try LIST)")
+        assert face.version() == "0.1.0+abc1234.dirty"
+        assert face.version() is None
+    assert fakes[0].writes == [b"VERSION\n", b"VERSION\n"]
+
+
 def test_command_before_connect_raises() -> None:
     """A command before connect raises FaceDisplayError."""
     face = FaceDisplay(port="COM_TEST", serial_factory=_factory([]))

@@ -305,6 +305,18 @@ class FaceDisplay:
         """Liveness check — ``True`` when the display answers ``PONG``."""
         return self._command("PING").strip().upper() == "PONG"
 
+    def version(self) -> str | None:
+        """Return the firmware version string, or ``None`` if the display doesn't report one.
+
+        Firmware that predates the ``VERSION`` command answers with an ``ERR`` line
+        (or nothing before the timeout), which is reported as ``None``, not an error.
+        """
+        prefix = "VERSION "
+        reply = self._command("VERSION")
+        if reply.upper().startswith(prefix):
+            return reply[len(prefix) :].strip() or None
+        return None
+
     # ---- transport ----------------------------------------------------
 
     def _command(self, line: str) -> str:
