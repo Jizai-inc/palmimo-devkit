@@ -27,6 +27,7 @@ in this repository.
 packages/
   palmimo_sdk/                    -> Core SDK — the single user-facing window
     robot.py                   -> Palmimo facade (public API + connection lifecycle)
+    _leg_safety.py             -> LegSafety (leg telemetry sweep judged by the overload and rail guards)
     engine.py                  -> MotionEngine (pure gait/IK, no I/O)
     kinematics.py              -> Shared leg kinematics
     io/base.py                 -> ServoDriver ABC (I/O boundary)

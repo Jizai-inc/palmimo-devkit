@@ -9,8 +9,9 @@ strain a few samples early, and :class:`SoftReturnMonitor` decides when an arm
 that was softened in response has settled back home.
 
 Both classes only judge numbers they are handed. Reading the driver on a
-schedule and acting on a verdict is :class:`~palmimo_sdk.robot.Palmimo`'s job
-(in :meth:`~palmimo_sdk.robot.Palmimo.step`), which keeps this module free of I/O.
+schedule is :class:`~palmimo_sdk._leg_safety.LegSafety`'s job and acting on a
+verdict is :class:`~palmimo_sdk.robot.Palmimo`'s (in
+:meth:`~palmimo_sdk.robot.Palmimo.step`), which keeps this module free of I/O.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
+
+from ._guard import Streak
 
 
 # Raw Present_Current units (signed, compared by magnitude). The arm of a wave
@@ -92,7 +95,7 @@ class OverloadGuard:
         self._threshold = threshold
         self._consecutive = consecutive
         self._channel: OverloadChannel = channel
-        self._streaks: dict[str, int] = {}
+        self._streaks = Streak()
 
     @property
     def threshold(self) -> int:
@@ -102,7 +105,7 @@ class OverloadGuard:
     @property
     def strained(self) -> bool:
         """Whether any axis was at or above the threshold when last sampled (``False`` right after a trip)."""
-        return bool(self._streaks)
+        return self._streaks.active
 
     def sample(self, currents: Mapping[str, int], motors: Sequence[str]) -> OverloadTrip | None:
         """Fold one sweep into the streaks and return a verdict if an axis trips.
@@ -122,10 +125,9 @@ class OverloadGuard:
                 continue
             current = int(currents[motor])
             if abs(current) < self._threshold:
-                self._streaks.pop(motor, None)
+                self._streaks.drop(motor)
                 continue
-            streak = self._streaks.get(motor, 0) + 1
-            self._streaks[motor] = streak
+            streak = self._streaks.advance(motor)
             if tripped is None and streak >= self._consecutive:
                 tripped = OverloadTrip(motor, current, self._threshold, streak, "", self._channel)
         if tripped is not None:

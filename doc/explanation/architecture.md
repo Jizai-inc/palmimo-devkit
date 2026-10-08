@@ -176,6 +176,7 @@ packages/
     palmimo_sdk/
       __init__.py                       # Re-exports Palmimo / Motion / RoutineStep / MotionEngine / ServoDriver / DynamixelDriver / kinematics / palmimo_motor_ids / SUPPORTED_MOTOR_MODELS
       robot.py                          # Palmimo facade — public API + connection lifecycle
+      _leg_safety.py                    # LegSafety — one leg telemetry sweep judged by the overload and rail guards
       engine.py                         # MotionEngine — pure gait/IK computation, no I/O
       kinematics.py                     # Shared IK/FK (leg_ik / servo ticks / body-frame foot position)
       io/__init__.py                    # Re-exports ServoDriver / DynamixelDriver / HeadCamera / Microphone / MicStream / Speaker / FaceDisplay / find_servo_port
@@ -311,13 +312,16 @@ stops or an SSH session drops.
   below). The one deliberate exception is the overload guard's reaction on a
   gripped arm, described next
 - **Leg current IS acted on** (`overload.py`'s `OverloadGuard`, polled at up to 30 Hz
-  from `Palmimo.step()`) — a leg axis that is held or blocked draws current until the
+  from `Palmimo.step()` through `_leg_safety.py`'s `LegSafety`) — a leg axis that is
+  held or blocked draws current until the
   servo latches its own Overload error and goes limp, which drops the body
   unpredictably; stopping first lets the robot choose where it ends up. Three
   consecutive samples at or above a per-channel threshold drop the motion to `IDLE`.
   Samples 0.2 s or more apart do not count as consecutive, so a streak left over
   from before a pause in stepping cannot combine with a fresh one; the rail guard
-  below follows the same rule.
+  below follows the same rule. `LegSafety` reads and judges, including which arm axes
+  go soft and under which motions; `robot.py` keeps the reaction (dropping the motion,
+  writing the soft-return gain).
   The raised arm of a wave is the exception to "leave torque on": someone holding it
   fights a stiff servo, so on an arm trip that arm alone is lowered to a soft gain and
   eased back to neutral, and only if the gain cannot be written is its torque cut. The

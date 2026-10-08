@@ -8,8 +8,9 @@ Input Voltage error and drop torque, which lets the body fall, while each axis's
 own current stays inside its limit, so the per-axis overload guard cannot see it.
 :class:`RailGuard` flags the sag a few samples early.
 
-The guard only judges numbers it is handed. Reading the driver on a schedule and
-acting on a verdict is :class:`~palmimo_sdk.robot.Palmimo`'s job (in
+The guard only judges numbers it is handed. Reading the driver on a schedule is
+:class:`~palmimo_sdk._leg_safety.LegSafety`'s job and acting on a verdict is
+:class:`~palmimo_sdk.robot.Palmimo`'s (in
 :meth:`~palmimo_sdk.robot.Palmimo.step`), which keeps this module free of I/O.
 """
 
