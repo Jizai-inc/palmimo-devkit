@@ -154,16 +154,11 @@ class Playback:
     resolve lazily.
     """
 
-    #: How many consecutive failed writes must pass before the writer warns
-    #: again. The first failure always warns immediately; after that, staying
-    #: quiet for a while avoids flooding stderr with one line per chunk while
-    #: still leaving a trail if the condition never clears.
-    _WARN_EVERY = 50
-
-    #: How long an ``aplay`` must have been running before a write to it counts
-    #: as proof that playback works. A write into a fresh pipe succeeds even
-    #: when ``aplay`` is about to die for want of the device.
-    _RECOVERY_S = 2.0
+    #: Least time between two playback warnings. The first failure warns at
+    #: once; after that, staying quiet for a while avoids flooding stderr with
+    #: one line per chunk while still leaving a trail if the condition never
+    #: clears.
+    _WARN_INTERVAL_S = 30.0
 
     def __init__(self, pitch: PitchShifter | None = None, device: str | None = None) -> None:
         self._pitch = pitch
@@ -190,20 +185,10 @@ class Playback:
         self._pending_kills: list[tuple[threading.Thread, subprocess.Popen[bytes]]] = []
         self._queue: queue.Queue[bytes | None] = queue.Queue()
         self._writer: threading.Thread | None = None
-        #: Failed writes since playback last proved itself, touched only on the writer thread.
+        #: Failed writes this session, touched only on the writer thread.
         self._write_failures = 0
-        #: When the current ``aplay`` was spawned; written and read on the writer thread only.
-        self._process_started = 0.0
-        self._stopping = threading.Event()
-
-    def begin_stop(self) -> None:
-        """Tell the writer the session is ending, so a pipe that breaks from here on is not reported.
-
-        Ctrl+C reaches ``aplay`` as well as this process: it exits on its own
-        and the in-flight write fails against a process nothing has reclaimed.
-        Safe to call from any thread; it is not undone.
-        """
-        self._stopping.set()
+        #: When the writer last warned, on the monotonic clock; writer thread only.
+        self._last_warning: float | None = None
 
     def _ensure_writer(self) -> None:
         if self._writer is None or not self._writer.is_alive():
@@ -230,12 +215,14 @@ class Playback:
                 self._process = subprocess.Popen(
                     ["aplay", "-q", *device, "-t", "raw", "-f", "S16_LE", "-r", str(API_RATE), "-c", "1"],
                     stdin=subprocess.PIPE,
+                    # Out of the terminal's process group, so Ctrl+C does not
+                    # end it behind the writer's back: interrupt() and close() do.
+                    start_new_session=True,
                 )
-                self._process_started = time.monotonic()
             return self._process
 
     def _record_write_failure(self) -> None:
-        """Count a playback failure and warn the operator on the first one and every ``_WARN_EVERY``-th after.
+        """Count a playback failure and warn the operator, at most once per ``_WARN_INTERVAL_S``.
 
         Only called for failures not explained by an in-flight
         :meth:`interrupt` -- barge-in killing the process mid-write is
@@ -243,14 +230,17 @@ class Playback:
         :meth:`_drain`'s ``stale`` check).
         """
         self._write_failures += 1
-        if self._write_failures == 1 or self._write_failures % self._WARN_EVERY == 0:
-            print(
-                f"!! playback write failed ({self._write_failures} since playback last worked) -- "
-                "check the ALSA default output device and whether it is held "
-                "by another process; the robot may be silent",
-                file=sys.stderr,
-                flush=True,
-            )
+        now = time.monotonic()
+        if self._last_warning is not None and now - self._last_warning < self._WARN_INTERVAL_S:
+            return
+        self._last_warning = now
+        print(
+            f"!! playback write failed ({self._write_failures} so far) -- "
+            "check the ALSA default output device and whether it is held "
+            "by another process; the robot may be silent",
+            file=sys.stderr,
+            flush=True,
+        )
 
     def _drain(self) -> None:
         """Writer-thread body: pitch-shift and write queued chunks until the ``close()`` sentinel.
@@ -290,14 +280,10 @@ class Playback:
             except Exception:
                 with self._process_lock:
                     stale = process is not self._process or generation != self._generation
-                if not stale and not self._stopping.is_set():
+                if not stale:
                     self._record_write_failure()
-                # else: interrupt() already reclaimed this chunk's process, or the
-                # session is stopping -- an expected teardown, not a playback
-                # failure worth a warning.
-            else:
-                if time.monotonic() - self._process_started >= self._RECOVERY_S:
-                    self._write_failures = 0
+                # else: interrupt() already reclaimed this chunk's process --
+                # an expected teardown, not a playback failure worth a warning.
 
     def write(self, pcm: bytes) -> None:
         """Enqueue *pcm* for the writer thread. Never blocks -- safe to call from the event loop.

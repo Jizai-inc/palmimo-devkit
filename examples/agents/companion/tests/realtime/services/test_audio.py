@@ -71,8 +71,9 @@ class _FakePopen:
     block_until_killed: ClassVar[bool] = False
     wait_timeouts_before_success: ClassVar[int] = 0
 
-    def __init__(self, args: list[str], stdin: int | None = None) -> None:
+    def __init__(self, args: list[str], stdin: int | None = None, start_new_session: bool = False) -> None:
         self.args = args
+        self.start_new_session = start_new_session
         self.stdin = _FakeStdin(write_delay=type(self).write_delay, block_until_killed=type(self).block_until_killed)
         self.killed = False
         self.wait_calls: list[float | None] = []
@@ -332,21 +333,14 @@ def test_a_healthy_interrupt_mid_write_does_not_trigger_the_silence_warning(
     playback.close()
 
 
-def test_a_write_that_fails_because_the_session_is_stopping_does_not_warn(
-    fake_popen: type[_FakePopen], capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Ctrl+C reaches aplay too, so its pipe breaks without interrupt() ever having run."""
-    fake_popen.block_until_killed = True
+def test_aplay_is_started_outside_the_terminal_process_group(fake_popen: type[_FakePopen]) -> None:
+    """Ctrl+C must not end aplay behind the writer: a pipe that breaks that way reads as a dead device."""
     playback = Playback()
     playback.write(b"\x00\x00")
     _wait_until(lambda: fake_popen.instances)
 
-    playback.begin_stop()
-    fake_popen.instances[0].kill()  # aplay exits on the signal; the writer's pipe breaks
-    _wait_until(lambda: playback._queue.empty())
+    assert fake_popen.instances[0].start_new_session
     playback.close()
-
-    assert "playback write failed" not in capsys.readouterr().err
 
 
 # ----------------------------------------------------------------------
@@ -586,39 +580,17 @@ def test_write_failure_warning_recurs_after_the_warn_interval(
     _wait_until(lambda: fake_popen.instances)
     fake_popen.instances[0].stdin.write = _raise_on_write  # type: ignore[assignment]
 
-    for i in range(playback._WARN_EVERY + 1):
-        playback._queue.put_nowait(bytes([i % 256, i % 256]))
-    _wait_until(lambda: playback._write_failures >= playback._WARN_EVERY + 1)
-
-    captured = capsys.readouterr().err
-    assert captured.count("playback write failed") == 2, "the Nth consecutive failure must warn again"
-    playback.close()
-
-
-def test_a_successful_write_resets_the_failure_counter(
-    fake_popen: type[_FakePopen], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(Playback, "_RECOVERY_S", 0.0)
-    playback = Playback()
-    playback.write(b"\x00\x00")
-    _wait_until(lambda: fake_popen.instances)
-    real_write = fake_popen.instances[0].stdin.write
-    fake_popen.instances[0].stdin.write = _raise_on_write  # type: ignore[assignment]
-
     playback.write(b"\x01\x01")
     _wait_until(lambda: playback._write_failures == 1)
-    capsys.readouterr()  # discard the first warning
+    assert playback._last_warning is not None
+    playback._last_warning -= playback._WARN_INTERVAL_S  # as if the interval had passed
 
-    fake_popen.instances[0].stdin.write = real_write  # type: ignore[method-assign]
     playback.write(b"\x02\x02")
-    _wait_until(lambda: playback._write_failures == 0)
-
-    fake_popen.instances[0].stdin.write = _raise_on_write  # type: ignore[assignment]
     playback.write(b"\x03\x03")
-    _wait_until(lambda: playback._write_failures == 1)
+    _wait_until(lambda: playback._write_failures == 3)
 
     captured = capsys.readouterr().err
-    assert captured.count("playback write failed") == 1, "a reset counter must warn again on the very next failure"
+    assert captured.count("playback write failed") == 2, "once the interval has passed, and not again right after"
     playback.close()
 
 
@@ -637,8 +609,8 @@ class _DoomedStdin(_FakeStdin):
 
 
 class _DoomedPopen(_FakePopen):
-    def __init__(self, args: list[str], stdin: int | None = None) -> None:
-        super().__init__(args, stdin)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self.stdin: _DoomedStdin = _DoomedStdin()
 
     def poll(self) -> int | None:
@@ -652,7 +624,7 @@ def test_failures_interleaved_with_buffered_writes_into_fresh_pipes_still_go_qui
     _DoomedPopen.instances = []
     monkeypatch.setattr("subprocess.Popen", _DoomedPopen)
     playback = Playback()
-    cycles = playback._WARN_EVERY + 1
+    cycles = 5
 
     for i in range(2 * cycles):
         playback._queue.put_nowait(bytes([i % 256, i % 256]))
@@ -662,7 +634,7 @@ def test_failures_interleaved_with_buffered_writes_into_fresh_pipes_still_go_qui
     )
     playback.close()
 
-    assert capsys.readouterr().err.count("playback write failed") == 2, "the first failure and the Nth, no more"
+    assert capsys.readouterr().err.count("playback write failed") == 1, "one warning, not one per aplay"
 
 
 class _RaisingPitch:

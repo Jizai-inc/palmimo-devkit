@@ -25,7 +25,7 @@ import os
 import signal
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from typing import Any
 
 from palmimo_sdk import (
@@ -168,7 +168,7 @@ _SIGNALS = tuple(s for s in (getattr(signal, n, None) for n in ("SIGINT", "SIGTE
 
 
 @contextlib.contextmanager
-def _signal_stop(stop: asyncio.Event, on_stop: Callable[[], None] | None = None) -> Iterator[None]:
+def _signal_stop(stop: asyncio.Event) -> Iterator[None]:
     """Make SIGINT/SIGTERM end the session promptly, and give the handlers back.
 
     Setting a flag is not enough: services block on the socket, the camera
@@ -177,8 +177,7 @@ def _signal_stop(stop: asyncio.Event, on_stop: Callable[[], None] | None = None)
     timeout, which then SIGKILLs the process with the cleanup unrun: no
     return_to_neutral, no neck release, torque left on. So the handler both
     sets *stop* (for anything that does poll it) and cancels the running
-    ``asyncio.timeout``/``TaskGroup`` via the event. *on_stop*, when given,
-    runs first in the same handler.
+    ``asyncio.timeout``/``TaskGroup`` via the event.
 
     Handlers are removed on the way out. Installing one for SIGINT replaces
     the KeyboardInterrupt disposition, so leaving it in place through a
@@ -186,16 +185,10 @@ def _signal_stop(stop: asyncio.Event, on_stop: Callable[[], None] | None = None)
     third Ctrl+C -- exactly when a misbehaving robot needs to be killed.
     """
     loop = asyncio.get_running_loop()
-
-    def handler() -> None:
-        if on_stop is not None:
-            on_stop()
-        stop.set()
-
     installed = []
     for sig in _SIGNALS:
         with contextlib.suppress(NotImplementedError):  # not available on Windows
-            loop.add_signal_handler(sig, handler)
+            loop.add_signal_handler(sig, stop.set)
             installed.append(sig)
     try:
         yield
@@ -292,7 +285,7 @@ class RealtimeSession:
         """
         started = time.monotonic()
         try:
-            with _signal_stop(self._stop, self._playback.begin_stop):
+            with _signal_stop(self._stop):
                 try:
                     async with asyncio.timeout(seconds), asyncio.TaskGroup() as tg:
                         tg.create_task(self._watch_stop())
