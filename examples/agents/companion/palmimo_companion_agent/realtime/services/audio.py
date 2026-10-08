@@ -15,6 +15,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from fractions import Fraction
 from typing import Any, Protocol
 
@@ -159,6 +160,11 @@ class Playback:
     #: still leaving a trail if the condition never clears.
     _WARN_EVERY = 50
 
+    #: How long an ``aplay`` must have been running before a write to it counts
+    #: as proof that playback works. A write into a fresh pipe succeeds even
+    #: when ``aplay`` is about to die for want of the device.
+    _RECOVERY_S = 2.0
+
     def __init__(self, pitch: PitchShifter | None = None, device: str | None = None) -> None:
         self._pitch = pitch
         self._device = device
@@ -184,8 +190,20 @@ class Playback:
         self._pending_kills: list[tuple[threading.Thread, subprocess.Popen[bytes]]] = []
         self._queue: queue.Queue[bytes | None] = queue.Queue()
         self._writer: threading.Thread | None = None
-        #: Consecutive failed writes, touched only on the writer thread.
+        #: Failed writes since playback last proved itself, touched only on the writer thread.
         self._write_failures = 0
+        #: When the current ``aplay`` was spawned; written and read on the writer thread only.
+        self._process_started = 0.0
+        self._stopping = threading.Event()
+
+    def begin_stop(self) -> None:
+        """Tell the writer the session is ending, so a pipe that breaks from here on is not reported.
+
+        Ctrl+C reaches ``aplay`` as well as this process: it exits on its own
+        and the in-flight write fails against a process nothing has reclaimed.
+        Safe to call from any thread; it is not undone.
+        """
+        self._stopping.set()
 
     def _ensure_writer(self) -> None:
         if self._writer is None or not self._writer.is_alive():
@@ -213,6 +231,7 @@ class Playback:
                     ["aplay", "-q", *device, "-t", "raw", "-f", "S16_LE", "-r", str(API_RATE), "-c", "1"],
                     stdin=subprocess.PIPE,
                 )
+                self._process_started = time.monotonic()
             return self._process
 
     def _record_write_failure(self) -> None:
@@ -226,7 +245,7 @@ class Playback:
         self._write_failures += 1
         if self._write_failures == 1 or self._write_failures % self._WARN_EVERY == 0:
             print(
-                f"!! playback write failed ({self._write_failures} in a row) -- "
+                f"!! playback write failed ({self._write_failures} since playback last worked) -- "
                 "check the ALSA default output device and whether it is held "
                 "by another process; the robot may be silent",
                 file=sys.stderr,
@@ -271,12 +290,14 @@ class Playback:
             except Exception:
                 with self._process_lock:
                     stale = process is not self._process or generation != self._generation
-                if not stale:
+                if not stale and not self._stopping.is_set():
                     self._record_write_failure()
-                # else: interrupt() already reclaimed this chunk's process --
-                # an expected teardown, not a playback failure worth a warning.
+                # else: interrupt() already reclaimed this chunk's process, or the
+                # session is stopping -- an expected teardown, not a playback
+                # failure worth a warning.
             else:
-                self._write_failures = 0
+                if time.monotonic() - self._process_started >= self._RECOVERY_S:
+                    self._write_failures = 0
 
     def write(self, pcm: bytes) -> None:
         """Enqueue *pcm* for the writer thread. Never blocks -- safe to call from the event loop.

@@ -37,6 +37,9 @@ class _Recorder:
         self.order.append("bridge.settle")
 
     # Playback
+    def begin_stop(self) -> None:
+        pass
+
     def close(self) -> None:
         self.order.append("playback.close")
 
