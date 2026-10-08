@@ -49,6 +49,7 @@ use `joints` — it never writes.
 - [uv](https://docs.astral.sh/uv/) package manager
 - The servo interface board, which ships pre-flashed as a USB–DYNAMIXEL bridge
     - Vendor reference: [the OpenRB-150 e-Manual](https://emanual.robotis.com/docs/en/parts/controller/openrb-150/)
+    - Board lost or replaced: DevKit owners, see [SUPPORT.md](../SUPPORT.md)
 
 ## Scripts
 

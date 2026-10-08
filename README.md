@@ -45,8 +45,7 @@ Palmimo.forward() → step() → MotionEngine computes → {servo_name: tick} �
   OpenClaw, or any MCP client, and the example apps ship a wake-word agent and an
   always-on companion agent — see [Examples](examples/README.md) and
   [Serving over MCP](doc/guides/mcp-server.md).
-- **A few lines of Python** — `robot.wave()`, `robot.look(...)`, `robot.forward()`:
-  no robotics background needed.
+- **A few lines of Python** — `robot.wave()`, `robot.look(...)`, `robot.forward()`.
 - **18 built-in motions** — walking and turning (`forward`, `strafe_left/right`,
   `rotate_left/right`, `creep`), gestures (`wave`, `bow`, `clap`, ...), and
   poses (`stretch`, `dance`, `pushup`, ...), driven by an anti-phase
@@ -64,7 +63,9 @@ Palmimo.forward() → step() → MotionEngine computes → {servo_name: tick} �
 - **Python API core** — `palmimo_sdk.Palmimo` drives one `MotionEngine`; example
   agent apps (see [Examples](examples/README.md)) build on it as front-ends.
 - **Dry-run first** — every motion computes without hardware, so you can explore
-  the whole API with no robot attached.
+  the motion API with no robot attached. Most calls that need a servo bus, face
+  display, or speaker are no-ops without one; the
+  [API reference](doc/reference/api-reference.md) names the ones that raise.
 
 <div align="center">
 
@@ -76,9 +77,9 @@ Palmimo.forward() → step() → MotionEngine computes → {servo_name: tick} �
 
 ## 🦾 Hardware
 
-Palmimo DevKit ships as an **assembled, tested robot**: 21 serial-bus servos
+Palmimo DevKit ships with 21 serial-bus servos
 (18 leg + 3 neck), a round face display, a 5 MP camera, a mic array and stereo
-speakers, and a Raspberry Pi 5 (16 GB) as the control host. What the software
+speakers, and a Raspberry Pi 5 as the control host. What the software
 talks to, and over what, is in
 [System architecture](doc/explanation/architecture.md#execution-model).
 Hardware design files are not part of this repository (see
@@ -100,14 +101,13 @@ specifications are on [palmimo.dev](https://palmimo.dev/en#specs).
   with the robot model for simulation and environments for robot learning. Watch
   [Discussions → Announcements](https://github.com/Jizai-inc/palmimo-devkit/discussions/categories/announcements)
   for what lands next.
-- **Not published:** the manufacturing design of the hardware. Palmimo DevKit ships
-  as an assembled, tested robot — see
+- **Not published:** the manufacturing design of the hardware. See
   [CONTRIBUTING → Scope](CONTRIBUTING.md#scope-what-lives-here) for where
   hardware-side requests go.
 
 ## 🍓 Control host: Raspberry Pi
 
-Palmimo's control host is a **Raspberry Pi 5 (16 GB)**, wired to the servo bus
+Palmimo's control host is a **Raspberry Pi 5**, wired to the servo bus
 over USB, and it ships already imaged. The
 [Raspberry Pi setup](doc/guides/raspberry-pi-setup.md) guide writes a card from
 scratch — Wi-Fi, SSH, and the runtime the Quickstart assumes — whether you are
