@@ -44,7 +44,7 @@ testpaths = [
 members = ["lerobot_robot_palmimo", "lerobot_teleoperator_palmimo"]
 
 [tool.uv.sources]
-lerobot = { git = "https://github.com/huggingface/lerobot", tag = "v0.5.1" }
+lerobot = { git = "https://github.com/huggingface/lerobot", tag = "v0.6.1" }
 lerobot_robot_palmimo = { workspace = true }
 lerobot_teleoperator_palmimo = { workspace = true }
 palmimo-sdk = { path = "../../packages/palmimo_sdk", editable = true }
