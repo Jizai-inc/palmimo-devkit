@@ -40,7 +40,7 @@ CONFIG_NAMES = frozenset({".gitignore", "Makefile"})
 BINARY_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".glb"})
 LOG_METHODS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
 
-JAPANESE = re.compile(r"[぀-ゟ゠-ヿ一-鿿、。〃々〆〇〈-』【-〟ｦ-ﾟ]")
+JAPANESE = re.compile(r"[぀-ゟ゠-ヿ一-鿿、。〃々〆〇〈-』【-〟！-｠ｦ-ﾟ]")
 HASH_COMMENT_WITH_JAPANESE = re.compile(rf"#[^\n]*{JAPANESE.pattern}")
 LINE_COMMENT_WITH_JAPANESE = re.compile(rf"//[^\n]*{JAPANESE.pattern}")
 BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
@@ -416,6 +416,12 @@ def test_japanese_module_docstring_after_header_comment_is_detected(tmp_path: Pa
 def test_halfwidth_katakana_comment_is_detected(tmp_path: Path) -> None:
     source = tmp_path / "module.py"
     source.write_text("# ﾃｽﾄ\n", encoding="utf-8")
+    assert _has_japanese_prose(source)
+
+
+def test_fullwidth_punctuation_comment_is_detected(tmp_path: Path) -> None:
+    source = tmp_path / "module.py"
+    source.write_text("# done！\n", encoding="utf-8")
     assert _has_japanese_prose(source)
 
 
