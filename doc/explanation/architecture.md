@@ -40,10 +40,24 @@ development, a PC connects over SSH etc., but is not involved in control.
 ### Data Flow
 
 1. User calls `robot.forward()` -> sets Motion enum
-2. Each `robot.step()` call -> MotionEngine computes servo positions
-3. Returns `Dict[str, int]` (servo_name -> tick_value)
-4. ServoDriver sends positions to the bus (compute-only when no driver is injected)
-5. Repeat at target fps (default 60)
+2. Each `robot.step()` polls the neck and leg guards and applies their verdicts
+3. The flight recorder consumes the guards' completed sweeps and polls latched
+   hardware-error status when due, before the next goal is computed
+4. MotionEngine computes `Dict[str, int]` (servo_name -> tick_value); ServoDriver
+   sends positions to the bus when connected and permitted by the guards
+5. A due incident is written synchronously after that frame's goal write;
+   the callback then receives the positions
+6. Repeat at target fps (default 60); without a driver, computation still runs
+
+The recorder observes the last successfully submitted facade goal alongside
+telemetry, so a reading is compared with the goal that preceded it. Diagnostic
+persistence lives in `_flight_recorder.py`; `_flight_ride.py` connects it to the
+existing sweep producers without opening a hardware backend. During disconnect,
+parking steps defer incident persistence until after the driver's disconnect
+attempt, keeping disk latency out of the torque-off path. See
+[Servo Flight Recorder](servo-flight-recorder.md) for the design rationale and
+[its API contract](../reference/api-reference.md#servo-flight-recorder) for the
+public controls and file format.
 
 ### Key Design Principles
 
@@ -176,6 +190,8 @@ packages/
     palmimo_sdk/
       __init__.py                       # Re-exports Palmimo / Motion / RoutineStep / MotionEngine / ServoDriver / DynamixelDriver / kinematics / palmimo_motor_ids / SUPPORTED_MOTOR_MODELS
       robot.py                          # Palmimo facade — public API + connection lifecycle
+      _flight_recorder.py               # Servo incident rings and JSONL persistence, no bus I/O
+      _flight_ride.py                    # Guard-sweep reuse and hardware-error polling for the recorder
       _leg_safety.py                    # LegSafety — one leg telemetry sweep judged by the overload and rail guards
       engine.py                         # MotionEngine — pure gait/IK computation, no I/O
       hardware_error.py                 # Public descriptions of latched servo hardware error bits

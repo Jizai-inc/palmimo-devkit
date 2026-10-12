@@ -65,3 +65,11 @@ def test_hardware_error_read_is_exported_from_io() -> None:
 
     assert IoHardwareErrorRead is HardwareErrorRead
     assert "HardwareErrorRead" in io.__all__
+
+
+def test_default_incident_dir_is_exported_from_package_root() -> None:
+    from palmimo_sdk import default_incident_dir
+    from palmimo_sdk._flight_recorder import default_incident_dir as resolve
+
+    assert default_incident_dir is resolve
+    assert "default_incident_dir" in palmimo_sdk.__all__
