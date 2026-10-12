@@ -51,7 +51,7 @@ development, a PC connects over SSH etc., but is not involved in control.
 
 The recorder observes the last successfully submitted facade goal alongside
 telemetry, so a reading is compared with the goal that preceded it. Diagnostic
-persistence lives in `flight_recorder.py`; `_flight_ride.py` connects it to the
+persistence lives in `_flight_recorder.py`; `_flight_ride.py` connects it to the
 existing sweep producers without opening a hardware backend. During disconnect,
 parking steps defer incident persistence until after the driver's disconnect
 attempt, keeping disk latency out of the torque-off path. See
@@ -190,7 +190,7 @@ packages/
     palmimo_sdk/
       __init__.py                       # Re-exports Palmimo / Motion / RoutineStep / MotionEngine / ServoDriver / DynamixelDriver / kinematics / palmimo_motor_ids / SUPPORTED_MOTOR_MODELS
       robot.py                          # Palmimo facade — public API + connection lifecycle
-      flight_recorder.py                # Servo incident rings and JSONL persistence, no bus I/O
+      _flight_recorder.py               # Servo incident rings and JSONL persistence, no bus I/O
       _flight_ride.py                    # Guard-sweep reuse and hardware-error polling for the recorder
       _leg_safety.py                    # LegSafety — one leg telemetry sweep judged by the overload and rail guards
       engine.py                         # MotionEngine — pure gait/IK computation, no I/O

@@ -2,14 +2,15 @@ import logging
 from pathlib import Path
 
 import pytest
-from tests.test_robot_flight_recorder import Clock, FlightDriver
 
+from palmimo_sdk._flight_recorder import ServoFlightRecorder
 from palmimo_sdk._flight_ride import FlightRide
 from palmimo_sdk._leg_safety import LegSafety
 from palmimo_sdk.engine import Motion
-from palmimo_sdk.flight_recorder import ServoFlightRecorder
 from palmimo_sdk.io.base import ServoTelemetry
 from palmimo_sdk.thermal import NeckThermalGuard
+
+from .flight_fakes import Clock, FlightDriver
 
 
 @pytest.mark.parametrize("neck", [False, True])

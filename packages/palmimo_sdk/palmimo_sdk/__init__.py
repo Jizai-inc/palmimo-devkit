@@ -52,9 +52,9 @@ USB-to-servo bridge) without hard-coding platform-specific paths;
 """
 
 from . import kinematics, shutdown
+from ._flight_recorder import default_incident_dir
 from .audio import AudioProcessor, ClipDenoiser, Denoiser, EchoCanceller
 from .engine import Motion, MotionEngine
-from .flight_recorder import default_incident_dir
 from .hardware_error import HARDWARE_ERROR_BITS, describe_hardware_error
 from .io import (
     SAFE_MAX_TICK,

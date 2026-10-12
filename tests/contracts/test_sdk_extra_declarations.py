@@ -68,7 +68,6 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     # urllib + hashlib model fetching; no third-party package involved.
     "palmimo_sdk.download": _NO_EXTRA,
     "palmimo_sdk.engine": _NO_EXTRA,
-    "palmimo_sdk.flight_recorder": _NO_EXTRA,
     "palmimo_sdk.hardware_error": _NO_EXTRA,
     "palmimo_sdk.keyframes": _NO_EXTRA,
     "palmimo_sdk.kinematics": _NO_EXTRA,

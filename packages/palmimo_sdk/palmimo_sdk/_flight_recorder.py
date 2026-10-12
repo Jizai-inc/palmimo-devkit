@@ -19,6 +19,10 @@ from .io.base import HardwareErrorRead
 
 logger = logging.getLogger(__name__)
 
+HARDWARE_ERROR_INTERVAL_S = 1.0
+POST_WINDOW_GRACE_S = 0.25
+MAX_DUMPS_PER_CONNECTION = 10
+
 
 def _local_now() -> datetime:
     return datetime.now().astimezone()
@@ -112,6 +116,8 @@ class ServoFlightRecorder:
         self._last_clean_at: dict[str, float] = {}
         self._window: _Window | None = None
         self._last_incident_path: Path | None = None
+        self._dump_attempts = 0
+        self._dump_limit_warned = False
 
     @property
     def incident_dir(self) -> Path:
@@ -133,6 +139,11 @@ class ServoFlightRecorder:
         directory = self.incident_dir
         try:
             if not directory.exists():
+                ancestor = directory.parent
+                while not ancestor.exists() and ancestor != ancestor.parent:
+                    ancestor = ancestor.parent
+                if not ancestor.is_dir() or not os.access(ancestor, os.W_OK):
+                    self._logger.warning("Incident destination %s has an unwritable ancestor: %s", directory, ancestor)
                 self._logger.info("Servo incidents will be written to %s", directory)
                 return
             if not directory.is_dir() or not os.access(directory, os.W_OK):
@@ -161,6 +172,8 @@ class ServoFlightRecorder:
             self._baselined.clear()
             self._last_clean_at.clear()
             self._window = None
+            self._dump_attempts = 0
+            self._dump_limit_warned = False
 
     def capture_fast(self, now: float, motion: str, axes: Mapping[str, AxisSample]) -> None:
         with self._lock:
@@ -186,7 +199,14 @@ class ServoFlightRecorder:
                     if bits:
                         known = self._incident_servos.get(name) == bits
                         self._incident_servos[name] = bits
-                        if not known:
+                        if known:
+                            self._logger.info(
+                                "%s still holds a latched hardware error from the previous connection (%s, 0x%02x)",
+                                name,
+                                describe_hardware_error(bits),
+                                bits,
+                            )
+                        else:
                             self._logger.error(
                                 "%s already holds a latched hardware error (%s, 0x%02x) from before this connection; "
                                 "no window recorded. Reboot or power-cycle the servo to clear it.",
@@ -216,11 +236,20 @@ class ServoFlightRecorder:
                 return
             self._incident_servos.update(new)
             if self._window is None:
+                if self._dump_attempts >= MAX_DUMPS_PER_CONNECTION:
+                    if not self._dump_limit_warned:
+                        self._logger.warning(
+                            "Servo incident dump limit reached (%d); no more windows until reconnect",
+                            MAX_DUMPS_PER_CONNECTION,
+                        )
+                        self._dump_limit_warned = True
+                    return
                 self._window = _Window(now, self._wall_clock(), motion, now + self._post_s, now + self._post_max_s)
             else:
                 self._window.deadline = min(now + self._post_s, self._window.cap)
-            self._window.bits.update(new)
-            self._window.clean.update({name: self._last_clean_at.get(name) for name in new})
+            for name, bits in new.items():
+                self._window.bits.setdefault(name, bits)
+                self._window.clean.setdefault(name, self._last_clean_at.get(name))
             for name, bits in new.items():
                 self._logger.error(
                     "Servo hardware error latched: %s %s (0x%02x) during %s; recording the incident window",
@@ -232,7 +261,15 @@ class ServoFlightRecorder:
 
     def window_due(self, now: float) -> bool:
         with self._lock:
-            return self._window is not None and now >= self._window.deadline
+            window = self._window
+            return (
+                window is not None
+                and now >= window.deadline
+                and (
+                    any(sample.at >= window.deadline for sample in self._fast)
+                    or now >= window.deadline + POST_WINDOW_GRACE_S
+                )
+            )
 
     def flush(self) -> Path | None:
         """Write the open window outside the state lock; return only this dump's path."""
@@ -241,6 +278,7 @@ class ServoFlightRecorder:
             if window is None:
                 return None
             self._window = None
+            self._dump_attempts += 1
             samples = [*self._fast, *self._context]
         started = self._clock()
         temporary: Path | None = None
@@ -290,7 +328,7 @@ class ServoFlightRecorder:
                     "motion": window.motion,
                     "units": {"current": "raw", "voltage": "V", "temperature": "C", "position": "tick"},
                     "last_clean_t": None if last_clean is None else last_clean - window.at,
-                    "hardware_error_interval_s": 1.0,
+                    "hardware_error_interval_s": HARDWARE_ERROR_INTERVAL_S,
                     "post_s": window.deadline - window.at,
                     "post_s_captured": captured,
                     "truncated": captured < window.deadline - window.at,
