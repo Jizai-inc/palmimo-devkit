@@ -263,6 +263,8 @@ class RealtimeSession:
 
     async def _watch_stop(self) -> None:
         await self._stop.wait()
+        # Silence first: cancelling the services and settling tool work can take seconds.
+        self._playback.interrupt()
         raise _Stop
 
     async def run(self, seconds: float) -> None:

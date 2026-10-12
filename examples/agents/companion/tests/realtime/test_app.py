@@ -37,6 +37,9 @@ class _Recorder:
         self.order.append("bridge.settle")
 
     # Playback
+    def interrupt(self) -> None:
+        self.order.append("playback.interrupt")
+
     def close(self) -> None:
         self.order.append("playback.close")
 
@@ -96,6 +99,31 @@ async def test_a_closed_socket_ends_the_session_cleanly_and_still_parks() -> Non
     await session.run(30.0)  # must return normally, not raise, and not wait out the 30s timeout
 
     assert recorder.order == ["bridge.settle", "playback.close", "watch.aclose", "disconnect"]
+
+
+async def test_a_stop_signal_silences_playback_before_shutdown_settles_anything() -> None:
+    recorder = _Recorder()
+    session = _session(recorder, asleep=False)
+    session._usage = cast(Any, app_module.Usage("gpt-realtime-2.1"))
+    session._frame = LiveFrame(camera=None)
+
+    running = asyncio.create_task(session.run(30.0))
+    await asyncio.sleep(0)
+    session._stop.set()
+    await running
+
+    assert recorder.order[:2] == ["playback.interrupt", "bridge.settle"]
+
+
+async def test_a_session_that_times_out_does_not_cut_playback_short() -> None:
+    recorder = _Recorder()
+    session = _session(recorder, asleep=False)
+    session._usage = cast(Any, app_module.Usage("gpt-realtime-2.1"))
+    session._frame = LiveFrame(camera=None)
+
+    await session.run(0.01)
+
+    assert "playback.interrupt" not in recorder.order
 
 
 async def test_shutdown_settles_tool_work_before_disconnecting() -> None:
