@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import json
 
+import pytest
+
 from palmimo_companion_agent.pipeline.event_log import emit_event
 from palmimo_companion_agent.pipeline.history import KeyboardEvent, ToolExecEvent
 
@@ -60,7 +62,8 @@ def test_emit_event_writes_tool_arguments_as_json_when_they_parse() -> None:
     assert "壁の花柄" in out.getvalue()
 
 
-def test_emit_event_keeps_tool_arguments_as_a_string_when_they_do_not_parse() -> None:
+@pytest.mark.parametrize("arguments", ['{"name": ', '"BLOSSOM"', "[1]", '{"x": NaN}'])
+def test_emit_event_keeps_tool_arguments_as_a_string_when_they_are_not_a_json_object(arguments: str) -> None:
     out = io.StringIO()
-    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments='{"name": ', result="bad"), out=out)
-    assert json.loads(out.getvalue())["arguments"] == '{"name": '
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="bad"), out=out)
+    assert json.loads(out.getvalue(), parse_constant=pytest.fail)["arguments"] == arguments
