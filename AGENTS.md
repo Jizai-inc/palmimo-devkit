@@ -27,6 +27,8 @@ in this repository.
 packages/
   palmimo_sdk/                    -> Core SDK — the single user-facing window
     robot.py                   -> Palmimo facade (public API + connection lifecycle)
+    flight_recorder.py         -> Servo incident rings and JSONL persistence (no bus I/O)
+    _flight_ride.py            -> Recorder integration with guard sweeps and hardware-error polling
     _leg_safety.py             -> LegSafety (leg telemetry sweep judged by the overload and rail guards)
     engine.py                  -> MotionEngine (pure gait/IK, no I/O)
     hardware_error.py          -> Public descriptions of latched servo hardware error bits

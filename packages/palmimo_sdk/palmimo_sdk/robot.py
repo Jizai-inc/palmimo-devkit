@@ -386,7 +386,13 @@ class Palmimo:
             torque (see :meth:`drain_rail_trips`). ``None`` disables the guard.
             Must be positive.
         flight_recorder (bool): Capture servo hardware-error incidents. Defaults to ``True``.
-        incident_dir (str or os.PathLike, optional): Incident destination; ``None`` uses the XDG state directory.
+            Reuses guard telemetry in memory and writes only when an incident
+            window closes or is flushed. ``False`` disables capture and its
+            hardware-error polling without disabling the safety guards.
+        incident_dir (str or os.PathLike, optional): Incident destination. ``None`` resolves
+            :func:`default_incident_dir` on the first driver connection and
+            retains that path across reconnects. Directories are created only
+            when writing an incident; ignored when ``flight_recorder=False``.
         display (FaceDisplay, optional): Face display resource. When attached, the connection lifecycle bundles
             it alongside the driver — :meth:`connect` opens it and plays the
             boot-wake animation, :meth:`disconnect` returns it to IDLE and closes

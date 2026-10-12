@@ -26,6 +26,7 @@ const SIDEBAR_ORDER = {
   'explanation/architecture.md': 1,
   'explanation/motion-system.md': 2,
   'explanation/shutdown.md': 3,
+  'explanation/servo-flight-recorder.md': 4,
 };
 
 const DOCS_SITE_DIR = path.dirname(fileURLToPath(import.meta.url));
