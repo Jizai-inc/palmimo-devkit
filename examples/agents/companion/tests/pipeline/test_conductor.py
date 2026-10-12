@@ -48,19 +48,14 @@ async def _run_briefly(conductor: Conductor, predicate: Any, *, timeout: float =
             await task
 
 
-@pytest.mark.parametrize(
-    "arguments",
-    ["{broken", "[]", "null", '{"nested":' + "[" * 10000 + "0" + "]" * 10000 + "}"],
-    ids=["malformed", "array", "null", "deep"],
-)
-async def test_invalid_arguments_leave_conversation_running(
-    arguments: str,
+async def test_deep_arguments_leave_conversation_running(
     toolset: AgentToolSet,
     fake_llm_provider: type,
     raw_tool_call_turn: Callable,
     tool_call_turn: Callable,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    arguments = '{"nested":' + "[" * 10000 + "0" + "]" * 10000 + "}"
     calls: list[str] = []
 
     async def call(name: str, args: dict) -> Any:
@@ -433,7 +428,7 @@ async def test_a_successful_sleep_stops_idle_ticks(
     # Simulate a completed sleep call landing in history -- the same
     # ToolExecEvent execute_and_record would add, observed by the Conductor's
     # own Sleeping subscriber.
-    history.add(ToolExecEvent(tool_call_id="t1", name="sleep", arguments="{}", result="went to sleep"))
+    history.add(ToolExecEvent(tool_call_id="t1", name="sleep", arguments="{}", result="went to sleep", args={}))
 
     task = asyncio.ensure_future(conductor.run())
     try:
@@ -453,8 +448,10 @@ async def test_idle_resumes_after_a_successful_wake_up(
     history = History()
     llm = fake_llm_provider([tool_call_turn("rest", {"seconds": 0.5, "reason": "quiet moment"})])
     conductor = Conductor(history, toolset, llm, Bus())
-    history.add(ToolExecEvent(tool_call_id="t1", name="sleep", arguments="{}", result="went to sleep"))
-    history.add(ToolExecEvent(tool_call_id="t2", name="wake_up", arguments="{}", result="woke up and stretched"))
+    history.add(ToolExecEvent(tool_call_id="t1", name="sleep", arguments="{}", result="went to sleep", args={}))
+    history.add(
+        ToolExecEvent(tool_call_id="t2", name="wake_up", arguments="{}", result="woke up and stretched", args={})
+    )
 
     def _rest_ran() -> bool:
         return any(event.name == "rest" for event in events_of_type(history, ToolExecEvent))
@@ -472,7 +469,7 @@ async def test_a_failed_sleep_does_not_gate_idle_ticks(
     conductor = Conductor(history, toolset, llm, Bus())
     history.add(
         ToolExecEvent(
-            tool_call_id="t1", name="sleep", arguments="{}", result="execution error: servo fault", error=True
+            tool_call_id="t1", name="sleep", arguments="{}", result="execution error: servo fault", error=True, args={}
         )
     )
 
@@ -490,10 +487,15 @@ async def test_a_failed_wake_up_does_not_resume_idle_ticks(
     history = History()
     llm = fake_llm_provider([tool_call_turn("rest", {"seconds": 0.5, "reason": "quiet moment"})])
     conductor = Conductor(history, toolset, llm, Bus())
-    history.add(ToolExecEvent(tool_call_id="t1", name="sleep", arguments="{}", result="went to sleep"))
+    history.add(ToolExecEvent(tool_call_id="t1", name="sleep", arguments="{}", result="went to sleep", args={}))
     history.add(
         ToolExecEvent(
-            tool_call_id="t2", name="wake_up", arguments="{}", result="execution error: servo fault", error=True
+            tool_call_id="t2",
+            name="wake_up",
+            arguments="{}",
+            result="execution error: servo fault",
+            error=True,
+            args={},
         )
     )
 

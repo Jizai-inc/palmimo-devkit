@@ -224,7 +224,7 @@ def test_build_runtime_shares_one_sleeping_mirror_between_conductor_and_reflexes
     assert rt.reflexes is not None
     assert rt.reflexes._inhibited() is False
 
-    rt.history.add(ToolExecEvent(tool_call_id="t1", name="sleep", arguments="{}", result="went to sleep"))
+    rt.history.add(ToolExecEvent(tool_call_id="t1", name="sleep", arguments="{}", result="went to sleep", args={}))
 
     assert rt.conductor.sleeping.asleep is True
     assert rt.reflexes._inhibited() is True

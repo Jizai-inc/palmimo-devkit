@@ -39,3 +39,15 @@ def test_open_creates_the_parent_directory(tmp_path: Path) -> None:
     log.write("tool_call", name="nod")
     log.close()
     assert path.exists()
+
+
+def test_log_writes_unsafe_text_as_one_utf8_json_line(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    text = "日本語\ud800\x7f\u0085\u009f\u2028\u2029\x00"
+    log = EventLog.open(path)
+    log.write("tool_call", text=text)
+    log.close()
+    lines = path.read_bytes().decode("utf-8", errors="strict").splitlines()
+    assert len(lines) == 1
+    assert lines[0].isascii()
+    assert json.loads(lines[0])["text"] == text

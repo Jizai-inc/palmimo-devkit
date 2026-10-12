@@ -48,7 +48,7 @@ async def test_tick_asks_the_llm_for_a_single_tool_call_continuation(
     llm = fake_llm_provider([tool_call_turn("nod", {"seconds": 1.0, "reason": "again"})])
     turn = IdleTurn(history, _idle_view(toolset), llm, Bus())
     history.add(
-        ToolExecEvent(tool_call_id="c", name="rest", arguments="{}", result="rested")
+        ToolExecEvent(tool_call_id="c", name="rest", arguments="{}", result="rested", args={})
     )  # window already ends on a tool turn
 
     await turn.tick()

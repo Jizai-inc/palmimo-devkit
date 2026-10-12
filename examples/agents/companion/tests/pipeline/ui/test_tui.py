@@ -99,7 +99,7 @@ async def test_typed_input_submits_to_the_conductor() -> None:
 def test_format_skips_empty_tool_exec_results() -> None:
     from palmimo_companion_agent.pipeline.history import ToolExecEvent
 
-    event = ToolExecEvent(tool_call_id="1", name="stop", arguments="{}", result="interrupted")
+    event = ToolExecEvent(tool_call_id="1", name="stop", arguments="{}", result="interrupted", args={})
     assert tui_module._format(event) == ""
 
 

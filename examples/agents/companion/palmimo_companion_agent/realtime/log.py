@@ -36,7 +36,7 @@ class EventLog:
         if self._out is None:
             return
         payload = {"kind": kind, "ts": time.time(), **fields}
-        self._out.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self._out.write(json.dumps(payload, ensure_ascii=True) + "\n")
         self._out.flush()
 
     def close(self) -> None:

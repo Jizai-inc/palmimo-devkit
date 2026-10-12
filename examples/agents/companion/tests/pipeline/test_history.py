@@ -49,6 +49,7 @@ def test_tool_exec_event_becomes_assistant_and_tool_messages() -> None:
         arguments='{"seconds": 4.0}',
         result="danced for 4s",
         thought="feeling good",
+        args={"seconds": 4.0},
     )
     assert event.to_messages() == [
         {
@@ -101,7 +102,7 @@ def test_to_messages_inserts_seed_when_window_starts_on_assistant_turn() -> None
     # AgentThoughtEvent contributes no message, so the deque holding only a
     # ToolExecEvent (assistant + tool) is exactly the eviction scenario the
     # seed guards against.
-    history.add(ToolExecEvent(tool_call_id="c1", name="rest", arguments="{}", result="rested"))
+    history.add(ToolExecEvent(tool_call_id="c1", name="rest", arguments="{}", result="rested", args={}))
     messages = history.to_messages()
     assert messages[0] == {"role": "user", "content": "[continued] Carry on naturally from what you were doing."}
     assert messages[1]["role"] == "assistant"

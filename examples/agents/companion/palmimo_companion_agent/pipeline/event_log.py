@@ -23,22 +23,19 @@ def emit_event(event: Event, *, out: TextIO) -> None:
 
     Tool events use ``args`` when serializable, otherwise ``arguments``.
     An ISO 8601 ``ts`` field timestamps every event. ASCII escaping keeps
-    journald from treating C1 controls as binary; Portal's JSON.parse
-    restores text for display.
+    JSONL files writable as UTF-8; JSON readers restore text for display.
     """
-    timestamp = datetime.now().astimezone().isoformat(timespec="milliseconds")
+    payload = {field.name: getattr(event, field.name) for field in dataclasses.fields(event)}
+    if isinstance(event, ToolExecEvent):
+        payload.pop("arguments" if event.args is not None else "args")
+    payload["ts"] = datetime.now().astimezone().isoformat(timespec="milliseconds")
     try:
-        payload = dataclasses.asdict(event)
-        if isinstance(event, ToolExecEvent):
-            payload.pop("arguments" if event.args is not None else "args")
-        payload["ts"] = timestamp
         line = json.dumps(payload, ensure_ascii=True, allow_nan=False)
     except (RecursionError, ValueError):
         if not isinstance(event, ToolExecEvent):
             raise
-        payload = dataclasses.asdict(dataclasses.replace(event, args=None))
-        payload.pop("args")
-        payload["ts"] = timestamp
+        payload.pop("args", None)
+        payload["arguments"] = event.arguments
         line = json.dumps(payload, ensure_ascii=True, allow_nan=False)
     out.write(line + "\n")
     out.flush()

@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 
@@ -129,7 +129,7 @@ class ToolExecEvent:
     #: separate outcome, not an error.
     error: bool = False
     thought: str | None = None
-    args: dict[str, Any] | None = None
+    args: dict[str, Any] | None = field(kw_only=True)
     kind: Literal["tool_exec"] = "tool_exec"
 
     def to_messages(self) -> list[dict]:

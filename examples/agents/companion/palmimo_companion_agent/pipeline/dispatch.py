@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
-import json
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -22,6 +21,7 @@ from litellm.types.utils import ChatCompletionMessageCustomToolCall, ChatComplet
 
 from palmimo_sdk.agent.tools import ToolResult
 
+from ..core.tool_arguments import parse_tool_arguments
 from .history import AgentThoughtEvent, CameraEvent, SystemNoteEvent, ToolExecEvent
 
 
@@ -199,15 +199,13 @@ async def execute_and_record(
     if name is None:
         return False
     arguments = tool_call.function.arguments or "{}"
-    try:
-        args = json.loads(arguments)
-    except (ValueError, RecursionError):
-        args = None
+    args, argument_error = parse_tool_arguments(arguments)
     reason = args.get("reason") if isinstance(args, dict) else None
     resolved_thought = reason if isinstance(reason, str) and reason else thought
 
-    if not isinstance(args, dict):
-        result_text = f"execution error: tool arguments were not a JSON object: {arguments[:200]}"
+    if args is None:
+        assert argument_error is not None
+        result_text = argument_error
         images: list[bytes] = []
         result_is_error = True
     else:
@@ -225,7 +223,7 @@ async def execute_and_record(
             result=result_text,
             error=result_is_error,
             thought=resolved_thought,
-            args=args if isinstance(args, dict) else None,
+            args=args,
         )
     )
     if images:

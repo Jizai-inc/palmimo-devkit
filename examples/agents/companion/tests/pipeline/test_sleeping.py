@@ -7,7 +7,7 @@ from palmimo_companion_agent.pipeline.sleeping import Sleeping
 
 
 def _exec(name: str, result: str, *, error: bool = False) -> ToolExecEvent:
-    return ToolExecEvent(tool_call_id="t1", name=name, arguments="{}", result=result, error=error)
+    return ToolExecEvent(tool_call_id="t1", name=name, arguments="{}", result=result, error=error, args={})
 
 
 def test_starts_awake() -> None:

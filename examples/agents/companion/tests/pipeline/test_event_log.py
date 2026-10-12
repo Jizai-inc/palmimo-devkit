@@ -31,7 +31,9 @@ def test_emit_event_line_is_valid_json_with_event_fields_and_timestamp() -> None
 
 def test_emit_event_preserves_all_dataclass_fields() -> None:
     out = io.StringIO()
-    event = ToolExecEvent(tool_call_id="call-1", name="dance", arguments="{}", result="danced", thought="feeling it")
+    event = ToolExecEvent(
+        tool_call_id="call-1", name="dance", arguments="{}", result="danced", thought="feeling it", args=None
+    )
     emit_event(event, out=out)
     payload = json.loads(out.getvalue())
     assert payload["tool_call_id"] == "call-1"
@@ -66,7 +68,7 @@ def test_emit_event_writes_unsafe_text_as_one_utf8_json_line(text: str, field: s
         event = CameraEvent(text)
     else:
         value: Any = {text: text} if field == "args" else text
-        event = replace(ToolExecEvent("c", "nod", "{}", "done"), **{field: value})
+        event = replace(ToolExecEvent("c", "nod", "{}", "done", args=None), **{field: value})
     buffer = io.BytesIO()
     out = io.TextIOWrapper(buffer, encoding="utf-8", errors="strict")
     emit_event(event, out=out)
@@ -81,7 +83,7 @@ def test_emit_event_writes_unsafe_text_as_one_utf8_json_line(text: str, field: s
 def test_emit_event_falls_back_to_raw_arguments_when_args_cannot_be_serialized(failure: str) -> None:
     value: Any = {"nan": float("nan"), "infinity": float("inf"), "huge_integer": 10**5000}.get(failure, 0)
     if failure == "deep":
-        for _ in range(2000):
+        for _ in range(10000):
             value = [value]
     out = io.StringIO()
     emit_event(ToolExecEvent("c", "nod", "raw arguments", "done", args={"value": value}), out=out)

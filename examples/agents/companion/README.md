@@ -223,13 +223,15 @@ or arguments that cannot be serialized as strict JSON, keep `arguments`
 instead; a row never contains both keys. LLM message replay keeps the original
 argument string.
 
-Pipeline JSONL lines and realtime console arguments use ASCII escaping
+Pipeline and realtime JSONL files use ASCII escaping
 (`ensure_ascii=True`). Viewing them directly with `tail` shows Japanese as
 `\uXXXX`; JSON readers, including Portal's pipeline log view, restore the text.
-For a readable pipeline log on the command line:
+Realtime console output keeps Japanese readable. Redirected stdout and stderr
+escape unsafe controls while terminal output retains UI control sequences.
+For tool names and arguments in a pipeline log:
 
 ```bash
-tail -f events.jsonl | jq -r 'select(.kind == "tool_exec") | .args.reason // .arguments'
+tail -f events.jsonl | jq -r 'select(.kind == "tool_exec") | {name, args: (.args // .arguments)}'
 ```
 
 ## Options

@@ -11,10 +11,12 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import sys
 from typing import Any, cast
 
 import pytest
 
+from palmimo_companion_agent.output import configure_output
 from palmimo_companion_agent.realtime.bridge import ToolBridge
 from palmimo_companion_agent.realtime.log import EventLog
 from palmimo_companion_agent.realtime.protocol import ItemCreate, Response, ResponseCreate
@@ -71,10 +73,18 @@ def _sent_outputs(client: Any) -> list[tuple[str, str]]:
 
 @pytest.mark.parametrize(
     "arguments",
-    ["{broken", "[]", "null", '{"nested":' + "[" * 10000 + "0" + "]" * 10000 + "}"],
-    ids=["malformed", "array", "null", "deep"],
+    ["{broken", "{\ud800\u0085\u009f", "[]", "null", '{"nested":' + "[" * 10000 + "0" + "]" * 10000 + "}"],
+    ids=["malformed", "unsafe", "array", "null", "deep"],
 )
-async def test_invalid_arguments_return_error_and_continue_plan(arguments: str, fake_client: type) -> None:
+async def test_invalid_arguments_return_error_and_continue_plan(
+    arguments: str,
+    fake_client: type,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_buffer = io.BytesIO()
+    output = io.TextIOWrapper(output_buffer, encoding="utf-8", errors="strict")
+    monkeypatch.setattr(sys, "stdout", output)
+    configure_output()
     client = fake_client()
     toolset = ScriptedToolset()
     sleeping = Sleeping()
@@ -123,6 +133,7 @@ async def test_executed_arguments_are_readable_in_console(
     await bridge.handle(response)
     await asyncio.gather(*bridge.tasks)
     line = capsys.readouterr().out.splitlines()[0]
+    assert "花を見つけた" in line
     assert json.loads(line[line.index("(") + 1 : -1]) == args
     assert toolset.calls == [("nod", args)]
 

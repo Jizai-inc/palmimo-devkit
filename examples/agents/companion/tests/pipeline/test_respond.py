@@ -82,7 +82,7 @@ async def test_run_asks_the_llm_for_an_up_to_four_call_plan_continuation(
     """respond's continuation nudge (window ends on a tool turn) states the up-to-4-plan
     contract -- unlike idle's single-tool wording, which would contradict it here."""
     history = History()
-    history.add(ToolExecEvent(tool_call_id="c", name="rest", arguments="{}", result="rested"))
+    history.add(ToolExecEvent(tool_call_id="c", name="rest", arguments="{}", result="rested", args={}))
     llm = fake_llm_provider([plan_turn([("nod", {"seconds": 1.0, "reason": "again"})])])
     turn = RespondTurn(history, _respond_view(toolset), llm, Bus())
 
