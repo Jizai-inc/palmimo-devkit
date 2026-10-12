@@ -216,11 +216,11 @@ def interrupt_on_signals(stop: StopRequest, *signums: signal.Signals) -> Iterato
         raise KeyboardInterrupt
 
     if threading.current_thread() is not threading.main_thread():
-        print(
+        _report(
+            sys.stderr,
             "WARNING: not running on the main thread -- cannot install shutdown signal handlers. "
             "A termination signal (SIGTERM/SIGHUP) will kill this process without releasing servo "
             "torque; the servos will stay energised and heat up.",
-            file=sys.stderr,
         )
         yield
         return
