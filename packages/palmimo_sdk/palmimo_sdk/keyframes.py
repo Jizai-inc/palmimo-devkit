@@ -59,15 +59,20 @@ def tick_to_degrees(tick: int) -> float:
     return (tick - NEUTRAL) * DEG_PER_TICK
 
 
-def joint_limits(joint: str) -> tuple[int, int]:
+def joint_limits(joint: str, neck_pitch_center: int = NEUTRAL) -> tuple[int, int]:
     """Tick range a keyframe may command for *joint*.
 
-    The neck axes keep to the band the engine's own neck motions are clamped
-    to; the legs keep to the driver's safe range.
+    The neck axes keep to the range the engine's own neck motions reach: the
+    servo-neutral band, and for ``neck_pitch1`` also the same amplitude around
+    its rest-trimmed front (*neck_pitch_center*). The legs keep to the driver's
+    safe range.
     """
     if joint in NECK_MOTORS:
         amp = MotionEngine.NECK_AMPLITUDE_TICKS
-        return NEUTRAL - amp, NEUTRAL + amp
+        low, high = NEUTRAL - amp, NEUTRAL + amp
+        if joint == "neck_pitch1":
+            low, high = max(low, neck_pitch_center - amp), min(high, neck_pitch_center + amp)
+        return low, high
     return SAFE_MIN_TICK, SAFE_MAX_TICK
 
 
@@ -84,6 +89,8 @@ class KeyframeTrack:
         start (Mapping[str, int]): The pose playback starts from (joint -> tick),
             normally the robot's current pose. Must cover every joint.
         keyframes (Sequence[Keyframe]): The poses to reach, in time order.
+        neck_pitch_center (int): ``neck_pitch1``'s rest-trimmed front tick
+            (:meth:`MotionEngine.neck_pitch_center`), which narrows its range.
 
     Raises:
         ValueError: The track is empty, a time is not positive or not
@@ -91,7 +98,9 @@ class KeyframeTrack:
             range, or a segment would exceed ``MAX_JOINT_SPEED_DEG_S``.
     """
 
-    def __init__(self, start: Mapping[str, int], keyframes: Sequence[Keyframe]) -> None:
+    def __init__(
+        self, start: Mapping[str, int], keyframes: Sequence[Keyframe], *, neck_pitch_center: int = NEUTRAL
+    ) -> None:
         if not keyframes:
             raise ValueError("A keyframe track needs at least one keyframe.")
         missing = [j for j in JOINTS if j not in start]
@@ -112,7 +121,7 @@ class KeyframeTrack:
                 if not math.isfinite(degrees):
                     raise ValueError(f"Keyframe {index}: {joint} angle {degrees} is not a finite number.")
                 tick = degrees_to_tick(degrees)
-                low, high = joint_limits(joint)
+                low, high = joint_limits(joint, neck_pitch_center)
                 if not low <= tick <= high:
                     raise ValueError(
                         f"Keyframe {index}: {joint} at {degrees:.1f} deg is outside its range "

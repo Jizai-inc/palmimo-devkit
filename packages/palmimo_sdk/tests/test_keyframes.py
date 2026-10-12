@@ -106,6 +106,16 @@ def test_track_keeps_the_neck_inside_the_engine_neck_band() -> None:
         KeyframeTrack(NEUTRAL_POSE, [Keyframe(5.0, {"neck_yaw": band_deg + 1.0})])
 
 
+def test_track_keeps_neck_pitch1_within_the_amplitude_around_its_rest_trimmed_front() -> None:
+    """pitch1's front sits below servo neutral, so the chin-down side ends sooner than the raw band."""
+    amp = MotionEngine.NECK_AMPLITUDE_TICKS
+    center = MotionEngine().neck_pitch_center()
+    inside = (center + amp - NEUTRAL - 1) * 360.0 / 4096.0
+    KeyframeTrack(NEUTRAL_POSE, [Keyframe(5.0, {"neck_pitch1": inside})], neck_pitch_center=center)
+    with pytest.raises(ValueError, match=r"neck_pitch1 .* outside its range"):
+        KeyframeTrack(NEUTRAL_POSE, [Keyframe(5.0, {"neck_pitch1": inside + 2.0})], neck_pitch_center=center)
+
+
 def test_track_rejects_a_segment_faster_than_the_joint_speed_limit() -> None:
     fastest_s = (math.pi / 2) * 60.0 / MAX_JOINT_SPEED_DEG_S  # 60 deg at exactly the limit
     KeyframeTrack(NEUTRAL_POSE, [Keyframe(fastest_s + 0.01, {"leg_6_pitch1": 60.0})])
@@ -168,6 +178,17 @@ def test_iter_keyframes_glides_home_and_idles_after_the_last_keyframe() -> None:
     assert frames[-1] == neutral
     assert robot.motion == "idle"
     assert robot.step() == neutral
+
+
+def test_iter_keyframes_plays_at_the_facade_rate_whatever_engine_dt_was_left_at() -> None:
+    """The speed check assumes the facade's fps; a stale engine.dt would play the track faster."""
+    robot = _neutral_robot()
+    robot.engine.dt = 1.0 / 30.0
+
+    frames = list(robot.iter_keyframes([Keyframe(1.0, {"leg_6_pitch1": 30.0})]))
+
+    assert frames[30]["leg_6_pitch1"] < degrees_to_tick(30.0)
+    assert frames[60]["leg_6_pitch1"] == degrees_to_tick(30.0)
 
 
 def test_iter_keyframes_holds_the_last_pose_when_not_returning() -> None:
@@ -250,6 +271,8 @@ class _TelemetryDriver(ServoDriver):
         self.currents: dict[str, int] = {}
         self.temperatures: dict[str, int] = dict.fromkeys(NECK_MOTORS, 40)
         self.writes: list[dict[str, int]] = []
+        self.tuning: list[tuple[str, object, object]] = []
+        self.profile_velocity = 300
         self._connected = True
 
     @property
@@ -272,6 +295,16 @@ class _TelemetryDriver(ServoDriver):
             voltage={m: 5.0 for m in wanted if m in LEG_MOTORS},
             temperature={m: self.temperatures[m] for m in wanted if m in self.temperatures},
         )
+
+    # RAM tuning, recorded so a test can tell which gesture tuning was applied.
+    def set_profile_velocity_units(self, value: int, motors: list[str] | None = None) -> None:
+        self.tuning.append(("pv", value, motors))
+
+    def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
+        self.tuning.append(("gain", value, motors))
+
+    def set_iir(self, enabled: bool, alpha: float | None = None, motors: list[str] | None = None) -> None:
+        self.tuning.append(("iir", enabled, motors))
 
 
 def _guarded_robot(driver: _TelemetryDriver) -> tuple[Palmimo, _FakeClock]:
@@ -302,10 +335,37 @@ def test_arm_overload_trip_ends_playback_for_a_declared_arm_leg() -> None:
 
     pulled = _pull(frames, clock, 200)
 
-    assert len(pulled) < 10
+    assert 30 < len(pulled) <= 30 + 5  # trips within a few strained samples, then the 0.5 s settle
     assert robot.motion == "idle"
     (trip,) = robot.drain_overload_trips()
     assert (trip.motor, trip.channel, trip.motion) == ("leg_6_pitch1", "arm", "keyframes")
+
+
+def test_guard_trip_mid_track_glides_the_legs_toward_neutral() -> None:
+    """The trip must not leave the leg frozen in the pose that strained it."""
+    driver = _TelemetryDriver()
+    robot, clock = _guarded_robot(driver)
+    frames = iter(robot.iter_keyframes([Keyframe(2.0, {"leg_6_pitch1": 60.0})]))
+    raised = _pull(frames, clock, 60)[-1]["leg_6_pitch1"]
+    driver.currents = {"leg_6_pitch1": 1300}  # above the weight-bearing threshold
+
+    after = _pull(frames, clock, 200)
+
+    assert robot.motion == "idle"
+    assert (robot.drain_overload_trips()[0].channel, robot.motion) == ("leg", "idle")
+    final = driver.writes[-1]["leg_6_pitch1"]
+    assert abs(final - NEUTRAL) < 0.1 * abs(raised - NEUTRAL)
+    assert 30 < len(after) <= 30 + 5
+
+
+def test_arm_legs_do_not_apply_the_wave_servo_tuning() -> None:
+    """Only the overload threshold changes; the wave's IIR would make the arm lag the validated curve."""
+    driver = _TelemetryDriver()
+    robot, clock = _guarded_robot(driver)
+
+    _pull(robot.iter_keyframes([Keyframe(0.5, {"leg_6_pitch1": 20.0})], arm_legs=[6]), clock, 200)
+
+    assert driver.tuning == []
 
 
 def test_undeclared_raised_leg_is_judged_by_the_weight_bearing_threshold() -> None:

@@ -2303,7 +2303,9 @@ class Palmimo:
         # wave_left -> wave_right or wave -> clap switch re-applies. STRETCH
         # only tweaks leg Profile_Velocity, so it tunes even on a PV-only
         # driver.
-        if arm_legs and has_pv and has_gain and has_iir:
+        # A keyframe track's arm legs share only the arm overload channel: the
+        # wave's crisp profile and IIR would make them lag the validated curve.
+        if arm_legs and motion != Motion.KEYFRAMES and has_pv and has_gain and has_iir:
             # CLAP gets lighter smoothing: the wave's IIR would low-pass the
             # fast open/close away (see _CLAP_ARM_IIR).
             want: tuple | None = ("wave", arm_legs, _CLAP_ARM_IIR if motion == Motion.CLAP else _WAVE_ARM_IIR)
@@ -2783,13 +2785,15 @@ class Palmimo:
 
         The whole track is validated before anything moves: times must start
         after 0 and increase, joint names must be servo names, every angle must
-        sit inside its joint's range (the legs' safe tick range; the neck's
-        engine band), and no joint may exceed ``MAX_JOINT_SPEED_DEG_S`` -- the
+        sit inside its joint's range (the legs' safe tick range; for the neck,
+        the range the engine's own neck motions reach), and no joint may exceed ``MAX_JOINT_SPEED_DEG_S`` -- the
         first segment, from the current pose, included.
 
         Every frame goes through :meth:`step`, so the neck thermal guard and
         the leg overload and rail guards stay active. A guard trip ends the
-        playback early, with the legs gliding to neutral. When the thermal lock
+        playback early: the motion drops to IDLE, the legs glide toward neutral
+        for ``_CANCEL_SETTLE_S``, and this returns normally -- see
+        :meth:`drain_overload_trips` / :meth:`drain_rail_trips`. When the thermal lock
         engages, the neck glides to center and stays out of the rest of the
         track.
 
@@ -2801,11 +2805,12 @@ class Palmimo:
             keyframes (Sequence[Keyframe]): The poses to reach, in time order.
             arm_legs (Iterable[int]): Legs (1-6) the track lifts off the ground
                 as arms. They are judged by the lighter arm overload threshold
-                instead of the weight-bearing one, as a wave's arm is.
+                instead of the weight-bearing one, as a wave's arm is. The
+                wave's servo tuning is not applied.
             return_to_neutral (bool): Glide back to the neutral pose after the
-                last keyframe, over ``1.0`` s. ``False`` holds the last pose
-                until the next motion command; call :meth:`stop` to bring it
-                home.
+                last keyframe, over ``1.0`` s. ``False`` holds the last pose;
+                call ``return_to_neutral(duration=...)`` before another motion,
+                which would otherwise start by jumping to its own pose.
             callback (Callable, optional): Extra per-frame callback, as for
                 :meth:`play_realtime`.
 
@@ -2839,21 +2844,36 @@ class Palmimo:
     def _keyframe_track(self, keyframes: Sequence[Keyframe], return_to_neutral: bool) -> KeyframeTrack:
         """Build the track from the current pose, appending the glide home when asked."""
         start = self._engine.get_positions()
-        track = KeyframeTrack(start, keyframes)
+        center = self._engine.neck_pitch_center()
+        track = KeyframeTrack(start, keyframes, neck_pitch_center=center)
         if not return_to_neutral:
             return track
         neutral = {joint: tick_to_degrees(tick) for joint, tick in self._neutral_targets().items()}
-        return KeyframeTrack(start, [*keyframes, Keyframe(track.duration + _KEYFRAME_RETURN_S, neutral)])
+        return KeyframeTrack(
+            start, [*keyframes, Keyframe(track.duration + _KEYFRAME_RETURN_S, neutral)], neck_pitch_center=center
+        )
 
     def _keyframe_frames(
         self, track: KeyframeTrack, arm_legs: tuple[int, ...], return_to_neutral: bool
     ) -> Generator[dict[str, int], None, None]:
-        """Step through *track*, stopping early if anything takes the engine off it."""
+        """Step through *track*, stopping early if anything takes the engine off it.
+
+        When a guard trip (or :meth:`stop`) drops the motion to IDLE mid-track,
+        the IDLE glide keeps stepping for ``_CANCEL_SETTLE_S``, as :meth:`run`
+        would, so the legs are not left frozen in the pose that strained them.
+        """
         self._keyframe_arm_legs = arm_legs
         self._engine.load_keyframes(track)
         for _ in range(self._duration_to_steps(track.duration, self._fps) + 1):
+            if self._engine.motion == Motion.IDLE:
+                for _ in range(self._duration_to_steps(_CANCEL_SETTLE_S, self._fps)):
+                    self._engine.dt = 1.0 / self._fps
+                    yield self.step()
+                return
             if self._engine.motion != Motion.KEYFRAMES:
-                return  # a guard trip or another motion command took over
+                return  # another motion command took over
+            # The track was validated at this rate; play() can leave dt elsewhere.
+            self._engine.dt = 1.0 / self._fps
             yield self.step()
         if return_to_neutral and self._engine.motion == Motion.KEYFRAMES:
             self.stop()

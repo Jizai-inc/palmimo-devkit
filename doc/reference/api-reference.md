@@ -359,7 +359,7 @@ The whole track is validated before anything moves, and a violation raises
 | Times | finite, after 0, strictly increasing |
 | Joint names | the 21 servo names above |
 | Leg angles | inside `SAFE_MIN_TICK`..`SAFE_MAX_TICK` (about -162 to +163 deg) |
-| Neck angles | inside the engine's neck band, `MotionEngine.NECK_AMPLITUDE_TICKS` (about ±26 deg) |
+| Neck angles | inside the range the engine's own neck motions reach: servo neutral ± `MotionEngine.NECK_AMPLITUDE_TICKS` (about ±26 deg), and for `neck_pitch1` also that amplitude around its rest-trimmed front, `engine.neck_pitch_center()` (about -26 to +11 deg at the default trim) |
 | Speed | raised-cosine peak `(π/2)·Δangle/Δtime` at most `MAX_JOINT_SPEED_DEG_S` (360 deg/s), the segment from the current pose included |
 
 The ranges are servo limits, not collision limits: a pose can still drive a leg
@@ -367,15 +367,20 @@ into the body or another leg. Play a new track with the robot lifted first.
 
 - arm_legs: legs (1-6) the track lifts off the ground as arms. The
   [Overload Guard](#overload-guard) judges them by `arm_overload_current`, as it
-  does a wave's arm; every other leg keeps the weight-bearing threshold.
+  does a wave's arm; every other leg keeps the weight-bearing threshold. Only
+  the threshold changes: the wave's servo tuning is not applied.
 - return_to_neutral: `True` glides to the neutral pose over 1.0 s after the last
   keyframe and leaves the motion at `idle`. `False` holds the last pose (motion
-  `keyframes`) until the next motion command; `stop()` brings it home.
+  `keyframes`). Bring it home with `return_to_neutral(duration=1.0)` before
+  starting another motion: a gait writes its own pose on the first frame, so
+  switching straight from a held pose makes the legs jump.
 - callback: as for `play_realtime()`
 
 Every frame goes through `step()`, so the neck thermal guard and the leg
-overload and rail guards stay active. A guard trip ends the playback early with
-the legs gliding to neutral. When the thermal lock engages, the neck glides to
+overload and rail guards stay active. A guard trip ends the playback early: the
+motion drops to `idle` and the legs glide toward neutral for 0.5 s, then
+`play_keyframes()` returns normally, so check `drain_overload_trips()` /
+`drain_rail_trips()` to tell a trip from a finished track. When the thermal lock engages, the neck glides to
 center and stays out of the rest of that track; the legs keep playing.
 Cancellable from another thread like `run()`: on `cancel()` the legs glide to
 neutral and `MotionCancelled` propagates.
@@ -386,7 +391,9 @@ The unpaced counterpart of `play_keyframes()`, as `play()` is to
 one frame per `step()`. On a facade with no driver this is a dry run; with a
 driver attached it moves the robot as fast as the loop pulls frames, so use
 `play_keyframes()` there. The iterator ends early if a guard trip or another
-motion command takes the engine off the track.
+motion command takes the engine off the track. The track starts from the pose
+at the call, so pull the frames right away rather than stepping the robot in
+between.
 
 ## Peripherals & Connection
 
