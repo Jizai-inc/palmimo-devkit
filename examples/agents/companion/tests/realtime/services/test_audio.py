@@ -577,11 +577,11 @@ def test_write_failure_warning_recurs_after_the_warn_interval(
 ) -> None:
     playback = Playback()
     playback.write(b"\x00\x00")
-    _wait_until(lambda: fake_popen.instances)
+    _wait_until(lambda: fake_popen.instances and fake_popen.instances[0].stdin.chunks)
     fake_popen.instances[0].stdin.write = _raise_on_write  # type: ignore[assignment]
 
     playback.write(b"\x01\x01")
-    _wait_until(lambda: playback._write_failures == 1)
+    _wait_until(lambda: playback._last_warning is not None)
     assert playback._last_warning is not None
     playback._last_warning -= playback._WARN_INTERVAL_S  # as if the interval had passed
 
