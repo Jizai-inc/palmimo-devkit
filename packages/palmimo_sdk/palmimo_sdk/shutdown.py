@@ -16,8 +16,11 @@ on the shape of the loop being stopped:
   reaches an ``await``, so an in-loop handler would sit unread:
   :func:`stop_flag_on_signals` sets a flag the loop polls between blocks.
 * A program with **no loop of its own to poll** -- one that hands control to a
-  third-party runner (Textual, uvicorn) and only wants its own ``finally``
-  back -- converts the signal to an exception: :func:`interrupt_on_signals`.
+  third-party runner (uvicorn) and only wants its own ``finally`` back --
+  converts the signal to an exception: :func:`interrupt_on_signals`. Textual
+  clears ISIG while it owns the terminal, so Ctrl-C reaches it as key
+  presses, not signals; only a signal sent to the process (SIGTERM, SIGHUP)
+  gets here.
 
 All three record the request on one :class:`StopRequest`, and all three end at
 :func:`park` / :func:`park_async`. See ``doc/explanation/shutdown.md`` for the
@@ -184,13 +187,14 @@ def signals_ignored(*signums: signal.Signals) -> Iterator[None]:
 def interrupt_on_signals(stop: StopRequest, *signums: signal.Signals) -> Iterator[None]:
     """Make *signums* (default: :data:`TERMINATING_SIGNALS`) raise ``KeyboardInterrupt``.
 
-    For a program that has handed control to something else -- Textual's app
-    loop, uvicorn -- and only needs its own ``finally`` to run. Raising reuses
+    For a program that has handed control to something else -- uvicorn, a
+    Textual app loop -- and only needs its own ``finally`` to run. Raising reuses
     the unwind Ctrl-C already gets rather than adding a second shutdown route
     to keep in step with the first.
 
     SIGINT is not in the default set because Python already delivers it exactly
-    this way.
+    this way -- when the terminal sends it. A runner that clears ISIG (Textual)
+    turns Ctrl-C into a key press, so that path must handle it itself.
 
     This is deliberately NOT equivalent to what asyncio does with SIGINT inside
     a running loop: asyncio installs a cooperative cancellation, which lets an
@@ -382,6 +386,12 @@ def _running_loop() -> asyncio.AbstractEventLoop:
     return asyncio.get_running_loop()
 
 
+def _report(stream: TextIO, line: str) -> None:
+    """Write *line* to *stream*, best effort: a dead terminal must not stop the park."""
+    with contextlib.suppress(OSError, ValueError):
+        print(line, file=stream, flush=True)
+
+
 def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> None:
     """Release servo torque, uninterruptibly, and say on *out* whether it completed.
 
@@ -391,6 +401,10 @@ def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> Non
     park when there is nothing energised, so an entry point may put this in a
     ``finally`` without first working out whether an earlier teardown already
     ran.
+
+    An *out* that cannot be written to (a hung-up terminal raises ``OSError``, a
+    closed stream ``ValueError``) is skipped, never allowed to precede the
+    torque-off.
 
     **It does not raise**, which is the other half of what a ``finally`` needs:
     neither the interrupt that ``disconnect`` re-raises after reaching the
@@ -423,7 +437,7 @@ def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> Non
             return
         parking = robot.is_connected
         if parking:
-            print("parking the robot -- easing to neutral and releasing servo torque...", file=stream)
+            _report(stream, "parking the robot -- easing to neutral and releasing servo torque...")
         # An `Exception` is held: every entry point calls this from a
         # `finally`, so letting one out would replace a clean exit -- or the
         # error that started the shutdown -- with a traceback from the
@@ -444,13 +458,13 @@ def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> Non
         if failure is not None and not isinstance(failure, Exception) and not robot.is_connected:
             failure = None
         if failure is not None:
-            print(
+            _report(
+                stream,
                 f"PARK FAILED -- servo torque may still be on ({type(failure).__name__}: {failure}). "
                 "Unplug the AC adapter before handling the robot.",
-                file=stream,
             )
         elif parking:
-            print("park complete -- servo torque released", file=stream)
+            _report(stream, "park complete -- servo torque released")
 
 
 async def park_async(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> None:

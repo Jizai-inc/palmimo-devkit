@@ -29,7 +29,7 @@ per entry point, because it is the part that genuinely must differ.
 |---|---|---|
 | Yes — it sits in an `await` | `loop_stop_on_signals` (`loop.add_signal_handler`) | The handler runs as an ordinary callback *in* the loop, so it can do real work: cancel the task that is waiting, set the event the session watches. |
 | No — it blocks synchronously (a mic queue, a blocking read) | `stop_flag_on_signals` | A cancellation is delivered at an `await` the loop never reaches, so it would sit unread. The handler sets a flag; the loop decides when to look. |
-| There is no loop of ours — control is inside a third-party runner | `interrupt_on_signals` | Textual and uvicorn own the loop. Converting the signal to `KeyboardInterrupt` gets our own `finally` back, which is all we need. |
+| There is no loop of ours — control is inside a third-party runner | `interrupt_on_signals` | uvicorn and Textual own the loop. Converting the signal to `KeyboardInterrupt` gets our own `finally` back, which is all we need. Textual clears ISIG while it owns the terminal, so Ctrl-C reaches it as a key press, not SIGINT; only SIGTERM/SIGHUP take this path. |
 
 The three are **correctly different**. Picking one idiom for all of them breaks
 at least one:
