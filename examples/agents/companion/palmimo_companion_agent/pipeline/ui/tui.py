@@ -18,6 +18,8 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, Input, RichLog
 
+from palmimo_sdk.shutdown import StopRequest, interrupt_on_signals, signals_ignored
+
 from ..wiring import Runtime, build_runtime
 
 
@@ -106,7 +108,7 @@ class CompanionAgentApp(App):
         await self._graceful_shutdown()
 
     async def _graceful_shutdown(self) -> None:
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(Exception), signals_ignored():
             await self.runtime.aclose()
         self.exit()
 
@@ -124,7 +126,15 @@ def run_tui(settings: PipelineSettings) -> None:
     """
     runtime = build_runtime(settings)
     asyncio.run(runtime.connect())
-    CompanionAgentApp(runtime).run()
+    # Textual handles Ctrl+C as a key but not SIGTERM/SIGHUP, which would kill
+    # the process unparked; convert them to KeyboardInterrupt and park after.
+    try:
+        with contextlib.suppress(KeyboardInterrupt), interrupt_on_signals(StopRequest()):
+            CompanionAgentApp(runtime).run()
+    finally:
+        # Silent on purpose: after a SIGHUP the terminal is gone, and a write to it would raise.
+        with signals_ignored(), contextlib.suppress(Exception):
+            runtime.palmimo.disconnect()
 
 
 __all__ = ["CompanionAgentApp", "run_tui"]
