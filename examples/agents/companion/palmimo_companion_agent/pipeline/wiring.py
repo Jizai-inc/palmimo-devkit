@@ -162,10 +162,10 @@ class Runtime:
     :meth:`start` connects the robot and launches every background task this
     runtime owns (the conductor loop, and -- when hardware provided them --
     the speech pipeline and the vision-reflex loop); :meth:`aclose` reverses
-    that. :meth:`connect` is split out from :meth:`start` so a front end with
-    its own event loop (the Textual TUI) can connect on a throwaway loop
-    *before* handing control to it -- see
-    :func:`palmimo_companion_agent.pipeline.ui.tui.run_tui`'s docstring for why.
+    that. :meth:`connect` is split out from :meth:`start` so front ends can
+    check for a stop after connection and before starting their sessions.
+    The TUI connects before mounting Textual, allowing connection errors to
+    reach the console entry point rather than Textual's worker error handler.
     """
 
     conductor: Conductor

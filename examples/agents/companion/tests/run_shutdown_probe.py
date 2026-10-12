@@ -9,7 +9,7 @@ import os
 import sys
 from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 
@@ -24,10 +24,11 @@ from palmimo_sdk import Palmimo, ServoDriver
 
 PHASE = sys.argv[1]
 FRONTEND = sys.argv[2] if len(sys.argv) > 2 else "cli"
+EVENTS = os.fdopen(int(fd), "w") if (fd := os.environ.get("PROBE_EVENTS_FD")) else sys.__stderr__
 
 
 def mark(phase: str) -> None:
-    print(f"probe:{phase}", file=sys.stderr, flush=True)
+    print(f"probe:{phase}", file=EVENTS, flush=True)
 
 
 class FakeDriver(ServoDriver):
@@ -86,14 +87,16 @@ def build_probe_runtime(settings: PipelineSettings) -> wiring.Runtime:
 
     async def session() -> None:
         mark("session")
-        try:
-            await original_run()
-        finally:
+        await original_run()
+
+    class Watch:
+        async def aclose(self) -> None:
             mark("cleanup")
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(0.3)
             mark("cleanup finished")
 
     runtime.conductor.run = session  # type: ignore[method-assign]
+    runtime.vision_watch = cast(Any, Watch())
     if PHASE == "build":
         mark("build")
         sys.stdin.readline()
@@ -108,13 +111,18 @@ def run_realtime() -> None:
     class Service:
         name = "probe"
 
+        def __init__(self, *, cleanup: bool = False) -> None:
+            self.cleanup = cleanup
+
         async def run(self) -> None:
             mark("session")
             await asyncio.Event().wait()
 
         async def settle(self, timeout: float) -> None:
+            if not self.cleanup:
+                return
             mark("cleanup")
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(0.3)
             mark("cleanup finished")
 
         async def aclose(self) -> None:
@@ -149,7 +157,7 @@ def run_realtime() -> None:
         patch.object(app.EventLog, "open", return_value=EventLog()),
         patch.object(app, "resolve_alsa_device", return_value=None),
         patch.object(app, "Playback", return_value=service),
-        patch.object(app, "ToolBridge", return_value=service),
+        patch.object(app, "ToolBridge", return_value=Service(cleanup=True)),
         patch.object(app, "MicrophoneFeed", return_value=service),
         patch.object(app, "EventRouter", return_value=service),
         patch.object(app, "IdleTicker", return_value=service),
@@ -166,6 +174,8 @@ if __name__ == "__main__":
     if FRONTEND == "realtime":
         run_realtime()
     else:
-        sys.argv = [sys.argv[0], "--ui", "cli", "--no-hardware", "--no-stdin"]
-        with patch("palmimo_companion_agent.pipeline.ui.cli.build_runtime", build_probe_runtime):
+        sys.argv = [sys.argv[0], "--ui", FRONTEND, "--no-hardware"]
+        if FRONTEND == "cli":
+            sys.argv.append("--no-stdin")
+        with patch(f"palmimo_companion_agent.pipeline.ui.{FRONTEND}.build_runtime", build_probe_runtime):
             run()

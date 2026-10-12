@@ -151,7 +151,7 @@ class _FakeApp:
         self.ran = False
         _FakeApp.instances.append(self)
 
-    def run(self) -> None:
+    async def run_async(self) -> None:
         self.ran = True
 
 

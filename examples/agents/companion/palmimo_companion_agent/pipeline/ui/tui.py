@@ -12,11 +12,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sys
 from typing import TYPE_CHECKING
 
 from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, Input, RichLog
+
+from palmimo_sdk.shutdown import (
+    STOP_SIGNALS,
+    TERMINATING_SIGNALS,
+    StopRequest,
+    interrupt_on_signals,
+    signals_ignored,
+    stop_flag_on_signals,
+)
 
 from ..wiring import Runtime, build_runtime
 
@@ -97,34 +107,47 @@ class CompanionAgentApp(App):
         if not text:
             return
         if _is_exit_command(text):
-            await self._graceful_shutdown()
+            self.exit()
             return
         self.runtime.conductor.submit_user_text(text)
 
     async def action_quit(self) -> None:
-        """Textual's default quit action (Ctrl+C etc.) also goes through graceful shutdown."""
-        await self._graceful_shutdown()
-
-    async def _graceful_shutdown(self) -> None:
-        with contextlib.suppress(Exception):
-            await self.runtime.aclose()
+        """Leave Textual; the entry point owns runtime cleanup."""
         self.exit()
 
 
 def run_tui(settings: PipelineSettings) -> None:
-    """Console-script entry point for ``--ui tui`` (the default).
+    """Run Textual and release torque from the entry point's finally."""
+    stop = StopRequest()
+    try:
+        with signals_ignored(*TERMINATING_SIGNALS), contextlib.ExitStack() as startup:
+            startup.enter_context(stop_flag_on_signals(stop))
+            asyncio.run(_run_tui(settings, stop, startup))
+    except KeyboardInterrupt:
+        pass
 
-    Builds the runtime and connects the robot on a plain, throwaway event
-    loop *before* Textual's own loop takes over: a hardware connect failure
-    must propagate synchronously out of this function so ``main()``'s error
-    handling can report it and exit non-zero. Raising from inside a Textual
-    worker (which is where ``Runtime.start()`` would otherwise run, via
-    ``on_mount``) does not reach the caller of ``App.run()`` -- Textual
-    handles worker exceptions itself instead of re-raising them here.
-    """
+
+async def _run_tui(settings: PipelineSettings, stop: StopRequest, startup: contextlib.ExitStack) -> None:
     runtime = build_runtime(settings)
-    asyncio.run(runtime.connect())
-    CompanionAgentApp(runtime).run()
+    try:
+        if stop.is_set():
+            print("stop requested before connect; skipping connection", file=sys.stderr, flush=True)
+            return
+        await runtime.connect()
+        if stop.is_set():
+            print("stop requested; connect finished, parking", file=sys.stderr, flush=True)
+            return
+        startup.close()
+        # Textual disables terminal ISIG, so typed Ctrl+C is not an OS signal.
+        # External signals still unwind its driver and restore the terminal.
+        with interrupt_on_signals(stop, *STOP_SIGNALS):
+            if not stop.is_set():
+                await CompanionAgentApp(runtime).run_async()
+    finally:
+        try:
+            startup.close()
+        finally:
+            await runtime.aclose(stop)
 
 
 __all__ = ["CompanionAgentApp", "run_tui"]

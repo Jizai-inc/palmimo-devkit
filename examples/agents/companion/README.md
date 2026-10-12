@@ -217,13 +217,20 @@ one — so what it buys is that the guarantee now belongs to the stream rather
 than to each individual call site, and it extends to output produced inside the
 SDK.
 
-Under `--ui cli`, `/exit`, stdin EOF (unless `--no-stdin`), Ctrl+C,
-`kill -TERM <pid>`, and SIGHUP end the session and park the robot. A stop during
-build skips connecting; a stop during connect waits for it to finish before
-parking. Duplicate SIGTERM/SIGHUP deliveries are ignored during cleanup.
-A second Ctrl+C shortens cleanup while still releasing torque; if the process
-is stuck even in park, `kill -9 <pid>` ends it immediately and skips any remaining
-torque release. Unplug the AC adapter before handling a robot left energised.
+Under `--ui tui`, type `/exit` or press Ctrl+Q to end the session. Textual
+handles keyboard input itself: typed Ctrl+C is not an OS signal and does not
+quit this TUI. Under `--ui cli`, `/exit`, stdin EOF (unless `--no-stdin`), and
+Ctrl+C end the session.
+
+Both front ends also stop on external `kill -TERM <pid>`, SIGINT, or SIGHUP.
+A stop during build skips connecting; a stop during connect waits for it to
+finish before parking. Every exit passes through the runtime's cleanup and
+SDK park. Textual restores the terminal before that cleanup. Duplicate
+SIGTERM/SIGHUP deliveries are ignored during cleanup. A second external SIGINT
+(or Ctrl+C in the CLI) shortens cleanup while still attempting park. If the
+process is stuck even in park, `kill -9 <pid>` ends it immediately and skips any
+remaining torque release. Unplug the AC adapter before handling a robot left
+energised.
 
 ## Options
 

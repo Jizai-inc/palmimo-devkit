@@ -60,7 +60,8 @@ entry points in this repository have **not** all moved onto it yet:
 | MCP server (`palmimo_sdk/mcp/__main__.py`) | Parks on a terminating signal, using its own equivalent of `interrupt_on_signals` plus `_signals.signals_ignored`. It moves onto this module in a follow-up; the behaviour does not change when it does. |
 | companion CLI | Uses `stop_flag_on_signals` before build/connect, `loop_stop_on_signals` for the session, and `park_async` in the runtime's cleanup `finally`. An outer `signals_ignored(*TERMINATING_SIGNALS)` covers all phases. |
 | companion realtime | Uses `stop_flag_on_signals` before build/connect, `loop_stop_on_signals` during network setup and the service session, and `park_async` in the entry point's cleanup `finally`. An outer `signals_ignored(*TERMINATING_SIGNALS)` covers all phases. |
-| companion TUI, wake-word agent | Not yet. Each carries its own stop handling, and the gaps are known — the wake-word agent's is described above. They move onto this module one at a time. |
+| companion TUI | Uses `stop_flag_on_signals` before build/connect and `interrupt_on_signals` around Textual's `run_async`. Textual restores the terminal on unwind; the entry point then calls the runtime cleanup and `park_async` from `finally`. An outer `signals_ignored(*TERMINATING_SIGNALS)` covers all phases. |
+| wake-word agent | Not yet. It carries its own stop handling, with the gap described above. |
 
 Adding the module before its callers is deliberate: it is the half that has to
 be identical everywhere, and a guard that only some entry points can reach is
