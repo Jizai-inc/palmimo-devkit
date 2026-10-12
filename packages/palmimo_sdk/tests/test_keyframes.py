@@ -358,6 +358,20 @@ def test_guard_trip_mid_track_glides_the_legs_toward_neutral() -> None:
     assert 30 < len(after) <= 30 + 5
 
 
+def test_guard_trip_on_the_last_frame_still_settles_the_legs() -> None:
+    driver = _TelemetryDriver()
+    robot, clock = _guarded_robot(driver)
+    frames = iter(robot.iter_keyframes([Keyframe(1.0, {"leg_6_pitch1": 60.0})], return_to_neutral=False))
+    _pull(frames, clock, 58)  # the trip lands on the 3rd strained frame: the track's 61st and last
+    driver.currents = {"leg_6_pitch1": 1300}
+
+    after = _pull(frames, clock, 200)
+
+    assert robot.drain_overload_trips()[0].motion == "keyframes"
+    assert len(after) == 3 + 30  # the settle ran after the track's last frame
+    assert abs(driver.writes[-1]["leg_6_pitch1"] - NEUTRAL) < 0.1 * (degrees_to_tick(60.0) - NEUTRAL)
+
+
 def test_arm_legs_do_not_apply_the_wave_servo_tuning() -> None:
     """Only the overload threshold changes; the wave's IIR would make the arm lag the validated curve."""
     driver = _TelemetryDriver()

@@ -371,7 +371,8 @@ into the body or another leg. Play a new track with the robot lifted first.
   the threshold changes: the wave's servo tuning is not applied.
 - return_to_neutral: `True` glides to the neutral pose over 1.0 s after the last
   keyframe and leaves the motion at `idle`. `False` holds the last pose (motion
-  `keyframes`). Bring it home with `return_to_neutral(duration=1.0)` before
+  `keyframes`). Bring it home with `return_to_neutral(duration=1.0)` (on a dry
+  run with no driver, `return_to_neutral()`) before
   starting another motion: a gait writes its own pose on the first frame, so
   switching straight from a held pose makes the legs jump.
 - callback: as for `play_realtime()`

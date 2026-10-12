@@ -2809,7 +2809,8 @@ class Palmimo:
                 wave's servo tuning is not applied.
             return_to_neutral (bool): Glide back to the neutral pose after the
                 last keyframe, over ``1.0`` s. ``False`` holds the last pose;
-                call ``return_to_neutral(duration=...)`` before another motion,
+                call ``return_to_neutral(duration=...)`` (``return_to_neutral()``
+                with no driver) before another motion,
                 which would otherwise start by jumping to its own pose.
             callback (Callable, optional): Extra per-frame callback, as for
                 :meth:`play_realtime`.
@@ -2865,17 +2866,17 @@ class Palmimo:
         self._keyframe_arm_legs = arm_legs
         self._engine.load_keyframes(track)
         for _ in range(self._duration_to_steps(track.duration, self._fps) + 1):
-            if self._engine.motion == Motion.IDLE:
-                for _ in range(self._duration_to_steps(_CANCEL_SETTLE_S, self._fps)):
-                    self._engine.dt = 1.0 / self._fps
-                    yield self.step()
-                return
             if self._engine.motion != Motion.KEYFRAMES:
-                return  # another motion command took over
+                break
             # The track was validated at this rate; play() can leave dt elsewhere.
             self._engine.dt = 1.0 / self._fps
             yield self.step()
-        if return_to_neutral and self._engine.motion == Motion.KEYFRAMES:
+        # Checked after the loop, so a trip on the track's last frame settles too.
+        if self._engine.motion == Motion.IDLE:
+            for _ in range(self._duration_to_steps(_CANCEL_SETTLE_S, self._fps)):
+                self._engine.dt = 1.0 / self._fps
+                yield self.step()
+        elif return_to_neutral and self._engine.motion == Motion.KEYFRAMES:
             self.stop()
 
     # ================================================================
