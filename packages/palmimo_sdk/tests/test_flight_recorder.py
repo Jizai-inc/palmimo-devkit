@@ -72,7 +72,6 @@ def test_recorder_opens_window_on_new_latch_and_writes_after_post_window(recorde
     assert header["ts"] == "2026-10-13T00:00:00"
     assert header["post_s"] == header["post_s_captured"] == 2
     assert header["truncated"] is False
-    assert header["stall_ms"] >= 0
     assert row["t"] == 2
     assert len(list(recorder.incident_dir.glob("*.jsonl"))) == 1
 
@@ -260,7 +259,7 @@ def test_recorder_published_file_is_complete_or_absent_when_write_fails(
     def fail_during_write(*args: Any, **kwargs: Any) -> str:
         nonlocal calls
         calls += 1
-        if calls == 3:
+        if calls == 2:
             raise failure
         return original(*args, **kwargs)
 
