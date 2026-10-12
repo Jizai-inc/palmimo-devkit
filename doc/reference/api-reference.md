@@ -375,6 +375,10 @@ multiple readers — the same shape as the servo bus, which `step()` writes to
 and `robot.driver.write_positions` also reaches directly), so consumers reach
 them through the `camera` / `mic` properties.
 
+Servo incident capture is enabled by default when a driver is attached. See
+[Servo Flight Recorder](#servo-flight-recorder) for the `flight_recorder` and
+`incident_dir` constructor options.
+
 ### Resource reservations
 
 The SDK reserves `servo_bus`, `camera`, `microphone`, `speaker`, and `display`
@@ -791,6 +795,8 @@ with stream.stream() as chunks:
 | `robot.speaker` | `Speaker \| None` | Attached speaker; `None` when no voice is wired |
 | `robot.camera` | `HeadCamera \| None` | Attached head camera; `None` when no camera is wired |
 | `robot.mic` | `Microphone \| MicStream \| None` | Attached microphone (one-shot or streaming); `None` when no mic is wired |
+| `robot.incident_dir` | `Path \| None` | Recording destination; see [Servo Flight Recorder](#servo-flight-recorder) |
+| `robot.last_incident_path` | `Path \| None` | Most recently written incident; see [Servo Flight Recorder](#servo-flight-recorder) |
 | `robot.is_connected` | `bool` | Whether a driver is attached and currently connected |
 | `robot.has_connectable_resource` | `bool` | Whether any of driver / display / speaker / camera / mic is attached (what `connect()` requires) |
 | `robot.neck_thermal_state` | `NeckThermalState` | Neck thermal guard state: `NORMAL` / `WARM` / `HOT` / `UNMONITORED` (see [Neck Thermal Guard](#neck-thermal-guard)) |
@@ -1000,6 +1006,136 @@ name). Each trip is also logged as one warning.
 
 **Scope.** The same as the overload guard: only `Palmimo.step()` callers are
 covered.
+
+## Servo Flight Recorder
+
+Servo incident recording is part of the `Palmimo` facade. Its design and timing
+budget are explained in [Servo Flight Recorder](../explanation/servo-flight-recorder.md).
+The recorder implementation itself is not a public API.
+
+### Configuration and destination
+
+Recording-related constructor parameters (other parameters omitted):
+
+```text
+Palmimo(*, flight_recorder: bool = True,
+        incident_dir: str | os.PathLike[str] | None = None, ...)
+```
+
+| Parameter | Contract |
+|-----------|----------|
+| `flight_recorder` | `True` enables capture with an attached driver. `False` disables recorder telemetry capture and hardware-error polling, ignores `incident_dir`, and leaves the safety guards enabled according to their own settings. No driver means no recorder activity. |
+| `incident_dir` | Explicit destination converted to `Path` at construction; relative paths retain their normal working-directory meaning. `None` resolves the default at the first driver connection and retains it across reconnects. Construction and connection without an open incident do not create the directory. |
+
+`default_incident_dir() -> pathlib.Path` is exported from `palmimo_sdk`. Each call
+resolves the current environment without creating a directory: an absolute,
+nonempty `XDG_STATE_HOME` gives `$XDG_STATE_HOME/palmimo/incidents`; otherwise the
+result is `Path.home() / ".local/state/palmimo/incidents"`. An empty or relative
+`XDG_STATE_HOME` uses the fallback.
+
+Read-only properties:
+
+| Property | Contract |
+|----------|----------|
+| `robot.incident_dir -> Path \| None` | Explicit path immediately, or resolved default after the first driver connection. `None` while the default is unresolved or recording is disabled. |
+| `robot.last_incident_path -> Path \| None` | Most recent path returned by a successful write in this facade's lifetime, retained across reconnects; initially `None`. It can end in `.jsonl.tmp` if publication failed after the complete file was written. A later failed or no-op flush does not clear it. |
+
+### Capture and flushing
+
+The [latch and baseline model](../explanation/servo-flight-recorder.md#one-capture-for-a-continuing-latch)
+defines which hardware-error responses open a window and how axes become eligible
+for another incident. Reconnect resets samples and connection baselines, while
+retaining known latched axes and the last saved path.
+
+`connect()` attempts a hardware-error baseline read before the wake glide.
+Subsequent capture and deadline checks require `step()` calls; there is no
+background sampler or writer. Direct driver operations and facade glides that
+do not call `step()` produce no samples. A due window is flushed after the
+frame's position write. `disconnect()` suppresses that flush during parking
+and flushes after attempting driver disconnect, including when that attempt
+raises. An already open window is also flushed before recorder reset on reconnect.
+
+`robot.flush_incident() -> pathlib.Path | None` synchronously writes an open
+window immediately, even before its deadline. It returns this flush's path,
+or `None` if recording is disabled, no window is open, or writing fails. It does
+not create an incident from idle samples. It may return a complete `.jsonl.tmp`
+file if renaming failed. On the main thread, SIGINT is ignored during the write;
+it is discarded rather than delivered afterward. Calls from another thread do
+not change signal handlers. Other termination signals are not covered.
+
+### Files and header
+
+Files are UTF-8 JSON Lines: one header, then sample rows ordered by monotonic
+sample time across both tiers. The filename is
+`incident-YYYYMMDD-HHMMSS.jsonl`, using the first trigger's local wall time.
+Collisions add `-1`, `-2`, and so on before `.jsonl`. A temporary file appends
+`.tmp` to that full name. An incident with no samples still has its header.
+
+| Header key | Value and meaning |
+|------------|-------------------|
+| `kind` | `"header"` |
+| `schema` | `"palmimo-incident/1"` |
+| `ts` | First trigger's local ISO 8601 wall-clock timestamp, including UTC offset |
+| `monotonic_s` | First trigger's monotonic timestamp in seconds; local clock origin, not a Unix timestamp |
+| `trigger` | List of triggering motor names, including axes folded into this window |
+| `trigger_bits` | Motor-name to integer raw hardware-error bitmask at each axis's trigger; later bit changes on a latched axis do not rewrite it |
+| `motion` | Lowercase motion name at the first trigger, after guard verdicts |
+| `units` | `{"current": "raw", "voltage": "V", "temperature": "C", "position": "tick"}` |
+| `last_clean_t` | Earliest last-zero-response time among triggering axes, relative to `monotonic_s` in seconds; `null` if any triggering axis has no known clean response. It is a snapshot at each trigger, unaffected by later recovery. |
+| `hardware_error_interval_s` | `1.0`, the nominal hardware-error polling interval; actual gaps can be longer |
+| `post_s` | Planned deadline relative to the first trigger, in seconds: normally `2.0`; newly latched axes can extend it up to `4.0` |
+| `post_s_captured` | Maximum sample `t`, clamped to at least zero, across both tiers; seconds, not a guarantee of continuous coverage |
+| `truncated` | Whether `post_s_captured < post_s`; applies to early flushes or insufficient sample coverage |
+
+Hardware-error bits use the same definitions as
+[`HardwareErrorRead` and `describe_hardware_error()`](#servodriver).
+
+### Sample rows
+
+| Row key | Value and meaning |
+|---------|-------------------|
+| `kind` | `"sample"` |
+| `tier` | `"fast"` for a completed leg sweep, or `"context"` for the context timer |
+| `t` | Seconds relative to the first detected latch (`monotonic_s`); negative before detection, positive afterward. For fast rows it is the sweep time; for context rows it is the context capture time. |
+| `motion` | Lowercase motion name at capture, after guard verdicts |
+| `axes` | Object mapping motor names to the fields below; may be empty |
+| `hardware_errors` | Empty object for fast rows. For context rows, the recorder's currently known latched motor-name to integer-bitmask map, captured before any hardware-error poll in that same frame; it is not a complete raw status sweep. |
+| `t_neck` | Context rows only: included neck sweep's time relative to the first trigger, or `null` if no neck sweep was included |
+
+Each entry in `axes` has `current` (signed raw register units, not amperes),
+`position` (ticks), `goal` (ticks), `temperature` (°C), `voltage` (V), and
+`gap` (`goal - position`, ticks). Missing readings are `null`, including axes
+that were silent or unreached in the sweep. `gap` is `null` if either operand
+is unavailable. An absent axis or `null` value does not imply zero or recovery.
+
+`goal` is the last successfully submitted facade position, after clamping and
+partial-goal expansion, before driver-internal IIR filtering. It is `null` until
+such a write exists; writes made directly through the driver are not tracked.
+Context reuses the latest leg sweep only while it is at most one second old,
+and includes a pending neck sweep only while it is at most one second old.
+The pending neck sweep is consumed at that context tick, even when stale;
+its original `goal` is retained, as is the cached leg sweep's original `goal`.
+A context row's `t` therefore need not be the measurement time of every axis.
+
+### Persistence failures and logs
+
+Writing creates the directory on demand, flushes and fsyncs the temporary file,
+renames it to the published name, and on POSIX fsyncs the incident directory.
+Ordinary write failures close the window and attempt to remove the incomplete
+temporary file; they do not stop motion or schedule a retry. Rename failure
+retains the complete temporary file. Directory-sync failure after renaming
+retains the published path but logs reduced durability. No parent-directory
+sync or protection against every power-loss scenario is promised.
+
+| Level | Events |
+|-------|--------|
+| `ERROR` | Preexisting latch at an axis's first response (no window); newly latched axis; changed bits on an already latched axis; completed published dump with path, sample count, and synchronous write duration in milliseconds |
+| `WARNING` | Unsupported hardware-error reading disables recording for that connection; other read exceptions are rate-limited to once per five seconds; destination inspection, write, rename, cleanup, or directory-sync failure |
+| `WARNING` at connection | More than 100 completed dumps or more than 100,000,000 bytes; zero-byte dumps or leftover temporary files; unwritable destination |
+| `INFO` | Destination and existing dump count (or eventual destination); re-armed when all known incident axes have individually reported zero; no leg telemetry when all leg guards are disabled |
+
+Write duration appears only in logs. Connection-time inspection does not delete
+or modify existing dumps or temporary files.
 
 ## Kinematics Helpers
 
