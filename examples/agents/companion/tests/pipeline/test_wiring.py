@@ -12,6 +12,7 @@ all-or-nothing ``Palmimo.connect()``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 from collections.abc import Iterator
 from typing import TextIO, cast
@@ -25,6 +26,7 @@ from palmimo_companion_agent.pipeline import wiring
 from palmimo_companion_agent.pipeline.conductor import Conductor
 from palmimo_companion_agent.pipeline.history import History, ToolExecEvent
 from palmimo_companion_agent.pipeline.settings import PipelineSettings
+from palmimo_companion_agent.pipeline.sleeping import Sleeping
 from palmimo_companion_agent.pipeline.wiring import Runtime, build_runtime
 from palmimo_sdk import OpenAiEngine, Palmimo, PiperEngine, SpeakerConfig
 from palmimo_sdk.agent.toolset import AgentToolSet
@@ -338,6 +340,7 @@ def test_build_runtime_leaves_the_playback_device_to_alsa_when_the_name_is_empty
 class FakeConductor:
     def __init__(self) -> None:
         self.run_started = False
+        self.sleeping = Sleeping()
         self.cancelled = False
 
     async def run(self) -> None:
@@ -446,7 +449,7 @@ async def test_runtime_aclose_cancels_tasks_disconnects_the_robot_and_closes_the
     monkeypatch.setattr(type(palmimo), "has_connectable_resource", property(lambda self: True))
     monkeypatch.setattr(palmimo, "connect", lambda: None)
     disconnect_calls = []
-    monkeypatch.setattr(palmimo, "disconnect", lambda: disconnect_calls.append(1))
+    monkeypatch.setattr(palmimo, "disconnect", lambda **kwargs: disconnect_calls.append(1))
     conductor = FakeConductor()
     log = io.StringIO()
     rt = _lifecycle_runtime(conductor, palmimo, event_log=log)
@@ -576,3 +579,78 @@ def test_build_mic_leaves_capture_raw_when_echo_cancel_is_off(monkeypatch: pytes
     monkeypatch.setattr(wiring, "EchoCanceller", _should_not_build_a_canceller)
 
     assert _recording_mic(_settings(echo_cancel=False)).processors == []
+
+
+@pytest.mark.parametrize("failure", [OSError, KeyboardInterrupt])
+async def test_runtime_aclose_parks_when_vision_cleanup_raises(failure: type[BaseException]) -> None:
+    class Robot:
+        has_connectable_resource = True
+        is_connected = True
+
+        def disconnect(self, *, park: bool = True) -> None:
+            self.is_connected = False
+
+    class Watch:
+        async def aclose(self) -> None:
+            raise failure("vision cleanup failed")
+
+    robot = Robot()
+    rt = _lifecycle_runtime(FakeConductor(), cast(Palmimo, robot))
+    rt.vision_watch = cast(wiring.VisionWatch, Watch())
+
+    with pytest.raises(failure):
+        await rt.aclose()
+
+    assert robot.is_connected is False
+
+
+@pytest.mark.parametrize("wake_fails", [False, True])
+async def test_runtime_aclose_wakes_before_park_and_skips_legs_when_wake_fails(wake_fails: bool) -> None:
+    calls: list[str] = []
+
+    class Robot:
+        has_connectable_resource = True
+        is_connected = True
+
+        def wake(self) -> None:
+            calls.append("wake")
+            if wake_fails:
+                raise OSError("servo bus unavailable")
+
+        def disconnect(self, *, park: bool = True) -> None:
+            calls.append("park" if park else "release")
+            self.is_connected = False
+
+    conductor = FakeConductor()
+    conductor.sleeping.observe(ToolExecEvent(tool_call_id="sleep-1", name="sleep", arguments="{}", result="ok"))
+    robot = Robot()
+    rt = _lifecycle_runtime(conductor, cast(Palmimo, robot))
+
+    await rt.aclose()
+
+    assert calls == ["wake", "release" if wake_fails else "park"]
+
+
+async def test_runtime_aclose_bounds_wait_for_tasks_that_ignore_cancellation() -> None:
+    release = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def stubborn() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            await release.wait()
+
+    rt = _lifecycle_runtime(FakeConductor(), Palmimo())
+    task = asyncio.create_task(stubborn())
+    rt._tasks.append(task)
+    await asyncio.sleep(0)
+    try:
+        await asyncio.wait_for(rt.aclose(), timeout=2.5)
+        assert cancelled.is_set()
+        assert not task.done()
+    finally:
+        release.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task

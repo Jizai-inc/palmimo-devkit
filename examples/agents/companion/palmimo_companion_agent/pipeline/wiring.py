@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TextIO
 
@@ -33,6 +34,7 @@ from palmimo_sdk import (
     TtsEngine,
 )
 from palmimo_sdk.agent.toolset import AgentToolSet
+from palmimo_sdk.shutdown import StopRequest, park_async
 
 from ..core.hearing import NameCallWatch
 from ..core.perception import merge
@@ -197,20 +199,6 @@ class Runtime:
             self._connect_task = asyncio.create_task(asyncio.to_thread(self.palmimo.connect))
             await asyncio.shield(self._connect_task)
 
-    async def _wait_for_connect(self) -> None:
-        """Wait for a connect worker that continues after its caller is cancelled."""
-        if self._connect_task is None:
-            return
-        while not self._connect_task.done():
-            try:
-                await asyncio.shield(self._connect_task)
-            except asyncio.CancelledError:
-                continue
-            except Exception:
-                break
-        with contextlib.suppress(BaseException):
-            self._connect_task.result()
-
     async def start(self) -> None:
         """Connect the robot (if not already) and launch every background task this runtime owns.
 
@@ -232,29 +220,42 @@ class Runtime:
             if senses:
                 self._tasks.append(asyncio.ensure_future(self.reflexes.run(merge(*senses))))
 
-    async def aclose(self) -> None:
-        """Cancel every task this runtime launched, disconnect the robot, close the event log.
+    async def aclose(self, stop: StopRequest | None = None) -> None:
+        """Bound task cleanup and wake, then park even if cleanup is interrupted.
 
-        Best-effort and idempotent-safe regardless of which peripherals were
-        attached -- unlike :meth:`connect`, this doesn't gate on
-        ``has_connectable_resource``: ``Palmimo.disconnect()`` is always safe
-        to call (even compute-only, or never connected).
+        The entry point must protect terminating signals throughout this call;
+        SIGINT can shorten cleanup while the SDK park remains uninterruptible.
         """
-        if self.vision_watch is not None:
-            with contextlib.suppress(Exception):
-                await self.vision_watch.aclose()
-        for task in self._tasks:
-            task.cancel()
-        for task in self._tasks:
-            with contextlib.suppress(BaseException):
-                await task
-        self._tasks.clear()
-        await self._wait_for_connect()
-        with contextlib.suppress(Exception):
-            await asyncio.to_thread(self.palmimo.disconnect)
-        if self.event_log is not None:
-            with contextlib.suppress(Exception):
-                self.event_log.close()
+        legs = False
+        try:
+            legs = not self.conductor.sleeping.asleep
+            for task in self._tasks:
+                task.cancel()
+            if self._tasks:
+                done, _pending = await asyncio.wait(self._tasks, timeout=2.0)
+                for task in done:
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        task.result()
+            self._tasks.clear()
+            if self.vision_watch is not None:
+                async with asyncio.timeout(2.0):
+                    await self.vision_watch.aclose()
+            if not legs:
+                try:
+                    async with asyncio.timeout(2.0):
+                        await asyncio.to_thread(self.palmimo.wake)
+                except Exception:
+                    _log.exception("Could not wake the robot; parking without returning the legs")
+                else:
+                    legs = True
+        finally:
+            try:
+                await park_async(self.palmimo, legs=legs)
+            finally:
+                if self.event_log is not None:
+                    self.event_log.close()
+                if stop is not None and (elapsed := stop.seconds_since()) is not None:
+                    print(f"park attempt finished {elapsed:.2f}s after stop requested", file=sys.stderr, flush=True)
 
 
 def build_runtime(settings: PipelineSettings) -> Runtime:

@@ -223,12 +223,18 @@ async def test_run_cli_waits_for_connect_before_disconnecting_on_signal(monkeypa
             self.disconnect_started = threading.Event()
             self.disconnect_overlapped_connect = False
 
+        @property
+        def is_connected(self) -> bool:
+            return self.connect_finished.is_set() and not self.disconnect_started.is_set()
+
         def connect(self) -> None:
             self.connect_started.set()
             self.allow_connect_to_finish.wait()
             self.connect_finished.set()
 
-        def disconnect(self) -> None:
+        def disconnect(self, *, park: bool = True) -> None:
+            # Palmimo.disconnect() owns the wait for its connect worker.
+            self.connect_finished.wait()
             self.disconnect_started.set()
             self.disconnect_overlapped_connect = not self.connect_finished.is_set()
 
