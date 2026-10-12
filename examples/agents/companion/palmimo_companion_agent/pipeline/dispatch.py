@@ -201,7 +201,7 @@ async def execute_and_record(
     arguments = tool_call.function.arguments or "{}"
     try:
         args = json.loads(arguments)
-    except ValueError:
+    except (ValueError, RecursionError):
         args = None
     reason = args.get("reason") if isinstance(args, dict) else None
     resolved_thought = reason if isinstance(reason, str) and reason else thought
@@ -225,6 +225,7 @@ async def execute_and_record(
             result=result_text,
             error=result_is_error,
             thought=resolved_thought,
+            args=args if isinstance(args, dict) else None,
         )
     )
     if images:

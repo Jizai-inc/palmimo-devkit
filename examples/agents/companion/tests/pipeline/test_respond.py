@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 from collections.abc import Callable
 from typing import Any
 
@@ -12,6 +14,7 @@ import palmimo_companion_agent.pipeline.dispatch as dispatch_module
 import palmimo_companion_agent.pipeline.respond as respond_module
 from palmimo_companion_agent.core.toolview import ToolView
 from palmimo_companion_agent.pipeline.bus import Bus
+from palmimo_companion_agent.pipeline.event_log import emit_event
 from palmimo_companion_agent.pipeline.history import (
     AgentThoughtEvent,
     CameraEvent,
@@ -25,6 +28,36 @@ from palmimo_sdk.agent.toolset import AgentToolSet
 
 def _respond_view(toolset: AgentToolSet) -> ToolView:
     return ToolView(toolset, allow=None, squash_say=False)
+
+
+@pytest.mark.parametrize("ensure_ascii", [True, False])
+async def test_executed_arguments_are_readable_in_log(
+    ensure_ascii: bool,
+    toolset: AgentToolSet,
+    fake_llm_provider: type,
+    raw_tool_call_turn: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from palmimo_sdk.agent.tools import ToolResult
+
+    args = {"name": "BLOSSOM", "reason": "花を見つけた"}
+    arguments = json.dumps(args, ensure_ascii=ensure_ascii)
+    executed: list[dict] = []
+
+    async def call(name: str, args: dict) -> ToolResult:
+        executed.append(args)
+        return ToolResult(text="done")
+
+    monkeypatch.setattr(toolset, "call", call)
+    history = History()
+    out = io.StringIO()
+    history.subscribe(lambda event: emit_event(event, out=out))
+    llm = fake_llm_provider([raw_tool_call_turn("show_emoji", arguments)])
+    await RespondTurn(history, _respond_view(toolset), llm, Bus()).run()
+    payload = json.loads(out.getvalue())
+    assert payload["args"] == executed[0] == args
+    assert "arguments" not in payload
+    assert history.to_messages()[1]["tool_calls"][0]["function"]["arguments"] == arguments
 
 
 async def test_run_passes_parallel_tool_calls_true_and_the_full_toolset(

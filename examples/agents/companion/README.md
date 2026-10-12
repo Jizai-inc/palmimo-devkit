@@ -217,6 +217,21 @@ one — so what it buys is that the guarantee now belongs to the stream rather
 than to each individual call site, and it extends to output produced inside the
 SDK.
 
+Pipeline JSONL tool rows use `args` (an object) instead of `arguments` (the
+model's JSON string) for dispatched calls. Calls with invalid arguments,
+or arguments that cannot be serialized as strict JSON, keep `arguments`
+instead; a row never contains both keys. LLM message replay keeps the original
+argument string.
+
+Pipeline JSONL lines and realtime console arguments use ASCII escaping
+(`ensure_ascii=True`). Viewing them directly with `tail` shows Japanese as
+`\uXXXX`; JSON readers, including Portal's pipeline log view, restore the text.
+For a readable pipeline log on the command line:
+
+```bash
+tail -f events.jsonl | jq -r 'select(.kind == "tool_exec") | .args.reason // .arguments'
+```
+
 ## Options
 
 Settings resolve as CLI flag > process env > `.env` file > default. Every

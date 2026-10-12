@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -88,7 +87,7 @@ def recent_moves_hint(history: History) -> str | None:
 
     faces: list[str] = []
     for event in recent[:_RECENT_FACE_WINDOW]:
-        args = _safe_args(event.arguments)
+        args = event.args or {}
         face = args.get("name") if event.name == "set_face" else args.get("face")
         if isinstance(face, str) and face not in faces:
             faces.append(face)
@@ -97,7 +96,7 @@ def recent_moves_hint(history: History) -> str | None:
     for event in recent:
         if event.name != "show_emoji":
             continue
-        args = _safe_args(event.arguments)
+        args = event.args or {}
         name = args.get("name")
         if isinstance(name, str) and name not in emojis:
             emojis.append(name)
@@ -120,15 +119,6 @@ def recent_moves_hint(history: History) -> str | None:
     if not any(event.name in {"set_face", "show_emoji"} for event in recent):
         lines.append("No set_face/show_emoji in the recent window -- favor one of those next.")
     return "\n".join(lines)
-
-
-def _safe_args(arguments: str) -> dict:
-    """Best-effort JSON-decode *arguments* into a dict, or {} if that fails."""
-    try:
-        parsed = json.loads(arguments)
-    except (TypeError, ValueError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def build_messages(history: History, system_prompt: str, *, continuation_nudge: str) -> list[dict]:

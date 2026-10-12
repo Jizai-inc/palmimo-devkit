@@ -9,7 +9,11 @@ instead of racing real motion durations.
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 from typing import Any, cast
+
+import pytest
 
 from palmimo_companion_agent.realtime.bridge import ToolBridge
 from palmimo_companion_agent.realtime.log import EventLog
@@ -63,6 +67,93 @@ def _sent_outputs(client: Any) -> list[tuple[str, str]]:
         for event in client.sent
         if isinstance(event, ItemCreate) and event.item.get("type") == "function_call_output"
     ]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    ["{broken", "[]", "null", '{"nested":' + "[" * 10000 + "0" + "]" * 10000 + "}"],
+    ids=["malformed", "array", "null", "deep"],
+)
+async def test_invalid_arguments_return_error_and_continue_plan(arguments: str, fake_client: type) -> None:
+    client = fake_client()
+    toolset = ScriptedToolset()
+    sleeping = Sleeping()
+    log = io.StringIO()
+    bridge = ToolBridge(client, cast(AgentToolSet, toolset), sleeping, EventLog(log))
+    response = Response(
+        id="r1",
+        output=[
+            {"type": "function_call", "name": "sleep", "arguments": arguments, "call_id": "bad"},
+            {"type": "function_call", "name": "nod", "arguments": "{}", "call_id": "good"},
+        ],
+    )
+    await bridge.handle(response)
+    await asyncio.gather(*bridge.tasks)
+    assert toolset.calls == [("nod", {})]
+    outputs = _sent_outputs(client)
+    assert [call_id for call_id, _ in outputs] == ["bad", "good"]
+    assert outputs[0][1] != "done"
+    assert outputs[1][1] == "done"
+    assert any(isinstance(event, ResponseCreate) for event in client.sent)
+    assert not sleeping.asleep
+    assert [json.loads(line)["is_error"] for line in log.getvalue().splitlines()] == [True, False]
+
+
+@pytest.mark.parametrize("ensure_ascii", [True, False])
+async def test_executed_arguments_are_readable_in_console(
+    ensure_ascii: bool,
+    fake_client: type,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = {"reason": "花を見つけた"}
+    client = fake_client()
+    toolset = ScriptedToolset()
+    bridge = _bridge(toolset, client)
+    response = Response(
+        id="r1",
+        output=[
+            {
+                "type": "function_call",
+                "name": "nod",
+                "arguments": json.dumps(args, ensure_ascii=ensure_ascii),
+                "call_id": "c1",
+            }
+        ],
+    )
+    await bridge.handle(response)
+    await asyncio.gather(*bridge.tasks)
+    line = capsys.readouterr().out.splitlines()[0]
+    assert json.loads(line[line.index("(") + 1 : -1]) == args
+    assert toolset.calls == [("nod", args)]
+
+
+@pytest.mark.parametrize("arguments", ['{"value":NaN}', '{"value":Infinity}'])
+async def test_console_fallback_does_not_prevent_execution(
+    arguments: str,
+    fake_client: type,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = fake_client()
+    toolset = ScriptedToolset()
+    bridge = _bridge(toolset, client)
+    response = Response(
+        id="r1",
+        output=[
+            {
+                "type": "function_call",
+                "name": "nod",
+                "arguments": arguments,
+                "call_id": "c1",
+            }
+        ],
+    )
+    await bridge.handle(response)
+    await asyncio.gather(*bridge.tasks)
+    line = capsys.readouterr().out.splitlines()[0]
+    value = json.loads(line[line.index("(") + 1 : -1], parse_constant=lambda value: pytest.fail(value))
+    assert value == arguments
+    assert len(toolset.calls) == 1
+    assert _sent_outputs(client) == [("c1", "done")]
 
 
 # ----------------------------------------------------------------------

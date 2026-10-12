@@ -45,6 +45,7 @@ import json
 import sys
 from collections.abc import Iterable
 
+from palmimo_sdk.agent.tools import ToolResult
 from palmimo_sdk.agent.toolset import AgentToolSet
 
 from ..core.toolview import ToolView
@@ -176,10 +177,23 @@ class ToolBridge:
         name = call.name
         try:
             args = json.loads(call.arguments) if call.arguments else {}
-        except ValueError:
-            args = {}
-        print(f"tool    > {name}({call.arguments})", flush=True)
-        result = await self._view.call(name, args)
+        except (ValueError, RecursionError):
+            args = None
+        if isinstance(args, dict):
+            try:
+                displayed_args = json.dumps(args, ensure_ascii=True, allow_nan=False)
+            except (ValueError, RecursionError):
+                displayed_args = json.dumps(call.arguments, ensure_ascii=True)
+        else:
+            displayed_args = json.dumps(call.arguments, ensure_ascii=True)
+        print(f"tool    > {name}({displayed_args})", flush=True)
+        if isinstance(args, dict):
+            result = await self._view.call(name, args)
+        else:
+            result = ToolResult(
+                text=f"execution error: tool arguments were not a JSON object: {call.arguments[:200]}",
+                is_error=True,
+            )
         print(f"          -> {result.text[:120]}", flush=True)
         interrupted = result.text.startswith(_INTERRUPTED_PREFIX)
         self._log.write("tool_call", name=name, call_id=call.call_id, text=result.text[:200], is_error=result.is_error)

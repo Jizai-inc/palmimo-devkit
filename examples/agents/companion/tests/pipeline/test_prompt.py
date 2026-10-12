@@ -19,6 +19,7 @@ def _tool_event(name: str, arguments: dict | None = None, *, tool_call_id: str =
         name=name,
         arguments=json.dumps(arguments or {}),
         result="ok",
+        args=arguments or {},
     )
 
 

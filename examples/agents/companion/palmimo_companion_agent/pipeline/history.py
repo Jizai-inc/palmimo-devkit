@@ -12,7 +12,7 @@ import logging
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 
 #: Number of events the window keeps; older ones are silently evicted.
@@ -110,6 +110,10 @@ class ToolExecEvent:
     Bundled as one Event (rather than as two separately-added messages) so
     the assistant turn and its tool response can never fall out of the fixed
     window on their own -- both evict together.
+
+    ``args`` holds the parsed object passed to tool dispatch, or None if
+    the arguments could not be dispatched. ``arguments`` retains the raw
+    model string for replay to the LLM.
     """
 
     tool_call_id: str
@@ -125,6 +129,7 @@ class ToolExecEvent:
     #: separate outcome, not an error.
     error: bool = False
     thought: str | None = None
+    args: dict[str, Any] | None = None
     kind: Literal["tool_exec"] = "tool_exec"
 
     def to_messages(self) -> list[dict]:

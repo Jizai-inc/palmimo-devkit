@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
+import json
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -14,6 +16,7 @@ import palmimo_companion_agent.pipeline.conductor as conductor_module
 import palmimo_companion_agent.pipeline.respond as respond_module
 from palmimo_companion_agent.pipeline.bus import Bus
 from palmimo_companion_agent.pipeline.conductor import Conductor
+from palmimo_companion_agent.pipeline.event_log import emit_event
 from palmimo_companion_agent.pipeline.history import (
     History,
     KeyboardEvent,
@@ -43,6 +46,48 @@ async def _run_briefly(conductor: Conductor, predicate: Any, *, timeout: float =
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    ["{broken", "[]", "null", '{"nested":' + "[" * 10000 + "0" + "]" * 10000 + "}"],
+    ids=["malformed", "array", "null", "deep"],
+)
+async def test_invalid_arguments_leave_conversation_running(
+    arguments: str,
+    toolset: AgentToolSet,
+    fake_llm_provider: type,
+    raw_tool_call_turn: Callable,
+    tool_call_turn: Callable,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def call(name: str, args: dict) -> Any:
+        from palmimo_sdk.agent.tools import ToolResult
+
+        calls.append(name)
+        return ToolResult(text="done")
+
+    monkeypatch.setattr(toolset, "call", call)
+    history = History()
+    out = io.StringIO()
+    history.subscribe(lambda event: emit_event(event, out=out))
+    llm = fake_llm_provider(
+        [
+            raw_tool_call_turn("set_face", arguments),
+            tool_call_turn("show_emoji", {"name": "BLOSSOM", "reason": "花"}),
+        ]
+    )
+    conductor = Conductor(history, toolset, llm, Bus())
+    conductor.submit_user_text("hello")
+    await _run_briefly(conductor, lambda: len(calls) == 1)
+    assert calls == ["show_emoji"]
+    events = [json.loads(line) for line in out.getvalue().splitlines()]
+    failed = next(event for event in events if event["kind"] == "tool_exec")
+    assert failed["error"] is True
+    assert failed["arguments"] == arguments
+    assert "args" not in failed
 
 
 # ----------------------------------------------------------------------
