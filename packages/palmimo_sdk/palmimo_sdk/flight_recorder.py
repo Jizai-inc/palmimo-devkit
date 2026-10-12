@@ -246,14 +246,7 @@ class ServoFlightRecorder:
         temporary: Path | None = None
         published: Path | None = None
         try:
-            missing = []
-            ancestor = self.incident_dir
-            while not ancestor.exists():
-                missing.append(ancestor)
-                ancestor = ancestor.parent
             self.incident_dir.mkdir(parents=True, exist_ok=True)
-            for created in reversed(missing):
-                self._sync_directory(created.parent)
             stem = f"incident-{window.wall:%Y%m%d-%H%M%S}"
             index = 0
             # Exclusive creation also reserves names against concurrent flushes.
@@ -301,18 +294,10 @@ class ServoFlightRecorder:
                     "post_s": window.deadline - window.at,
                     "post_s_captured": captured,
                     "truncated": captured < window.deadline - window.at,
-                    "stall_ms": 0.0,
                 }
-                # Reserve header space so measuring the data sync never rewrites sample bytes.
-                header_width = len(json.dumps(header)) + 64
-                stream.write(json.dumps(header).ljust(header_width) + "\n")
+                stream.write(json.dumps(header) + "\n")
                 for row in rows:
                     stream.write(json.dumps(row) + "\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-                header["stall_ms"] = max(0.0, (self._clock() - started) * 1000)
-                stream.seek(0)
-                stream.write(json.dumps(header).ljust(header_width) + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
             try:
@@ -325,7 +310,6 @@ class ServoFlightRecorder:
             self._remember(published)
             try:
                 self._sync_directory(self.incident_dir)
-                self._sync_directory(self.incident_dir.parent)
             except OSError as exc:
                 self._logger.warning("Could not sync incident directory %s: %s", self.incident_dir, exc)
             self._logger.error(
