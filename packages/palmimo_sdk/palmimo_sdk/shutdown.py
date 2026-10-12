@@ -185,9 +185,13 @@ def interrupt_on_signals(stop: StopRequest, *signums: signal.Signals) -> Iterato
     """Make *signums* (default: :data:`TERMINATING_SIGNALS`) raise ``KeyboardInterrupt``.
 
     For a program that has handed control to something else -- Textual's app
-    loop, uvicorn -- and only needs its own ``finally`` to run. Raising reuses
-    the unwind Ctrl-C already gets rather than adding a second shutdown route
-    to keep in step with the first.
+    loop, uvicorn -- and only needs its own ``finally`` to run. Raising uses
+    Python's ``KeyboardInterrupt`` unwind path.
+
+    While Textual owns the terminal it clears ``ISIG``, so Ctrl-C and Ctrl-\\
+    arrive as key input (Ctrl-C shows a help hint), not as signals. For Textual,
+    this handles externally delivered signals: ``kill``, SIGHUP on an ssh
+    disconnect, or a service manager such as systemd stopping the process.
 
     SIGINT is not in the default set because Python already delivers it exactly
     this way.
@@ -382,6 +386,11 @@ def _running_loop() -> asyncio.AbstractEventLoop:
     return asyncio.get_running_loop()
 
 
+def _report(message: str, stream: TextIO) -> None:
+    with contextlib.suppress(OSError, ValueError):
+        print(message, file=stream, flush=True)
+
+
 def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> None:
     """Release servo torque, uninterruptibly, and say on *out* whether it completed.
 
@@ -397,6 +406,7 @@ def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> Non
     torque-off, nor an ``Exception`` from the driver, comes back out of here to
     replace a clean exit -- or the error that started the shutdown -- with a
     traceback from the teardown.
+    Output is best-effort: a failed output stream never prevents torque-off.
 
     *legs* false skips only the leg return to neutral, keeping the neck
     soft-release and the torque-off -- for a robot that may already be in a bad
@@ -423,13 +433,12 @@ def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> Non
             return
         parking = robot.is_connected
         if parking:
-            print("parking the robot -- easing to neutral and releasing servo torque...", file=stream)
+            _report("parking the robot -- easing to neutral and releasing servo torque...", stream)
         # An `Exception` is held: every entry point calls this from a
         # `finally`, so letting one out would replace a clean exit -- or the
         # error that started the shutdown -- with a traceback from the
-        # teardown. But it is never swallowed silently: torque may still be on,
-        # which is the one fact an operator has to be told, so the failure is
-        # reported in place of the line that would otherwise claim success.
+        # teardown. Torque may still be on, so when the stream is usable the
+        # failure is reported in place of the line that would claim success.
         failure: BaseException | None = None
         try:
             robot.disconnect(park=legs)
@@ -444,13 +453,13 @@ def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> Non
         if failure is not None and not isinstance(failure, Exception) and not robot.is_connected:
             failure = None
         if failure is not None:
-            print(
+            _report(
                 f"PARK FAILED -- servo torque may still be on ({type(failure).__name__}: {failure}). "
                 "Unplug the AC adapter before handling the robot.",
-                file=stream,
+                stream,
             )
         elif parking:
-            print("park complete -- servo torque released", file=stream)
+            _report("park complete -- servo torque released", stream)
 
 
 async def park_async(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> None:

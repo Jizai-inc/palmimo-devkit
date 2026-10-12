@@ -2,7 +2,9 @@
 
 import asyncio
 import contextlib
+import errno
 import io
+import os
 import signal
 import threading
 import time
@@ -121,6 +123,83 @@ def _robot(driver: FakeDriver, *, mic: Any = None, camera: Any = None) -> Palmim
         camera=cast("HeadCamera | None", camera),
         auto_wake=False,
     )
+
+
+@pytest.mark.parametrize("error", [OSError(5, "Input/output error"), ValueError("closed stream")])
+@pytest.mark.parametrize("operation", ["write", "flush"])
+@pytest.mark.parametrize("phase", ["start", "result"])
+@pytest.mark.parametrize("disconnect_fails", [False, True])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_park_reaches_torque_off_despite_report_failure(
+    error: Exception, operation: str, phase: str, disconnect_fails: bool, asynchronous: bool
+) -> None:
+    """Broken shutdown diagnostics must neither skip torque-off nor escape a caller's finally."""
+    attempted = False
+    failed_operations = 0
+
+    class Driver(FakeDriver):
+        def disconnect(self) -> None:
+            nonlocal attempted
+            attempted = True
+            if disconnect_fails:
+                raise RuntimeError("bus went away")
+            super().disconnect()
+
+    class Stream(io.StringIO):
+        def fail_if_selected(self, current_operation: str) -> None:
+            nonlocal failed_operations
+            if current_operation == operation and attempted == (phase == "result"):
+                failed_operations += 1
+                raise error
+
+        def write(self, s: str, /) -> int:
+            self.fail_if_selected("write")
+            return super().write(s)
+
+        def flush(self) -> None:
+            self.fail_if_selected("flush")
+            super().flush()
+
+    driver = Driver()
+    robot = _robot(driver)
+    robot.connect()
+    stream = Stream()
+
+    if asynchronous:
+        asyncio.run(park_async(robot, out=stream))
+    else:
+        park(robot, out=stream)
+
+    assert attempted, "reporting prevented the torque-off attempt"
+    assert driver.disconnected is not disconnect_fails
+    assert failed_operations > 0, "the failing stream operation was never exercised"
+
+
+@pytest.mark.skipif(not hasattr(os, "openpty"), reason="requires POSIX pty support")
+def test_park_releases_torque_when_stderr_is_a_disconnected_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An ssh terminal hangup must not leave torque on when stderr raises a real EIO."""
+    try:
+        master, slave = os.openpty()
+    except OSError as exc:
+        pytest.skip(f"pty unavailable: {exc}")
+    os.close(master)
+    with io.TextIOWrapper(os.fdopen(slave, "wb", buffering=0), write_through=True) as stream:
+        try:
+            stream.write("probe\n")
+            stream.flush()
+        except OSError as exc:
+            if exc.errno != errno.EIO:
+                pytest.skip(f"disconnected pty returned {exc.errno} rather than EIO")
+        else:
+            pytest.skip("disconnected pty does not raise EIO on this platform")
+        monkeypatch.setattr("sys.stderr", stream)
+        driver = FakeDriver()
+        robot = _robot(driver)
+        robot.connect()
+
+        park(robot)
+
+        assert driver.disconnected, "terminal EIO prevented torque-off"
 
 
 # ----------------------------------------------------------------------
