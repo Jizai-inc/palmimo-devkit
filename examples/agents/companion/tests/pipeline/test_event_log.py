@@ -50,3 +50,17 @@ def test_emit_event_keeps_non_ascii_text_readable() -> None:
     out = io.StringIO()
     emit_event(KeyboardEvent("こんにちは"), out=out)
     assert "こんにちは" in out.getvalue()
+
+
+def test_emit_event_writes_tool_arguments_as_json_when_they_parse() -> None:
+    out = io.StringIO()
+    arguments = json.dumps({"name": "BLOSSOM", "reason": "壁の花柄"})
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="ok"), out=out)
+    assert json.loads(out.getvalue())["arguments"] == {"name": "BLOSSOM", "reason": "壁の花柄"}
+    assert "壁の花柄" in out.getvalue()
+
+
+def test_emit_event_keeps_tool_arguments_as_a_string_when_they_do_not_parse() -> None:
+    out = io.StringIO()
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments='{"name": ', result="bad"), out=out)
+    assert json.loads(out.getvalue())["arguments"] == '{"name": '
