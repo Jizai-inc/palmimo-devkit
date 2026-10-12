@@ -113,6 +113,9 @@ TOOL_MODELS: dict[str, type[Tool]] = {
         StopTool,
     )
 }
+# Palmimo.play_keyframes() is deliberately not a tool: a track is joint angles
+# that are only safe from a pose the author checked in the air, and an LLM
+# composing angles would skip that check.
 
 
 class AgentToolSet:

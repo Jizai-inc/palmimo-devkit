@@ -68,6 +68,7 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     # urllib + hashlib model fetching; no third-party package involved.
     "palmimo_sdk.download": _NO_EXTRA,
     "palmimo_sdk.engine": _NO_EXTRA,
+    "palmimo_sdk.keyframes": _NO_EXTRA,
     "palmimo_sdk.kinematics": _NO_EXTRA,
     "palmimo_sdk.mcp": frozenset({"mcp"}),
     "palmimo_sdk.mcp.server": frozenset({"mcp"}),
@@ -134,6 +135,8 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     # -- The facade, the gait/IK core, and the I/O abstraction: pure
     # computation and stdlib, which is what makes compute-only use possible
     # with no extra at all.
+    "palmimo_sdk:Keyframe": _NO_EXTRA,
+    "palmimo_sdk:MAX_JOINT_SPEED_DEG_S": _NO_EXTRA,
     "palmimo_sdk:Motion": _NO_EXTRA,
     "palmimo_sdk:MotionCancelled": _NO_EXTRA,
     "palmimo_sdk:MotionEngine": _NO_EXTRA,

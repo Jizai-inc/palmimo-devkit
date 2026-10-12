@@ -72,7 +72,8 @@ from ._leg_safety import LegSafety
 from ._signals import signals_ignored
 from .engine import NECK_GESTURES, Motion, MotionEngine
 from .io import FaceDisplay, HeadCamera, Microphone, MicStream, ServoDriver, Speaker, SpeechHandle
-from .kinematics import leg_motors
+from .keyframes import Keyframe, KeyframeTrack, tick_to_degrees
+from .kinematics import ALL_LEGS, leg_motors
 from .overload import (
     ARM_OVERLOAD_CURRENT,
     LEG_OVERLOAD_CURRENT,
@@ -177,6 +178,9 @@ _CANCEL_POLL_INTERVAL_S = 0.05
 # loaded) while the caller decides its next move. Matches the agent tool
 # layer's post-motion stance settle duration.
 _CANCEL_SETTLE_S = 0.5
+# Glide from a keyframe track's end pose back to neutral. Even the widest leg
+# swing the safe tick range allows stays under MAX_JOINT_SPEED_DEG_S over it.
+_KEYFRAME_RETURN_S = 1.0
 
 
 @contextlib.contextmanager
@@ -506,6 +510,9 @@ class Palmimo:
         # Whether the neck-gesture Profile_Velocity tuning is currently applied
         # (same enter/exit tracking as the gesture tuning, for nod / head-shake).
         self._neck_gesture_tuned: bool = False
+        # Legs the running keyframe track raises as arms, judged by the arm
+        # overload threshold (see play_keyframes).
+        self._keyframe_arm_legs: tuple[int, ...] = ()
         # Cross-thread cancel signal for run() (see cancel() / MotionCancelled).
         # A monotonically increasing counter guarded by a small lock, NOT a
         # threading.Event that gets clear()ed: each paced public method
@@ -2253,6 +2260,8 @@ class Palmimo:
             return (self._engine.wave_leg,)
         if motion in (Motion.WAVE_BOTH, Motion.CLAP):
             return self._engine._WAVE_BOTH_LEGS
+        if motion == Motion.KEYFRAMES:
+            return self._keyframe_arm_legs
         return ()
 
     def _sync_gesture_tuning(self) -> None:
@@ -2727,6 +2736,127 @@ class Palmimo:
         snapshot = self._take_cancel_snapshot()
         fps = fps if fps is not None else self._fps
         self._pace(self.play(routine, fps=fps), fps, snapshot, callback=callback)
+
+    def iter_keyframes(
+        self,
+        keyframes: Sequence[Keyframe],
+        *,
+        arm_legs: Iterable[int] = (),
+        return_to_neutral: bool = True,
+    ) -> Iterator[dict[str, int]]:
+        """Play a keyframe track, yielding positions for each frame.
+
+        The unpaced counterpart of :meth:`play_keyframes`, as :meth:`play` is to
+        :meth:`play_realtime`: each frame goes through :meth:`step`, so on a
+        compute-only facade (no driver) this is a dry run that moves nothing,
+        and with a driver connected it drives the robot as fast as the caller
+        pulls frames.
+
+        The track is validated here, before the first frame: see
+        :meth:`play_keyframes` for the rules and the arguments.
+
+        Returns:
+            Iterator[dict[str, int]]: Servo positions for each frame.
+
+        Raises:
+            ValueError: The track or *arm_legs* is invalid; nothing has moved.
+        """
+        legs = self._keyframe_arm_legs_from(arm_legs)
+        track = self._keyframe_track(keyframes, return_to_neutral)
+        return self._keyframe_frames(track, legs, return_to_neutral)
+
+    def play_keyframes(
+        self,
+        keyframes: Sequence[Keyframe],
+        *,
+        arm_legs: Iterable[int] = (),
+        return_to_neutral: bool = True,
+        callback: Callable[[dict[str, int]], None] | None = None,
+    ) -> dict[str, int]:
+        """Play a keyframe track in real time (blocking).
+
+        Playback starts from the current pose and reaches each
+        :class:`~palmimo_sdk.keyframes.Keyframe` at its ``time``. A joint a
+        keyframe leaves out holds its previous angle. Between keyframes every
+        joint eases in and out with a raised cosine, so the robot comes to rest
+        at each keyframe.
+
+        The whole track is validated before anything moves: times must start
+        after 0 and increase, joint names must be servo names, every angle must
+        sit inside its joint's range (the legs' safe tick range; the neck's
+        engine band), and no joint may exceed ``MAX_JOINT_SPEED_DEG_S`` -- the
+        first segment, from the current pose, included.
+
+        Every frame goes through :meth:`step`, so the neck thermal guard and
+        the leg overload and rail guards stay active. A guard trip ends the
+        playback early, with the legs gliding to neutral. When the thermal lock
+        engages, the neck glides to center and stays out of the rest of the
+        track.
+
+        Cancellable from another thread, like :meth:`run`: see :meth:`cancel`.
+        On cancellation the legs glide to neutral before
+        :class:`MotionCancelled` propagates.
+
+        Args:
+            keyframes (Sequence[Keyframe]): The poses to reach, in time order.
+            arm_legs (Iterable[int]): Legs (1-6) the track lifts off the ground
+                as arms. They are judged by the lighter arm overload threshold
+                instead of the weight-bearing one, as a wave's arm is.
+            return_to_neutral (bool): Glide back to the neutral pose after the
+                last keyframe, over ``1.0`` s. ``False`` holds the last pose
+                until the next motion command; call :meth:`stop` to bring it
+                home.
+            callback (Callable, optional): Extra per-frame callback, as for
+                :meth:`play_realtime`.
+
+        Returns:
+            dict[str, int]: The final servo positions.
+
+        Raises:
+            ValueError: The track or *arm_legs* is invalid; nothing has moved.
+            MotionCancelled: If :meth:`cancel` is called during playback.
+        """
+        snapshot = self._take_cancel_snapshot()
+        frames = self.iter_keyframes(keyframes, arm_legs=arm_legs, return_to_neutral=return_to_neutral)
+        try:
+            self._pace(frames, self._fps, snapshot, callback=callback)
+        except MotionCancelled:
+            self.stop()
+            with contextlib.suppress(MotionCancelled):
+                self.run(seconds=_CANCEL_SETTLE_S)
+            raise
+        return self.positions
+
+    @staticmethod
+    def _keyframe_arm_legs_from(arm_legs: Iterable[int]) -> tuple[int, ...]:
+        """Validate *arm_legs* and return them as a sorted tuple of leg IDs."""
+        legs = tuple(sorted(set(arm_legs)))
+        unknown = [leg for leg in legs if leg not in ALL_LEGS]
+        if unknown:
+            raise ValueError(f"arm_legs must be leg IDs 1-6; got {unknown}.")
+        return legs
+
+    def _keyframe_track(self, keyframes: Sequence[Keyframe], return_to_neutral: bool) -> KeyframeTrack:
+        """Build the track from the current pose, appending the glide home when asked."""
+        start = self._engine.get_positions()
+        track = KeyframeTrack(start, keyframes)
+        if not return_to_neutral:
+            return track
+        neutral = {joint: tick_to_degrees(tick) for joint, tick in self._neutral_targets().items()}
+        return KeyframeTrack(start, [*keyframes, Keyframe(track.duration + _KEYFRAME_RETURN_S, neutral)])
+
+    def _keyframe_frames(
+        self, track: KeyframeTrack, arm_legs: tuple[int, ...], return_to_neutral: bool
+    ) -> Generator[dict[str, int], None, None]:
+        """Step through *track*, stopping early if anything takes the engine off it."""
+        self._keyframe_arm_legs = arm_legs
+        self._engine.load_keyframes(track)
+        for _ in range(self._duration_to_steps(track.duration, self._fps) + 1):
+            if self._engine.motion != Motion.KEYFRAMES:
+                return  # a guard trip or another motion command took over
+            yield self.step()
+        if return_to_neutral and self._engine.motion == Motion.KEYFRAMES:
+            self.stop()
 
     # ================================================================
     # ENGINE ACCESS (advanced)

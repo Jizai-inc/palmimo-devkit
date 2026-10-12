@@ -144,6 +144,13 @@ real hardware with the robot lifted off the ground.
 
 ## Building Blocks Reference
 
+A one-off gesture made of fixed poses does not need a new motion: play it as a
+keyframe track instead (see
+[Keyframe Playback](controlling-motions.md#keyframe-playback)). Add a motion when
+the gesture needs to be computed — a gait, IK, a tunable knob, a tool the LLM can
+call.
+
+
 | Tool | Usage | Notes |
 |------|-------|-------|
 | `self._set_leg_from_ik(leg_id, dx, dy, dz)` | Foot position in mm | Preferred for walking |

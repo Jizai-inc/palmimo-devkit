@@ -147,7 +147,7 @@ in `toolset.py` saying so).
   see
   [doc/reference/api-reference.md](doc/reference/api-reference.md#rail-undervoltage-guard).
 - **The guards only cover callers that go through `Palmimo.step()`** — `run()`
-  / `play()`, the MCP server, and the agent tool layer (`palmimo_sdk/agent/`).
+  / `play()` / `play_keyframes()`, the MCP server, and the agent tool layer (`palmimo_sdk/agent/`).
   **The LeRobot teleop integration (`integrations/lerobot/`) drives the engine
   directly and is NOT covered** — see that package's `palmimo.py` module
   docstring. The overload and rail guards likewise do not watch `wake()`, `sleep()` or

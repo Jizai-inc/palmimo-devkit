@@ -18,9 +18,13 @@ Typical usage::
 import math
 from enum import Enum, auto
 from itertools import pairwise
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from . import kinematics
+
+
+if TYPE_CHECKING:
+    from .keyframes import KeyframeTrack
 
 
 class Motion(Enum):
@@ -44,6 +48,7 @@ class Motion(Enum):
     STRETCH = auto()
     NOD = auto()
     HEAD_SHAKE = auto()
+    KEYFRAMES = auto()
 
 
 # The neck-only one-shot gestures — shared by the engine's dispatch and the
@@ -288,6 +293,12 @@ class MotionEngine:
         self._gesture_phase: float = 0.0
         self._gesture_neck_start: tuple[int, int, int] = (0, 0, 0)
 
+        # The track KEYFRAMES plays (see load_keyframes), its clock in seconds,
+        # and whether the neck thermal lock has taken the neck away from it.
+        self._keyframe_track: KeyframeTrack | None = None
+        self._keyframe_phase: float = 0.0
+        self._keyframe_neck_released: bool = False
+
         # Servo positions (raw ticks)
         self._leg: dict[str, int] = {}
         for leg_id in range(1, 7):
@@ -418,6 +429,8 @@ class MotionEngine:
             return {self.wave_leg}  # only the chosen leg waves
         if self._motion in NECK_GESTURES:
             return set()  # neck-only gestures — legs only glide to stance
+        if self._motion == Motion.KEYFRAMES:
+            return set(range(1, 7))
         if self._motion in (Motion.WAVE_BOTH, Motion.CLAP):
             return set(self._WAVE_BOTH_LEGS)  # both front legs are the hands
         return set(range(1, 7))
@@ -510,6 +523,8 @@ class MotionEngine:
         elif self._motion == Motion.HEAD_SHAKE:
             self._apply_idle()
             self._apply_head_shake()
+        elif self._motion == Motion.KEYFRAMES:
+            self._apply_keyframes()
 
         # The neck gestures own the neck servos directly — the smoothing
         # toward the look target would fight their keyframes. neck_hold_center
@@ -520,7 +535,7 @@ class MotionEngine:
             self._set_neck_pitch_target(0.0, look_sourced=False)
             self._neck_target_yaw = 0.0
             self._apply_neck()
-        elif self._motion not in NECK_GESTURES:
+        elif self._motion not in NECK_GESTURES and self._motion != Motion.KEYFRAMES:
             self._apply_neck()
 
         out: dict[str, int] = {}
@@ -578,6 +593,46 @@ class MotionEngine:
             self._neck[key] = self.NEUTRAL
         self._set_neck_pitch_target(0.0, look_sourced=False)
         self._neck_target_yaw = 0.0
+
+    def load_keyframes(self, track: "KeyframeTrack") -> None:
+        """Select :attr:`Motion.KEYFRAMES` and play *track* from its start.
+
+        Each :meth:`step` then writes the track's pose for the current time and
+        advances its clock by :attr:`dt`. Past the last keyframe the end pose is
+        held until another motion is selected.
+
+        Args:
+            track (KeyframeTrack): The validated track to play.
+        """
+        self._keyframe_track = track
+        self._keyframe_phase = 0.0
+        self._keyframe_neck_released = False
+        # IDLE after the track glides the neck toward this target; center it so
+        # the head does not swing back to a look() direction set before.
+        self._set_neck_pitch_target(0.0, look_sourced=False)
+        self._neck_target_yaw = 0.0
+        self._motion = Motion.KEYFRAMES
+
+    def _apply_keyframes(self) -> None:
+        """Write the keyframe track's pose for the current time, then advance its clock."""
+        track = self._keyframe_track
+        if track is None:
+            self._apply_idle()
+            return
+        pose = track.sample(self._keyframe_phase)
+        self._keyframe_phase += self.dt
+        # Once the thermal lock has glided the neck to center, the track's neck
+        # values would snap it back when the lock lifts, so the neck stays out
+        # of the track for the rest of this playback.
+        if self.neck_hold_center:
+            self._keyframe_neck_released = True
+        for joint, tick in pose.items():
+            if joint in self._leg:
+                self._leg[joint] = tick
+            elif not self._keyframe_neck_released:
+                self._neck[joint] = tick
+        if self._keyframe_neck_released and not self.neck_hold_center:
+            self._apply_neck()
 
     # ================================================================
     # INVERSE KINEMATICS

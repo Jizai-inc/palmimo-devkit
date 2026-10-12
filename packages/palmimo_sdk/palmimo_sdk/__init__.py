@@ -85,6 +85,7 @@ from .io import (
     palmimo_motor_ids,
     resolve_alsa_device,
 )
+from .keyframes import MAX_JOINT_SPEED_DEG_S, Keyframe
 from .name_match import PALMIMO_NAMES, NameMatch, NameMatcher, name_skeleton
 from .overload import (
     ARM_OVERLOAD_CURRENT,
@@ -109,6 +110,7 @@ from .thermal import NeckThermalState
 __all__ = [
     "ARM_OVERLOAD_CURRENT",
     "LEG_OVERLOAD_CURRENT",
+    "MAX_JOINT_SPEED_DEG_S",
     "OVERLOAD_CONSECUTIVE",
     "PALMIMO_NAMES",
     "RAIL_CONSECUTIVE",
@@ -127,6 +129,7 @@ __all__ = [
     "FaceDisplayError",
     "HeadCamera",
     "HeadCameraConfig",
+    "Keyframe",
     "MicStream",
     "Microphone",
     "MicrophoneConfig",
