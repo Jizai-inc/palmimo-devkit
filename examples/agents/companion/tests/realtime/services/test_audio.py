@@ -345,7 +345,7 @@ def test_close_stops_the_writer_thread_and_reaps_the_process(fake_popen: type[_F
     playback.close()
 
     assert fake_popen.instances[0].stdin.closed is True
-    assert fake_popen.instances[0].wait_calls == [5]
+    assert len(fake_popen.instances[0].wait_calls) == 1
 
 
 def test_close_kills_and_waits_again_when_the_first_wait_times_out(fake_popen: type[_FakePopen]) -> None:
@@ -369,7 +369,7 @@ def test_close_still_reaps_when_stdin_close_raises(fake_popen: type[_FakePopen])
 
     playback.close()
 
-    assert fake_popen.instances[0].wait_calls == [5], "a raise in stdin.close() must not skip wait()"
+    assert len(fake_popen.instances[0].wait_calls) == 1, "a raise in stdin.close() must not skip wait()"
 
 
 def test_close_with_nothing_ever_played_does_not_raise(fake_popen: type[_FakePopen]) -> None:
@@ -434,37 +434,19 @@ def test_no_respawn_after_close_even_when_the_writer_wins_a_race(fake_popen: typ
 
 
 def test_close_kills_before_closing_stdin_so_a_wedged_write_cannot_hang_it(fake_popen: type[_FakePopen]) -> None:
-    """BLOCKER regression: close() must kill() before stdin.close(), or a wedged writer hangs it forever.
-
-    The fake's stdin shares a real ``threading.Lock`` between ``write()``
-    and ``close()``, exactly like a real ``io.BufferedWriter``'s internal
-    lock. The write is configured to block on that lock indefinitely --
-    never returning on its own -- until ``kill()`` fires the "killed" event,
-    mirroring the hazard the reviewer reproduced: a writer thread wedged
-    inside ``stdin.write()`` (ALSA backpressure) holds the lock, so calling
-    ``stdin.close()`` before ``kill()`` would block the calling thread
-    forever, and the kill+wait ladder after it would never even run.
-
-    With ``process.kill()`` called first, the wedged write unblocks with a
-    (simulated) ``BrokenPipeError`` almost immediately, freeing the lock so
-    ``stdin.close()`` and ``wait()`` can proceed -- ``close()`` finishes in
-    roughly the writer thread's own 5s join timeout, not indefinitely.
-    Swapping the ordering back (``stdin.close()`` before ``kill()``) hangs
-    this test instead of it finishing within the assertion's bound, because
-    ``stdin.close()`` would then block on the lock forever.
-    """
+    """A wedged write holding stdin's lock must be killed before joining or closing it."""
     fake_popen.block_until_killed = True
     playback = Playback()
     playback.write(b"\x00\x00")
     _wait_until(lambda: fake_popen.instances)
 
     started = time.monotonic()
-    playback.close()
+    playback.close(timeout=0.2)
     elapsed = time.monotonic() - started
 
     process = fake_popen.instances[0]
     assert process.killed is True, "close() never reached kill() -- it is stuck ahead of it, same as the real hang"
-    assert elapsed < 7.0, f"close() took {elapsed:.2f}s -- kill() must run before stdin.close(), not after"
+    assert elapsed < 1.0, f"close() took {elapsed:.2f}s -- kill() must run before stdin.close(), not after"
 
 
 def test_close_supervises_a_pending_interrupt_kill_thread_that_has_not_finished(fake_popen: type[_FakePopen]) -> None:
@@ -491,7 +473,7 @@ def test_close_supervises_a_pending_interrupt_kill_thread_that_has_not_finished(
         playback._pending_kills.append((stub_thread, cast("subprocess.Popen[bytes]", process)))
     stub_thread.start()
 
-    playback.close()
+    playback.close(timeout=0.05)
 
     assert process.killed is True, "close() must take over and kill a process left with a still-running kill thread"
     release.set()

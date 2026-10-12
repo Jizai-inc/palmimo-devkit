@@ -325,7 +325,15 @@ pipeline's: the model's own audio is played by `Playback`'s `aplay`, not
 synthesized through the SDK's `Speaker`, so the hint is resolved in
 `realtime/app.py` and handed to `Playback` as a device string.
 
-Ctrl+C and `SIGTERM` both end the session and park the robot on the way out.
+Ctrl+C, `SIGTERM`, and `SIGHUP` end the session and attempt the SDK park.
+A stop during build skips connect; a stop during connect waits for it to finish
+before parking. Duplicate SIGTERM/SIGHUP deliveries are ignored during cleanup.
+Service cancellation waits at most two seconds; tool settling and audio stopping
+share a three-second budget. A sleeping robot is woken for at most two seconds
+before parking, with leg return skipped if wake fails. A second Ctrl+C shortens
+cleanup while still attempting park. The exit log reports elapsed time since the
+stop request; `kill -9` remains the way to stop a process stuck in hardware I/O,
+and cannot release torque.
 In-flight tool work is cancelled and given a few seconds to settle first, so
 a motion is never still writing to the servo bus while the robot disconnects.
 

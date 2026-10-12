@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 
 
-def _probe(phase: str, sig: signal.Signals) -> tuple[int, str, float]:
+def _probe(phase: str, sig: signal.Signals | None, frontend: str) -> tuple[int, str, float]:
     process = subprocess.Popen(
-        [sys.executable, str(Path(__file__).with_name("run_shutdown_probe.py")), phase],
+        [sys.executable, str(Path(__file__).with_name("run_shutdown_probe.py")), phase, frontend],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -50,6 +50,13 @@ def _probe(phase: str, sig: signal.Signals) -> tuple[int, str, float]:
                 return
 
     try:
+        if sig is None:
+            process.stdin.close()
+            started = time.monotonic()
+            code = process.wait(timeout=10.0)
+            reader.join(timeout=2.0)
+            assert not reader.is_alive(), "probe output reader did not finish"
+            return code, "".join(lines), time.monotonic() - started
         if phase == "session":
             process.stdin.close()
         wait_for(phase)
@@ -84,6 +91,7 @@ def _probe(phase: str, sig: signal.Signals) -> tuple[int, str, float]:
         process.stdout.close()
 
 
+@pytest.mark.parametrize("frontend", ["cli", "realtime"])
 @pytest.mark.parametrize(
     ("phase", "sig"),
     [
@@ -107,8 +115,8 @@ def _probe(phase: str, sig: signal.Signals) -> tuple[int, str, float]:
         "cleanup-int",
     ],
 )
-def test_cli_stops_without_leaving_torque_on(phase: str, sig: signal.Signals) -> None:
-    code, output, elapsed = _probe(phase, sig)
+def test_frontend_stops_without_leaving_torque_on(phase: str, sig: signal.Signals, frontend: str) -> None:
+    code, output, elapsed = _probe(phase, sig, frontend)
     assert code == 0, output
     assert elapsed < 10.0, output
     if phase == "build":
@@ -122,3 +130,14 @@ def test_cli_stops_without_leaving_torque_on(phase: str, sig: signal.Signals) ->
             assert "probe:session" not in output, output
         if sig == signal.SIGINT and phase == "session":
             assert "probe:cleanup finished" not in output, output
+
+
+@pytest.mark.parametrize("phase", ["connect-error", "network-error"])
+def test_realtime_parks_when_startup_fails(phase: str) -> None:
+    code, output, elapsed = _probe(phase, None, "realtime")
+    assert code != 0, output
+    assert elapsed < 10.0, output
+    assert "park complete" in output, output
+    assert "probe:torque off" in output, output
+    assert "probe:log closed" in output, output
+    assert "probe:session" not in output, output

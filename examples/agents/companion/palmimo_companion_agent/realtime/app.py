@@ -22,10 +22,8 @@ import argparse
 import asyncio
 import contextlib
 import os
-import signal
 import sys
 import time
-from collections.abc import Iterator
 from typing import Any
 
 from palmimo_sdk import (
@@ -38,6 +36,14 @@ from palmimo_sdk import (
     resolve_alsa_device,
 )
 from palmimo_sdk.agent.toolset import AgentToolSet
+from palmimo_sdk.shutdown import (
+    TERMINATING_SIGNALS,
+    StopRequest,
+    loop_stop_on_signals,
+    park_async,
+    signals_ignored,
+    stop_flag_on_signals,
+)
 
 from ..core.tools import COMPANION_TOOL_MODELS, make_look_at_face_tool
 from ..core.toolview import IDLE_TOOL_NAMES, ToolView
@@ -67,11 +73,7 @@ from .state import Sleeping
 #: which this mirrors).
 EXCLUDED_TOOLS = ("creep", "say", "wave")
 
-#: How long shutdown waits for in-flight tool work to settle before it stops
-#: waiting. Palmimo.sleep()/wake() do not poll the cancel counter, so a tool
-#: inside one cannot be shortened; holding the process past a service
-#: manager's stop timeout would get it killed with the robot unparked.
-_SETTLE_TIMEOUT_S = 6.0
+_SETTLE_TIMEOUT_S = 3.0
 
 #: Per 1M tokens, for the cost line printed on exit.
 PRICES: dict[str, dict[str, float]] = {
@@ -164,72 +166,24 @@ def build_vision(palmimo: Palmimo, face_locator: FaceLocator) -> VisionWatch:
     return VisionWatch(camera, detectors)
 
 
-_SIGNALS = tuple(s for s in (getattr(signal, n, None) for n in ("SIGINT", "SIGTERM")) if s is not None)
-
-
-@contextlib.contextmanager
-def _signal_stop(stop: asyncio.Event) -> Iterator[None]:
-    """Make SIGINT/SIGTERM end the session promptly, and give the handlers back.
-
-    Setting a flag is not enough: services block on the socket, the camera
-    queue, or a mic read rather than polling one, so a flag alone would sit
-    unread until ``--seconds`` elapses -- past a service manager's stop
-    timeout, which then SIGKILLs the process with the cleanup unrun: no
-    return_to_neutral, no neck release, torque left on. So the handler both
-    sets *stop* (for anything that does poll it) and cancels the running
-    ``asyncio.timeout``/``TaskGroup`` via the event.
-
-    Handlers are removed on the way out. Installing one for SIGINT replaces
-    the KeyboardInterrupt disposition, so leaving it in place through a
-    shutdown that takes seconds would swallow the operator's second and
-    third Ctrl+C -- exactly when a misbehaving robot needs to be killed.
-    """
-    loop = asyncio.get_running_loop()
-    installed = []
-    for sig in _SIGNALS:
-        with contextlib.suppress(NotImplementedError):  # not available on Windows
-            loop.add_signal_handler(sig, stop.set)
-            installed.append(sig)
-    try:
-        yield
-    finally:
-        for sig in installed:
-            with contextlib.suppress(NotImplementedError):
-                loop.remove_signal_handler(sig)
-
-
 class _Stop(Exception):  # noqa: N818 -- internal control-flow signal, not a reported error
-    """Raised by :meth:`RealtimeSession._watch_stop` to end the session's task group promptly."""
+    """Raised by :meth:`RealtimeSession._watch_stop` to end the service wait promptly."""
 
 
 async def _wake_and_disconnect(palmimo: Palmimo, sleeping: Sleeping) -> None:
-    """Park the robot: wake first if asleep, then disconnect.
-
-    Shared between :meth:`RealtimeSession._shutdown` (the common case: the
-    session ran, and this is the last step of its own unwind) and ``_run``'s
-    outer ``finally`` (the field-common failure case: something between a
-    successful ``Palmimo.connect()`` and the session's first
-    ``await session.run(...)`` -- most often ``RealtimeClient.connect()``
-    itself, on a bad key or no network -- raised before a
-    :class:`RealtimeSession` even existed to park on its own). ``_run`` only
-    calls this when no session was built, so the two callers never race or
-    double-park the same robot.
-
-    A robot that is *asleep* is woken before the park, because
-    ``disconnect()`` parks by streaming the stand-up pose, and asleep means
-    the legs are on the reduced-gain ``sleep()`` left them at -- seconds of a
-    goal they cannot reach. If waking fails, the park is skipped rather than
-    fought.
-    """
-    if sleeping.asleep:
-        try:
-            await asyncio.to_thread(palmimo.wake)
-        except Exception:
-            with contextlib.suppress(Exception):
-                await asyncio.to_thread(palmimo.disconnect, park=False)
-            return
-    with contextlib.suppress(Exception):
-        await asyncio.to_thread(palmimo.disconnect)
+    """Wake for at most two seconds, then always attempt the SDK park."""
+    legs = not sleeping.asleep
+    try:
+        if not legs:
+            try:
+                async with asyncio.timeout(2.0):
+                    await asyncio.to_thread(palmimo.wake)
+            except Exception as exc:
+                print(f"wake failed before park: {exc}", file=sys.stderr, flush=True)
+            else:
+                legs = True
+    finally:
+        await park_async(palmimo, legs=legs)
 
 
 class RealtimeSession:
@@ -248,6 +202,7 @@ class RealtimeSession:
         usage: Usage,
         frame: LiveFrame,
         reflexes: ReflexRunner | None = None,
+        stop: StopRequest | None = None,
     ) -> None:
         self._client = client
         self._services = services
@@ -260,70 +215,61 @@ class RealtimeSession:
         self._frame = frame
         self._reflexes = reflexes
         self._stop = asyncio.Event()
+        self._request = stop if stop is not None else StopRequest()
 
     async def _watch_stop(self) -> None:
         await self._stop.wait()
         raise _Stop
 
     async def run(self, seconds: float) -> None:
-        """Run every service until *seconds* elapse, a service raises, or a signal arrives.
-
-        ``_shutdown`` runs OUTSIDE ``_signal_stop``'s ``with`` block, after
-        the signal handlers are removed -- not inside it. ``_signal_stop``'s
-        whole point is giving the operator's SIGINT/SIGTERM disposition back
-        before a shutdown that can itself take seconds (settling tool work,
-        closing the audio pipe, parking the robot); nesting the ``finally``
-        inside the ``with`` would keep the handler installed for that whole
-        stretch and swallow a 2nd/3rd Ctrl+C exactly when a misbehaving robot
-        needs to be killed.
-
-        ``_SessionClosed`` (raised by :class:`~.services.router.EventRouter`
-        when the server closes the socket) joins ``_Stop``/``TimeoutError``
-        here as a normal way the session ends, not an error to surface --
-        see that exception's own docstring for why a bare return from the
-        router would otherwise leave the other services running.
-        """
+        """Run services until stopped; the entry point owns resource shutdown."""
         started = time.monotonic()
+        tasks: list[asyncio.Task[None]] = []
         try:
-            with _signal_stop(self._stop):
-                try:
-                    async with asyncio.timeout(seconds), asyncio.TaskGroup() as tg:
-                        tg.create_task(self._watch_stop())
-                        for service in self._services:
-                            tg.create_task(service.run())
-                except* (_Stop, TimeoutError, _SessionClosed):
-                    pass
+            with loop_stop_on_signals(self._request, self._stop.set):
+                if not self._request.is_set():
+                    tasks = [asyncio.create_task(self._watch_stop())]
+                    tasks.extend(asyncio.create_task(service.run()) for service in self._services)
+                    done, _ = await asyncio.wait(tasks, timeout=seconds, return_when=asyncio.FIRST_EXCEPTION)
+                    for task in done:
+                        with contextlib.suppress(_Stop, _SessionClosed):
+                            task.result()
         finally:
-            await self._shutdown()
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                done, _ = await asyncio.wait(tasks, timeout=2.0)
+                for task in done:
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        task.result()
         print(f"\n{self._usage.report(time.monotonic() - started)}", flush=True)
         print(f"frames sent: {self._frame.pushed}", flush=True)
 
     async def _shutdown(self) -> None:
-        """End the session with the robot in a safe, known state. Order is the whole point.
+        """Bound settling and audio shutdown, then always wake and park."""
+        deadline = asyncio.get_running_loop().time() + _SETTLE_TIMEOUT_S
+        try:
+            try:
+                async with asyncio.timeout_at(deadline):
+                    await self._bridge.settle(max(0.0, deadline - asyncio.get_running_loop().time()))
+                    if self._reflexes is not None:
+                        await self._reflexes.settle(max(0.0, deadline - asyncio.get_running_loop().time()))
+            finally:
+                # close() seals the audio queue before its bounded joins; keep the loop
+                # free to receive a second SIGINT while those joins run.
+                await asyncio.to_thread(
+                    self._playback.close, timeout=max(0.0, deadline - asyncio.get_running_loop().time())
+                )
+            with contextlib.suppress(Exception):
+                async with asyncio.timeout_at(deadline):
+                    await self._watch.aclose()
+        except TimeoutError:
+            pass
+        finally:
+            await _wake_and_disconnect(self._palmimo, self._sleeping)
 
-        :meth:`~.bridge.ToolBridge.settle` covers every tool task the model
-        started (the ``TaskGroup`` has already cancelled the services
-        themselves, including the reflex runner, which dispatches
-        ``wave_both`` through the same toolset). :meth:`~.services.reflexes.ReflexRunner.settle`
-        covers the reflex engine's own detached notify-send tasks
-        separately -- those are not children of the reflex service's own
-        task, so the ``TaskGroup`` cancelling it never touches them (see
-        that method's docstring). Draining audio comes after the motions,
-        not before: :meth:`~.services.audio.Playback.close` blocks the loop
-        for seconds and nothing can be cancelled meanwhile. The
-        wake-before-park step itself is :func:`_wake_and_disconnect`, shared
-        with ``_run``'s own outer ``finally`` -- see its docstring.
-        """
-        await self._bridge.settle(_SETTLE_TIMEOUT_S)
-        if self._reflexes is not None:
-            await self._reflexes.settle(_SETTLE_TIMEOUT_S)
-        self._playback.close()
-        with contextlib.suppress(Exception):
-            await self._watch.aclose()
-        await _wake_and_disconnect(self._palmimo, self._sleeping)
 
-
-async def _run(args: argparse.Namespace) -> int:
+async def _run(args: argparse.Namespace, stop: StopRequest, startup: contextlib.ExitStack) -> int:
     overrides = {"port": args.port, "log_path": args.log_path}
     settings = load_settings(**{k: v for k, v in overrides.items() if v is not None})
     key = os.environ.get("OPENAI_API_KEY")
@@ -334,27 +280,38 @@ async def _run(args: argparse.Namespace) -> int:
     log = EventLog.open(settings.log_path)
     instructions = load_prompt("respond", args.reply_chars)
     idle_prompt = load_prompt("idle")
-    palmimo, _mic = build_robot(settings)
-    face_locator = FaceLocator()
-    toolset = build_toolset(palmimo, face_locator)
-    respond_view = ToolView(toolset, squash_say=True)
-    idle_tools = flatten(ToolView(toolset, allow=IDLE_TOOL_NAMES, squash_say=True).to_openai_tools())
-    tools = flatten(respond_view.to_openai_tools())
+    palmimo: Palmimo | None = None
     sleeping = Sleeping()
-    usage = Usage(args.model)
-    frame = LiveFrame(palmimo.camera)
-    watch = build_vision(palmimo, face_locator)
-
-    await asyncio.to_thread(palmimo.connect)
-    # `session` stays None until RealtimeSession is actually constructed.
-    # Anything between here and that point raising -- most commonly
-    # RealtimeClient.connect() itself, on a bad key or no network -- must
-    # still park the robot: the outer `finally` below owns that case, since
-    # once `session` exists, `session.run()`'s own `finally` (RealtimeSession
-    # ._shutdown) always runs before this coroutine can unwind any further.
     session: RealtimeSession | None = None
+    clients = contextlib.AsyncExitStack()
+    playback: Playback | None = None
     try:
-        async with RealtimeClient.connect(model=args.model, api_key=key) as client:
+        palmimo, _mic = build_robot(settings)
+        face_locator = FaceLocator()
+        toolset = build_toolset(palmimo, face_locator)
+        respond_view = ToolView(toolset, squash_say=True)
+        idle_tools = flatten(ToolView(toolset, allow=IDLE_TOOL_NAMES, squash_say=True).to_openai_tools())
+        tools = flatten(respond_view.to_openai_tools())
+        usage = Usage(args.model)
+        frame = LiveFrame(palmimo.camera)
+        watch = build_vision(palmimo, face_locator)
+
+        if stop.is_set():
+            print("stop requested during startup; skipping connect", file=sys.stderr, flush=True)
+            return 0
+        await asyncio.to_thread(palmimo.connect)
+        if stop.is_set():
+            print("stop requested during connect; parking", file=sys.stderr, flush=True)
+            return 0
+        startup.close()
+        current = asyncio.current_task()
+        assert current is not None
+
+        def cancel_setup() -> None:
+            current.cancel()
+
+        with loop_stop_on_signals(stop, cancel_setup):
+            client = await clients.enter_async_context(RealtimeClient.connect(model=args.model, api_key=key))
             await client.send(
                 SessionUpdate(
                     instructions=instructions,
@@ -394,12 +351,34 @@ async def _run(args: argparse.Namespace) -> int:
                 usage=usage,
                 frame=frame,
                 reflexes=reflexes,
+                stop=stop,
             )
-            await session.run(args.seconds)
+        await session.run(args.seconds)
+    except asyncio.CancelledError:
+        if not stop.is_set():
+            raise
     finally:
-        if session is None:
-            await _wake_and_disconnect(palmimo, sleeping)
-        log.close()
+        try:
+            startup.close()
+        finally:
+            try:
+                if session is not None:
+                    await session._shutdown()
+                elif palmimo is not None:
+                    try:
+                        if playback is not None:
+                            await asyncio.to_thread(playback.close, timeout=_SETTLE_TIMEOUT_S)
+                    finally:
+                        await _wake_and_disconnect(palmimo, sleeping)
+            finally:
+                try:
+                    if (elapsed := stop.seconds_since()) is not None:
+                        print(f"park attempt finished {elapsed:.2f}s after stop requested", file=sys.stderr, flush=True)
+                    with contextlib.suppress(TimeoutError):
+                        async with asyncio.timeout(2.0):
+                            await clients.aclose()
+                finally:
+                    log.close()
     return 0
 
 
@@ -462,8 +441,11 @@ def main() -> int:
         port=parsed.port,
         log_path=parsed.log_path,
     )
+    stop = StopRequest()
     try:
-        return asyncio.run(_run(args))
+        with signals_ignored(*TERMINATING_SIGNALS), contextlib.ExitStack() as startup:
+            startup.enter_context(stop_flag_on_signals(stop))
+            return asyncio.run(_run(args, stop, startup))
     except KeyboardInterrupt:
         return 0
 

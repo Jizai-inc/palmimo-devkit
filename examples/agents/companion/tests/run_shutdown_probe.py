@@ -23,6 +23,7 @@ from palmimo_sdk import Palmimo, ServoDriver
 
 
 PHASE = sys.argv[1]
+FRONTEND = sys.argv[2] if len(sys.argv) > 2 else "cli"
 
 
 def mark(phase: str) -> None:
@@ -45,6 +46,8 @@ class FakeDriver(ServoDriver):
         if PHASE == "connect":
             sys.stdin.readline()
         mark("connect finished")
+        if PHASE == "connect-error":
+            raise RuntimeError("probe connect failed")
 
     def disconnect(self) -> None:
         if self._connected:
@@ -97,9 +100,72 @@ def build_probe_runtime(settings: PipelineSettings) -> wiring.Runtime:
     return runtime
 
 
+def run_realtime() -> None:
+    from contextlib import asynccontextmanager
+
+    from palmimo_companion_agent.realtime import app
+
+    class Service:
+        name = "probe"
+
+        async def run(self) -> None:
+            mark("session")
+            await asyncio.Event().wait()
+
+        async def settle(self, timeout: float) -> None:
+            mark("cleanup")
+            await asyncio.sleep(0.8)
+            mark("cleanup finished")
+
+        async def aclose(self) -> None:
+            pass
+
+        def close(self, **kwargs: Any) -> None:
+            pass
+
+    class Client:
+        async def send(self, event: Any) -> None:
+            pass
+
+    @asynccontextmanager
+    async def connect(**kwargs: Any) -> Any:
+        if PHASE == "network-error":
+            raise RuntimeError("probe network failed")
+        yield Client()
+
+    def robot(settings: Any) -> tuple[Palmimo, Any]:
+        palmimo = Palmimo(driver=FakeDriver())
+        if PHASE == "build":
+            mark("build")
+            sys.stdin.readline()
+        return palmimo, None
+
+    service = Service()
+    with (
+        patch.object(app, "build_robot", robot),
+        patch.object(app, "FaceLocator"),
+        patch.object(app, "build_vision", return_value=service),
+        patch.object(app.RealtimeClient, "connect", connect),
+        patch.object(app.EventLog, "open", return_value=EventLog()),
+        patch.object(app, "resolve_alsa_device", return_value=None),
+        patch.object(app, "Playback", return_value=service),
+        patch.object(app, "ToolBridge", return_value=service),
+        patch.object(app, "MicrophoneFeed", return_value=service),
+        patch.object(app, "EventRouter", return_value=service),
+        patch.object(app, "IdleTicker", return_value=service),
+        patch.object(app, "FramePusher", return_value=service),
+        patch.object(app, "build_reflex_runner", return_value=service),
+    ):
+        sys.argv = [sys.argv[0]]
+        sys.exit(app.main())
+
+
 if __name__ == "__main__":
     os.environ["GEMINI_API_KEY"] = "test-key"
     os.environ["OPENAI_API_KEY"] = "test-key"
-    sys.argv = [sys.argv[0], "--ui", "cli", "--no-hardware", "--no-stdin"]
-    with patch("palmimo_companion_agent.pipeline.ui.cli.build_runtime", build_probe_runtime):
-        run()
+    if FRONTEND == "realtime":
+        run_realtime()
+    else:
+        sys.argv = [sys.argv[0], "--ui", "cli", "--no-hardware", "--no-stdin"]
+        with patch("palmimo_companion_agent.pipeline.ui.cli.build_runtime", build_probe_runtime):
+            run()

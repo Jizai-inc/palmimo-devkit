@@ -15,6 +15,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 from fractions import Fraction
 from typing import Any, Protocol
 
@@ -133,10 +134,9 @@ class Playback:
     blocking ``process.wait()`` there would reintroduce the exact stall this
     class exists to avoid.
 
-    ``write()``, :meth:`interrupt`, and :meth:`close` are only ever meant to
-    be called from a single thread -- the event loop's, via
+    ``write()`` and :meth:`interrupt` are called from the event loop, via
     :class:`~..services.router.EventRouter` / :class:`~..services.router.BargeIn`
-    -- never from each other and never concurrently with themselves. That
+    -- never concurrently with :meth:`close`, which runs after services stop. That
     serialization is load-bearing: it is what lets ``close()`` discard the
     queue and enqueue its sentinel without racing a concurrent ``write()``,
     and what lets ``interrupt()`` bump the generation counter and clear the
@@ -333,75 +333,50 @@ class Playback:
             self._pending_kills.append((thread, process))
         thread.start()
 
-    def close(self) -> None:
-        """Stop the writer thread and reap the current process. Allowed to block: this runs once, at session end.
+    def close(self, *, timeout: float = 3.0) -> None:
+        """Seal the audio queue, kill playback, and share one deadline across joins.
 
-        The queue is discarded (not drained through the writer) before the
-        stop sentinel is enqueued, so the writer sees the sentinel next and
-        exits promptly instead of working through however much audio is
-        still backed up -- by session end the motions have already been
-        parked, so finishing a whole queued reply is not owed; audio already
-        sitting in ``aplay``'s own buffer may still finish playing out, only
-        what was queued but not yet written is dropped. ``_closed`` is set
-        first so a chunk the writer had already dequeued before ``close()``
-        ran is dropped by :meth:`_ensure_process` rather than spawning a
-        fresh ``aplay`` that would outlive this call.
-
-        ``process.kill()`` runs before ``process.stdin.close()``. Reversing
-        that order can hang this call indefinitely: a writer thread wedged
-        inside a blocking ``stdin.write()`` (ALSA backpressure -- the same
-        condition that makes the writer join below time out) holds that
-        stdin object's own internal lock, so closing it first blocks this
-        call until the write itself returns -- which, for a genuinely
-        wedged write, never happens on its own. Killing first makes the
-        wedged write fail (EPIPE) and release that lock, so the
-        ``stdin.close()`` that follows is no longer waiting on anything. The
-        same reasoning applies to :func:`_kill_and_reap` on the
-        :meth:`interrupt` path.
-
-        Any kill/reap thread still running from a recent :meth:`interrupt`
-        is joined here too (bounded): a process ``interrupt()`` handed off
-        right before ``close()`` ran must not be abandoned just because
-        ``_process`` was already ``None`` by the time this method looked at
-        it. If that join still times out, the process is killed directly --
-        the tracked entry holds the ``Popen`` itself, so this does not need
-        the other thread to finish. A ``wait()`` that times out on this
-        call's own process is followed by a ``kill()`` and one more bounded
-        ``wait()`` rather than giving up -- so a live ``aplay`` is never
-        abandoned on the way out.
+        Services must have stopped writing before this call. It may run on a
+        worker thread once the event loop has cancelled those services. Kill
+        before joining the writer: ALSA backpressure can hold stdin's lock
+        until the player dies. If the writer still holds that lock at the
+        deadline, leave stdin to its owner rather than blocking in close().
         """
+        deadline = time.monotonic() + timeout
+
+        def remaining() -> float:
+            return max(0.0, deadline - time.monotonic())
+
         with self._process_lock:
             self._closed = True
-        if self._writer is not None:
-            with contextlib.suppress(queue.Empty):
-                while True:
-                    self._queue.get_nowait()
-            self._queue.put(None)  # sentinel: stop the writer thread
-            self._writer.join(timeout=5)
-        with self._process_lock:
             process, self._process = self._process, None
             pending = list(self._pending_kills)
-        for thread, pending_process in pending:
-            thread.join(timeout=2)
-            if thread.is_alive():
-                with contextlib.suppress(Exception):
-                    pending_process.kill()
-                with contextlib.suppress(Exception):
-                    pending_process.wait(timeout=2)
-        if process is None:
-            return
-        with contextlib.suppress(Exception):
-            process.kill()
-        with contextlib.suppress(Exception):
-            if process.stdin is not None:
-                process.stdin.close()
-        try:
-            process.wait(timeout=5)
-        except Exception:
+        with contextlib.suppress(queue.Empty):
+            while True:
+                self._queue.get_nowait()
+        self._queue.put(None)
+        processes = [proc for _, proc in pending]
+        if process is not None:
+            processes.append(process)
+        for proc in processes:
             with contextlib.suppress(Exception):
-                process.kill()
-            with contextlib.suppress(Exception):
-                process.wait(timeout=5)
+                proc.kill()
+        if self._writer is not None:
+            self._writer.join(timeout=remaining())
+        for thread, _ in pending:
+            thread.join(timeout=remaining())
+        for proc in processes:
+            if self._writer is None or not self._writer.is_alive():
+                with contextlib.suppress(Exception):
+                    if proc.stdin is not None:
+                        proc.stdin.close()
+            try:
+                proc.wait(timeout=remaining())
+            except Exception:
+                with contextlib.suppress(Exception):
+                    proc.kill()
+                with contextlib.suppress(Exception):
+                    proc.wait(timeout=remaining())
 
 
 __all__ = ["API_RATE", "CAPTURE_RATE", "MicStreamLike", "MicrophoneFeed", "PitchShifter", "Playback"]

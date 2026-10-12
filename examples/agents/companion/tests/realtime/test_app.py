@@ -12,6 +12,8 @@ import contextlib
 import time
 from typing import Any, cast
 
+import pytest
+
 from palmimo_companion_agent.realtime import app as app_module
 from palmimo_companion_agent.realtime.app import RealtimeSession
 from palmimo_companion_agent.realtime.bridge import ToolBridge
@@ -37,7 +39,7 @@ class _Recorder:
         self.order.append("bridge.settle")
 
     # Playback
-    def close(self) -> None:
+    def close(self, *, timeout: float = 3.0) -> None:
         self.order.append("playback.close")
 
     # VisionWatch
@@ -45,10 +47,14 @@ class _Recorder:
         self.order.append("watch.aclose")
 
     # Palmimo
+    has_connectable_resource = True
+    is_connected = True
+
     def wake(self) -> None:
         self.order.append("wake")
 
     def disconnect(self, park: bool = True) -> None:
+        self.is_connected = False
         self.park = park
         self.order.append("disconnect")
 
@@ -70,9 +76,7 @@ def _session(recorder: _Recorder, *, asleep: bool) -> RealtimeSession:
 
 
 async def test_a_closed_socket_ends_the_session_cleanly_and_still_parks() -> None:
-    """The router raising _SessionClosed (see that exception's own docstring: a TaskGroup does
-    not cancel siblings just because one task returns normally) must be swallowed by run()'s own
-    except* -- not propagate out -- and _shutdown must still run."""
+    """A closed socket must end the service loop before the duration expires."""
 
     class _ClosesImmediately:
         name = "router"
@@ -93,7 +97,10 @@ async def test_a_closed_socket_ends_the_session_cleanly_and_still_parks() -> Non
         frame=LiveFrame(camera=None),
     )
 
-    await session.run(30.0)  # must return normally, not raise, and not wait out the 30s timeout
+    try:
+        await session.run(30.0)
+    finally:
+        await session._shutdown()
 
     assert recorder.order == ["bridge.settle", "playback.close", "watch.aclose", "disconnect"]
 
@@ -169,94 +176,14 @@ async def test_shutdown_skips_the_park_when_waking_a_sleeping_robot_fails() -> N
 
 
 async def test_wake_and_disconnect_parks_a_robot_that_never_became_a_session() -> None:
-    """Mirrors _run()'s own outer `finally`: a failure between Palmimo.connect() succeeding
-    and a RealtimeSession ever being built (most commonly RealtimeClient.connect() itself,
-    on a bad key or no network) must still park the robot -- this is the function that guard
-    calls, so exercising it directly proves the fix without needing a live websocket/hardware."""
+    """The pre-session cleanup must release connected resources."""
+
     recorder = _Recorder()
 
     await app_module._wake_and_disconnect(cast(Palmimo, recorder), Sleeping())
 
     assert recorder.order == ["disconnect"]
     assert recorder.park is True
-
-
-async def test_the_signal_handlers_are_installed_for_the_session_and_given_back() -> None:
-    """Installing one for SIGINT replaces the KeyboardInterrupt disposition, so leaving it in
-    place through a multi-second shutdown swallows the operator's second and third Ctrl+C."""
-
-    class _Loop:
-        def __init__(self) -> None:
-            self.added: list[Any] = []
-            self.removed: list[Any] = []
-
-        def add_signal_handler(self, sig: Any, cb: Any) -> None:
-            self.added.append(sig)
-
-        def remove_signal_handler(self, sig: Any) -> None:
-            self.removed.append(sig)
-
-    loop = _Loop()
-
-    async def _drive() -> None:
-        with app_module._signal_stop(asyncio.Event()):
-            assert loop.added, "no handler was installed"
-            assert not loop.removed
-
-    import unittest.mock
-
-    with unittest.mock.patch.object(asyncio, "get_running_loop", return_value=loop):
-        await _drive()
-
-    assert loop.added == loop.removed, "a signal handler outlived the session"
-
-
-async def test_signal_handlers_are_removed_before_shutdown_runs() -> None:
-    """Nesting _shutdown inside _signal_stop's `with` would keep the handler installed for the
-    whole shutdown -- exactly the multi-second stretch a stuck robot most needs a 2nd/3rd
-    Ctrl+C to interrupt. Runs a real RealtimeSession.run() end to end (timing out almost
-    immediately, no services) and checks the handler-removal events precede _shutdown's."""
-    events: list[str] = []
-
-    class _OrderRecorder(_Recorder):
-        async def settle(self, timeout: float) -> None:
-            events.append("bridge.settle")
-            await super().settle(timeout)
-
-    recorder = _OrderRecorder()
-    session = RealtimeSession(
-        client=cast(Any, None),
-        services=[],
-        bridge=cast(ToolBridge, recorder),
-        playback=cast(Playback, recorder),
-        watch=cast(Any, recorder),
-        palmimo=cast(Palmimo, recorder),
-        sleeping=Sleeping(),
-        usage=cast(Any, app_module.Usage("gpt-realtime-2.1")),
-        frame=LiveFrame(camera=None),
-    )
-
-    loop = asyncio.get_running_loop()
-
-    def fake_add(sig: Any, cb: Any) -> None:
-        events.append(f"add:{sig}")
-
-    def fake_remove(sig: Any) -> None:
-        events.append(f"remove:{sig}")
-
-    import unittest.mock
-
-    with (
-        unittest.mock.patch.object(loop, "add_signal_handler", side_effect=fake_add, create=True),
-        unittest.mock.patch.object(loop, "remove_signal_handler", side_effect=fake_remove, create=True),
-    ):
-        await session.run(0.01)  # times out almost immediately -- no services to wait on
-
-    assert any(e.startswith("add:") for e in events), "no signal handler was ever installed"
-    remove_indices = [i for i, e in enumerate(events) if e.startswith("remove:")]
-    settle_index = events.index("bridge.settle")
-    assert remove_indices, "no signal handler was ever removed"
-    assert all(i < settle_index for i in remove_indices), "shutdown began before the signal handlers were removed"
 
 
 async def test_bridge_settle_does_not_wait_forever_on_an_uncancellable_tool() -> None:
@@ -290,3 +217,61 @@ async def test_bridge_settle_does_not_wait_forever_on_an_uncancellable_tool() ->
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.parametrize("phase", ["settle", "close", "vision"])
+async def test_shutdown_parks_when_cleanup_fails(phase: str) -> None:
+    class Fails(_Recorder):
+        async def settle(self, timeout: float) -> None:
+            if phase == "settle":
+                raise RuntimeError("settle failed")
+            await super().settle(timeout)
+
+        def close(self, *, timeout: float = 3.0) -> None:
+            if phase == "close":
+                raise RuntimeError("close failed")
+            super().close(timeout=timeout)
+
+        async def aclose(self) -> None:
+            if phase == "vision":
+                raise RuntimeError("vision failed")
+            await super().aclose()
+
+    recorder = Fails()
+    with contextlib.suppress(RuntimeError):
+        await _session(recorder, asleep=False)._shutdown()
+    assert recorder.order[-1] == "disconnect"
+    assert recorder.park is True
+
+
+async def test_shutdown_shares_one_deadline_for_settling_and_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Slow(_Recorder):
+        close_timeout = -1.0
+
+        async def settle(self, timeout: float) -> None:
+            await asyncio.sleep(0.04)
+
+        def close(self, *, timeout: float = 3.0) -> None:
+            self.close_timeout = timeout
+            time.sleep(timeout)
+            super().close(timeout=timeout)
+
+    monkeypatch.setattr(app_module, "_SETTLE_TIMEOUT_S", 0.06)
+    recorder = Slow()
+    started = time.monotonic()
+    await _session(recorder, asleep=False)._shutdown()
+    assert 0 <= recorder.close_timeout < 0.04
+    assert time.monotonic() - started < 0.5
+    assert recorder.park is True
+
+
+async def test_shutdown_parks_when_settling_exceeds_its_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Slow(_Recorder):
+        async def settle(self, timeout: float) -> None:
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(app_module, "_SETTLE_TIMEOUT_S", 0.02)
+    recorder = Slow()
+    await asyncio.wait_for(_session(recorder, asleep=False)._shutdown(), timeout=0.5)
+    assert recorder.order == ["playback.close", "disconnect"]
+    assert recorder.park is True
