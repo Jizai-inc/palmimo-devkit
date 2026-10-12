@@ -316,6 +316,9 @@ class RealtimeSession:
         wake-before-park step itself is :func:`_wake_and_disconnect`, shared
         with ``_run``'s own outer ``finally`` -- see its docstring.
         """
+        if self._stop.is_set():
+            # A service can hand playback one more chunk between the stop and its own cancellation.
+            self._playback.interrupt()
         await self._bridge.settle(_SETTLE_TIMEOUT_S)
         if self._reflexes is not None:
             await self._reflexes.settle(_SETTLE_TIMEOUT_S)

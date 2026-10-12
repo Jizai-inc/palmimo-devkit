@@ -101,18 +101,26 @@ async def test_a_closed_socket_ends_the_session_cleanly_and_still_parks() -> Non
     assert recorder.order == ["bridge.settle", "playback.close", "watch.aclose", "disconnect"]
 
 
-async def test_a_stop_signal_silences_playback_before_shutdown_settles_anything() -> None:
+async def test_a_stop_signal_silences_playback_at_once_and_again_after_the_services_stop() -> None:
     recorder = _Recorder()
     session = _session(recorder, asleep=False)
     session._usage = cast(Any, app_module.Usage("gpt-realtime-2.1"))
     session._frame = LiveFrame(camera=None)
+
+    class _WritesOnceMoreAfterTheStop:
+        async def run(self) -> None:
+            await session._stop.wait()
+            recorder.order.append("late write")
+            await asyncio.sleep(3600)
+
+    session._services = [cast(Any, _WritesOnceMoreAfterTheStop())]
 
     running = asyncio.create_task(session.run(30.0))
     await asyncio.sleep(0)
     session._stop.set()
     await running
 
-    assert recorder.order[:2] == ["playback.interrupt", "bridge.settle"]
+    assert recorder.order[:4] == ["playback.interrupt", "late write", "playback.interrupt", "bridge.settle"]
 
 
 async def test_a_session_that_times_out_does_not_cut_playback_short() -> None:
