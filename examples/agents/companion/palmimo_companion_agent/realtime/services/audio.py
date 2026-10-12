@@ -215,9 +215,6 @@ class Playback:
                 self._process = subprocess.Popen(
                     ["aplay", "-q", *device, "-t", "raw", "-f", "S16_LE", "-r", str(API_RATE), "-c", "1"],
                     stdin=subprocess.PIPE,
-                    # Out of the terminal's process group, so Ctrl+C does not
-                    # end it behind the writer's back: interrupt() and close() do.
-                    start_new_session=True,
                 )
             return self._process
 
