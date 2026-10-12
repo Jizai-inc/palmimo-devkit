@@ -79,6 +79,7 @@ from palmimo_sdk._signals import signals_ignored
 from palmimo_sdk.agent import AgentToolSet
 from palmimo_sdk.agent.toolset import TOOL_MODELS
 from palmimo_sdk.reservation import ReservationError
+from palmimo_sdk.shutdown import _report
 
 from .server import TOOL_CALL_LOG_DETAILS, build_mcp_server
 
@@ -599,7 +600,7 @@ def _shutdown_signals_ignored() -> Iterator[None]:
 
 
 def _park_and_close(robot: Palmimo, shutdown: _ShutdownRequest) -> None:
-    """Park *robot* and close its peripherals, uninterruptibly, reporting on stderr.
+    """Park *robot* and close its peripherals, uninterruptibly, with best-effort reports on stderr.
 
     The start/finish lines are the only evidence a hardware run gets that the
     torque-off actually completed: without them a park cut short by an
@@ -617,18 +618,18 @@ def _park_and_close(robot: Palmimo, shutdown: _ShutdownRequest) -> None:
     """
     parking = robot.is_connected
     if parking:
-        print("parking the robot -- easing to neutral and releasing servo torque...", file=sys.stderr)
+        _report("parking the robot -- easing to neutral and releasing servo torque...", sys.stderr)
     with _shutdown_signals_ignored():
         robot.disconnect(park=True)
     if parking:
-        print("park complete -- servo torque released", file=sys.stderr)
+        _report("park complete -- servo torque released", sys.stderr)
     elapsed = shutdown.seconds_since()
     if elapsed is not None and elapsed > _SHUTDOWN_BUDGET_SECONDS:
-        print(
+        _report(
             f"WARNING: shutdown took {elapsed:.2f}s, over the {_SHUTDOWN_BUDGET_SECONDS:.1f}s an MCP client "
             "allows before SIGKILL -- a client-driven stop this slow is killed mid-park and leaves the "
             "servos energised.",
-            file=sys.stderr,
+            sys.stderr,
         )
 
 

@@ -186,7 +186,8 @@ def interrupt_on_signals(stop: StopRequest, *signums: signal.Signals) -> Iterato
 
     For a program that has handed control to something else -- Textual's app
     loop, uvicorn -- and only needs its own ``finally`` to run. Raising uses
-    Python's ``KeyboardInterrupt`` unwind path.
+    Python's ``KeyboardInterrupt`` unwind path that Ctrl-C already uses, so
+    callers need no second stop path to keep in sync.
 
     While Textual owns the terminal it clears ``ISIG``, so Ctrl-C and Ctrl-\\
     arrive as key input (Ctrl-C shows a help hint), not as signals. For Textual,
@@ -386,9 +387,10 @@ def _running_loop() -> asyncio.AbstractEventLoop:
     return asyncio.get_running_loop()
 
 
-def _report(message: str, stream: TextIO) -> None:
-    with contextlib.suppress(OSError, ValueError):
-        print(message, file=stream, flush=True)
+def _report(message: object, stream: TextIO, *details: object) -> None:
+    """Write shutdown diagnostics without letting formatting or output failures escape."""
+    with contextlib.suppress(Exception):
+        print(message, *details, sep="", file=stream, flush=True)
 
 
 def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> None:
@@ -406,7 +408,8 @@ def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> Non
     torque-off, nor an ``Exception`` from the driver, comes back out of here to
     replace a clean exit -- or the error that started the shutdown -- with a
     traceback from the teardown.
-    Output is best-effort: a failed output stream never prevents torque-off.
+    Output to *out* (stderr by default) is best-effort: a failed output stream
+    never prevents torque-off, but reports are lost when it is unusable.
 
     *legs* false skips only the leg return to neutral, keeping the neck
     soft-release and the torque-off -- for a robot that may already be in a bad
@@ -417,9 +420,8 @@ def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> Non
     indistinguishable from a clean shutdown, since callers suppress the
     interrupt and exit 0 either way. The completion line is deliberately after
     the call, so a partial park cannot be reported as success -- and a failure
-    that was held rather than raised replaces it with a line saying torque may
-    still be on, because a swallowed driver error would otherwise read as a
-    successful park.
+    that was held rather than raised is reported with a line saying torque may
+    still be on, when the failure can be formatted and the output is usable.
     """
     stream = sys.stderr if out is None else out
     # The ignore covers the whole body, not just the disconnect. This is
@@ -454,9 +456,12 @@ def park(robot: Palmimo, *, legs: bool = True, out: TextIO | None = None) -> Non
             failure = None
         if failure is not None:
             _report(
-                f"PARK FAILED -- servo torque may still be on ({type(failure).__name__}: {failure}). "
-                "Unplug the AC adapter before handling the robot.",
+                "PARK FAILED -- servo torque may still be on (",
                 stream,
+                type(failure).__name__,
+                ": ",
+                failure,
+                "). Unplug the AC adapter before handling the robot.",
             )
         elif parking:
             _report("park complete -- servo torque released", stream)

@@ -1353,6 +1353,43 @@ def test_shutdown_request_clock_starts_at_the_first_signal_not_the_last(
     assert shutdown.seconds_since() == 10.0, "the repeat signal restarted the shutdown clock"
 
 
+@pytest.mark.parametrize("error", [BrokenPipeError("closed pipe"), OSError(5, "Input/output error")])
+@pytest.mark.parametrize("phase", ["start", "complete", "overrun"])
+def test_park_and_close_disconnects_when_stderr_is_unwritable(
+    monkeypatch: pytest.MonkeyPatch, error: Exception, phase: str
+) -> None:
+    """Lost stdio diagnostics must not block MCP's park or escape its teardown."""
+    disconnected = False
+
+    class Robot:
+        is_connected = True
+
+        def disconnect(self, *, park: bool) -> None:
+            nonlocal disconnected
+            assert park
+            disconnected = True
+
+    class Stream:
+        def write(self, s: str, /) -> int:
+            if (
+                (phase == "start" and not disconnected)
+                or (phase == "complete" and disconnected)
+                or (phase == "overrun" and s.startswith("WARNING"))
+            ):
+                raise error
+            return len(s)
+
+        def flush(self) -> None:
+            pass
+
+    monkeypatch.setattr(mcp_main._ShutdownRequest, "seconds_since", lambda self: mcp_main._SHUTDOWN_BUDGET_SECONDS + 1)
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "stderr", Stream())
+        mcp_main._park_and_close(cast(Palmimo, Robot()), mcp_main._ShutdownRequest())
+
+    assert disconnected, "stderr failure prevented disconnect"
+
+
 def test_park_and_close_reports_a_shutdown_that_overran_the_client_kill_deadline(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

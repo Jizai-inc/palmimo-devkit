@@ -601,7 +601,7 @@ Where every stop path ends, and the three ways a signal reaches it. Import as
 
 | Name | Purpose |
 |------|---------|
-| `shutdown.park(robot, *, legs=True, out=None)` | Release servo torque, uninterruptibly, reporting both ends of the park on stderr. Safe to call more than once and on a robot that was never connected, so it belongs in a `finally` without a guard. |
+| `shutdown.park(robot, *, legs=True, out=None)` | Release servo torque, uninterruptibly, with best-effort reports of both ends on stderr (or `out`, if supplied). Reports may be lost when output is unusable or a failure cannot be formatted. Safe to call more than once and on a robot that was never connected, so it belongs in a `finally` without a guard. |
 | `shutdown.park_async(robot, ...)` | The same, for a caller that must not block its event loop: the park runs in a worker thread while the loop's own thread holds the signal protection. |
 | `shutdown.StopRequest` | "A stop was asked for", and how long ago. The one piece of shutdown state; delivery is the caller's. |
 | `shutdown.signals_ignored(*signums)` | Discard signals for a block — what makes the park the one stretch a repeat signal cannot cut short. |
