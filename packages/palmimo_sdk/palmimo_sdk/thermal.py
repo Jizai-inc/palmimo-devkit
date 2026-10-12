@@ -29,7 +29,7 @@ from .telemetry import READ_FAILURE_LOG_INTERVAL_S, TelemetryPoller
 
 
 if TYPE_CHECKING:
-    from .io.base import ServoDriver
+    from .io.base import ServoDriver, ServoTelemetry
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,7 @@ class NeckThermalGuard:
         # (a stale or incomplete sweep); only a driver=None poll or a
         # complete sweep at/below NECK_COOL_C clears it.
         self._neck_lock_active = False
+        self._sweep: tuple[float, ServoTelemetry] | None = None
 
     @property
     def state(self) -> NeckThermalState:
@@ -173,6 +174,7 @@ class NeckThermalGuard:
         new one has its own problem rather than being silently suppressed by
         a timer left over from the old one.
         """
+        self._sweep = None
         self._poller.reset()
         self._last_missing_log = None
 
@@ -186,6 +188,7 @@ class NeckThermalGuard:
         so :meth:`~palmimo_sdk.robot.Palmimo.step` doesn't have to track it.
         """
         if driver is None:
+            self._sweep = None
             self._state = NeckThermalState.UNMONITORED
             self._temperature_c = None
             self._neck_lock_active = False
@@ -210,6 +213,7 @@ class NeckThermalGuard:
         if telemetry is None:
             self._check_stale(now)
             return
+        self._sweep = (now, telemetry)
         readings = {m: telemetry.temperature[m] for m in self._motors if m in telemetry.temperature}
         if len(readings) < len(self._motors):
             missing = [m for m in self._motors if m not in readings]
@@ -226,6 +230,11 @@ class NeckThermalGuard:
         self._temperature_c = float(max(readings.values()))
         self._last_complete_read_at = now
         self._advance_state(self._temperature_c)
+
+    def take_sweep(self) -> tuple[float, ServoTelemetry] | None:
+        """Consume the latest successful telemetry sweep, including partial readings."""
+        sweep, self._sweep = self._sweep, None
+        return sweep
 
     def _check_stale(self, now: float) -> None:
         """Fall back to UNMONITORED once the last complete sweep is too old to trust.
