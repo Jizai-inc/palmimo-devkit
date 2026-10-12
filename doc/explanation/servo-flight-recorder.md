@@ -29,9 +29,10 @@ spans more seconds with fewer details, and a new connection has less history.
 For a filled fast ring at nominal rate, the budget is
 `history >= detection delay + post-trigger tail + useful lead-up`.
 With regular stepping at at least 30 fps, the scheduling delay is nominally at
-most `1 + 2 / fps` seconds, excluding bus duration and stalls. At 30 fps this
-leaves about `8 - 1.07 - 2 = 4.93` seconds before the physical event, or
-`8 - 1.07 - 4 = 2.93` seconds with the longest folded tail. Both leave room for
+most `1 + 3 / fps` seconds, allowing one frame to notice that the poll is due
+and two to defer it, excluding bus duration and stalls. At 30 fps this
+leaves about `8 - 1.10 - 2 = 4.90` seconds before the physical event, or
+`8 - 1.10 - 4 = 2.90` seconds with the longest folded tail. Both leave room for
 a two-second lead-up. The context budget is 30 preceding entries, up to four
 tail entries, one trigger entry, and one spare: 36. These are sizing estimates;
 the timestamps and actual captured tail in each file determine its coverage.
@@ -79,9 +80,10 @@ Each axis's first successful response establishes its connection baseline. A
 latch already present then is logged but produces no file: there is no useful
 pre-event history to save. Waiting for one complete response from every axis
 would let a permanently silent axis prevent baselining all the others. Retaining
-known latches across reconnects also avoids repeated reports of an unchanged
-condition. The recorder never sends REBOOT: clearing a hardware-error latch
-requires a servo reboot or power cycle, which is a separate recovery decision.
+known latches across reconnects also keeps an unchanged condition from becoming
+a new incident on each connection. The recorder never sends REBOOT: clearing a
+hardware-error latch requires a servo reboot or power cycle, which is a separate
+recovery decision.
 
 ## Finish torque shutdown before storage work
 
@@ -115,7 +117,10 @@ It is not a fleet-wide archive.
 The recorder does not automatically delete captures. Age alone cannot identify
 which incident still matters, and an automatic retention limit could erase the
 evidence being investigated. Connection-time size and incomplete-file warnings
-make accumulation visible without changing it.
+make accumulation visible without changing it. The separate
+[per-connection capture limit](../reference/api-reference.md#capture-and-flushing)
+bounds repeated write stalls if a brownout repeatedly resets a servo and it
+latches again; it does not delete the evidence already saved.
 
 ## Recording depends on the enabled guards
 

@@ -70,13 +70,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from ._flight_recorder import ServoFlightRecorder, default_incident_dir
 from ._flight_ride import FlightRide
 from ._leg_safety import LegSafety
 from ._signals import signals_ignored
 from .engine import NECK_GESTURES, Motion, MotionEngine
-from .flight_recorder import ServoFlightRecorder, default_incident_dir
 from .io import FaceDisplay, HeadCamera, Microphone, MicStream, ServoDriver, Speaker, SpeechHandle
-from .io.base import clamp_goal_tick
+from .io.base import SAFE_MAX_TICK, SAFE_MIN_TICK
 from .kinematics import leg_motors
 from .overload import (
     ARM_OVERLOAD_CURRENT,
@@ -367,6 +367,7 @@ class Palmimo:
             :meth:`drain_overload_trips`) in place of :func:`time.monotonic`. A
             public escape hatch for tests that need to advance the guards'
             poll/staleness timers deterministically without real sleeps.
+            Also supplies the flight recorder's monotonic clock.
         arm_overload_current (int, optional): Raw |current| at or above which a waving arm axis counts as
             strained (3 samples in a row stop the motion and soften the arm).
             ``None`` disables the arm channel. Must be positive.
@@ -2219,10 +2220,11 @@ class Palmimo:
 
     def _write_goal(self, driver: ServoDriver, positions: dict[str, int]) -> None:
         driver.write_positions(positions)
-        self._last_goal = {
-            name: clamp_goal_tick(name, positions.get(name, MotionEngine.NEUTRAL))
-            for name in self._engine.get_positions()
-        }
+        if self._flight_enabled:
+            self._last_goal = {
+                name: max(SAFE_MIN_TICK, min(SAFE_MAX_TICK, positions.get(name, MotionEngine.NEUTRAL)))
+                for name in self._engine.get_positions()
+            }
 
     @property
     def incident_dir(self) -> Path | None:

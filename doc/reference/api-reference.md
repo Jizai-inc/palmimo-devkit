@@ -1047,11 +1047,20 @@ defines which hardware-error responses open a window and how axes become eligibl
 for another incident. Reconnect resets samples and connection baselines, while
 retaining known latched axes and the last saved path.
 
-`connect()` attempts a hardware-error baseline read before the wake glide.
+`connect()` attempts a hardware-error baseline read before the wake glide,
+retrying up to three times on transient exceptions or an all-unreached result.
+Any responding axis ends the retries. Unsupported reading disables recording
+for that connection immediately. If retries fail, each axis's later first
+response still becomes its baseline.
 Subsequent capture and deadline checks require `step()` calls; there is no
 background sampler or writer. Direct driver operations and facade glides that
 do not call `step()` produce no samples. A due window is flushed after the
-frame's position write. `disconnect()` suppresses that flush during parking
+frame's position write, once a fast sample reaches the planned tail. If no
+such sample arrives, it becomes due 0.25 seconds after the planned deadline;
+actual flushing still requires a `step()` call. Explicit flushes do not wait
+for this grace period. At most ten dumps are attempted per connection, including
+failed writes; further new windows are suppressed with one warning until
+reconnect. `disconnect()` suppresses automatic flushing during parking
 and flushes after attempting driver disconnect, including when that attempt
 raises. An already open window is also flushed before recorder reset on reconnect.
 
@@ -1061,7 +1070,14 @@ or `None` if recording is disabled, no window is open, or writing fails. It does
 not create an incident from idle samples. It may return a complete `.jsonl.tmp`
 file if renaming failed. On the main thread, SIGINT is ignored during the write;
 it is discarded rather than delivered afterward. Calls from another thread do
-not change signal handlers. Other termination signals are not covered.
+not change signal handlers. The automatic flush inside `step()` uses the same
+SIGINT protection and also discards Ctrl+C during that write. Other termination
+signals are not covered.
+
+**Scope.** Only calls through `Palmimo.step()` are sampled, including facade
+methods that drive that loop. Direct wake/sleep glides have no samples, and
+LeRobot teleoperation that drives the engine and driver directly is outside
+this recorder's scope.
 
 ### Files and header
 
@@ -1078,14 +1094,14 @@ Collisions add `-1`, `-2`, and so on before `.jsonl`. A temporary file appends
 | `ts` | First trigger's local ISO 8601 wall-clock timestamp, including UTC offset |
 | `monotonic_s` | First trigger's monotonic timestamp in seconds; local clock origin, not a Unix timestamp |
 | `trigger` | List of triggering motor names, including axes folded into this window |
-| `trigger_bits` | Motor-name to integer raw hardware-error bitmask at each axis's trigger; later bit changes on a latched axis do not rewrite it |
+| `trigger_bits` | Motor-name to integer raw hardware-error bitmask at each axis's first trigger in this window; later bit changes on a latched axis do not rewrite it |
 | `motion` | Lowercase motion name at the first trigger, after guard verdicts |
 | `units` | `{"current": "raw", "voltage": "V", "temperature": "C", "position": "tick"}` |
-| `last_clean_t` | Earliest last-zero-response time among triggering axes, relative to `monotonic_s` in seconds; `null` if any triggering axis has no known clean response. It is a snapshot at each trigger, unaffected by later recovery. |
+| `last_clean_t` | Earliest last-zero-response time among triggering axes, relative to `monotonic_s` in seconds; `null` if any triggering axis has no known clean response. It is a snapshot at each axis's first trigger in the window, unaffected by later recovery or re-latching. |
 | `hardware_error_interval_s` | `1.0`, the nominal hardware-error polling interval; actual gaps can be longer |
 | `post_s` | Planned deadline relative to the first trigger, in seconds: normally `2.0`; newly latched axes can extend it up to `4.0` |
 | `post_s_captured` | Maximum sample `t`, clamped to at least zero, across both tiers; seconds, not a guarantee of continuous coverage |
-| `truncated` | Whether `post_s_captured < post_s`; applies to early flushes or insufficient sample coverage |
+| `truncated` | Whether `post_s_captured < post_s`; early flushes or insufficient coverage may set it. Automatic flushing waits for a fast sample at or beyond the planned tail, with a 0.25-second grace limit when fast sweeps stop |
 
 Hardware-error bits use the same definitions as
 [`HardwareErrorRead` and `describe_hardware_error()`](#servodriver).
@@ -1109,8 +1125,11 @@ that were silent or unreached in the sweep. `gap` is `null` if either operand
 is unavailable. An absent axis or `null` value does not imply zero or recovery.
 
 `goal` is the last successfully submitted facade position, after clamping and
-partial-goal expansion, before driver-internal IIR filtering. It is `null` until
-such a write exists; writes made directly through the driver are not tracked.
+partial-goal expansion, before driver-internal IIR filtering. Motors omitted
+from a write are recorded as `MotionEngine.NEUTRAL`, matching `DynamixelDriver`'s
+backfill rule; another driver's handling of partial writes may differ. It is
+`null` until such a write exists; writes made directly through the driver are
+not tracked.
 Context reuses the latest leg sweep only while it is at most one second old,
 and includes a pending neck sweep only while it is at most one second old.
 The pending neck sweep is consumed at that context tick, even when stale;
@@ -1130,9 +1149,13 @@ sync or protection against every power-loss scenario is promised.
 | Level | Events |
 |-------|--------|
 | `ERROR` | Preexisting latch at an axis's first response (no window); newly latched axis; changed bits on an already latched axis; completed published dump with path, sample count, and synchronous write duration in milliseconds |
-| `WARNING` | Unsupported hardware-error reading disables recording for that connection; other read exceptions are rate-limited to once per five seconds; destination inspection, write, rename, cleanup, or directory-sync failure |
-| `WARNING` at connection | More than 100 completed dumps or more than 100,000,000 bytes; zero-byte dumps or leftover temporary files; unwritable destination |
-| `INFO` | Destination and existing dump count (or eventual destination); re-armed when all known incident axes have individually reported zero; no leg telemetry when all leg guards are disabled |
+| `WARNING` | Unsupported hardware-error reading disables recording for that connection; other read exceptions are rate-limited to once per five seconds; destination inspection, write, rename, cleanup, or directory-sync failure; per-connection dump limit reached (once) |
+| `WARNING` at connection | More than 100 completed dumps or more than 100,000,000 bytes; zero-byte dumps or leftover temporary files; unwritable destination or nearest existing ancestor of a missing destination |
+| `INFO` | Destination and existing dump count (or eventual destination); unchanged known latch at reconnect (once per axis); re-armed when all known incident axes have individually reported zero; no leg telemetry when all leg guards are disabled |
+
+For a driver without `read_telemetry` support, the guards' warning reports the
+absence of leg telemetry; the guards-disabled info message covers configuration
+rather than unsupported hardware.
 
 Write duration appears only in logs. Connection-time inspection does not delete
 or modify existing dumps or temporary files.

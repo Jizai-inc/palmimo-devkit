@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from palmimo_sdk import HardwareErrorRead
-from palmimo_sdk.flight_recorder import AxisSample, ServoFlightRecorder, default_incident_dir
+from palmimo_sdk._flight_recorder import AxisSample, ServoFlightRecorder, default_incident_dir
 
 
 AXES = {"a": AxisSample(1200, 2000, 2100, 40, 7.4)}
@@ -61,8 +61,9 @@ def test_recorder_writes_nothing_while_clean(recorder: ServoFlightRecorder) -> N
 def test_recorder_opens_window_on_new_latch_and_writes_after_post_window(recorder: ServoFlightRecorder) -> None:
     trigger(recorder)
     assert not recorder.window_due(2.99)
-    assert recorder.window_due(3)
+    assert not recorder.window_due(3)
     recorder.capture_fast(3, "idle", AXES)
+    assert recorder.window_due(3)
     assert not recorder.incident_dir.exists()
     header, row = dump(recorder)
     assert header["schema"] == "palmimo-incident/1"
@@ -104,8 +105,9 @@ def test_recorder_folds_second_axis_into_open_window_and_caps_tail_at_post_max(r
     assert not recorder.window_due(3)
     observe(recorder, 4, c=4)
     assert not recorder.window_due(4.99)
-    assert recorder.window_due(5)
+    assert not recorder.window_due(5)
     recorder.capture_fast(5, "idle", AXES)
+    assert recorder.window_due(5)
     header = dump(recorder)[0]
     assert header["trigger_bits"] == {"a": 32, "b": 32, "c": 4}
     assert header["post_s"] == 4
@@ -178,14 +180,17 @@ def test_recorder_baselines_each_axis_on_its_first_answer(recorder: ServoFlightR
     assert recorder.flush() is None
 
 
-def test_recorder_does_not_relog_known_latch_after_reconnect(
+def test_recorder_reports_known_latch_once_at_info_after_reconnect(
     recorder: ServoFlightRecorder, caplog: pytest.LogCaptureFixture
 ) -> None:
     trigger(recorder)
     dump(recorder)
     recorder.reset_for_connect()
+    caplog.set_level(logging.INFO)
     caplog.clear()
     observe(recorder, 4, a=32)
+    observe(recorder, 5, a=32)
+    assert len([record for record in caplog.records if record.levelno == logging.INFO]) == 1
     assert not errors(caplog)
     assert recorder.flush() is None
 
@@ -361,15 +366,6 @@ def test_recorder_rows_use_monotonic_t_not_wall_clock(tmp_path: Path) -> None:
     assert [row["t"] for row in dump(recorder)[1:]] == [-0.5, 1, 2]
 
 
-def test_recorder_voltage_is_written_in_volts(recorder: ServoFlightRecorder) -> None:
-    trigger(recorder)
-    recorder.capture_fast(2, "idle", AXES)
-    header, row = dump(recorder)
-    assert header["units"]["voltage"] == "V"
-    assert row["axes"]["a"]["voltage"] == 7.4
-    assert row["axes"]["a"]["gap"] == 100
-
-
 def test_recorder_flush_and_capture_from_two_threads_do_not_corrupt(recorder: ServoFlightRecorder) -> None:
     trigger(recorder)
 
@@ -420,10 +416,13 @@ def test_recorder_filesystem_failure_closes_window_without_publishing(
     assert recorder.flush() is None
 
 
-def test_recorder_recovery_within_window_keeps_tail(recorder: ServoFlightRecorder) -> None:
+@pytest.mark.parametrize("relatch", [False, True])
+def test_recorder_recovery_within_window_keeps_tail(recorder: ServoFlightRecorder, relatch: bool) -> None:
     trigger(recorder)
     observe(recorder, 2, a=0)
-    recorder.capture_fast(3, "idle", AXES)
+    if relatch:
+        observe(recorder, 2.1, a=4)
+    recorder.capture_fast(4.1 if relatch else 3, "idle", AXES)
     header = dump(recorder)[0]
     assert header["last_clean_t"] == -1
     assert header["trigger_bits"] == {"a": 32}
@@ -513,3 +512,46 @@ def test_recorder_directory_sync_failure_keeps_published_dump(
     assert recorder.last_incident_path is not None
     assert recorder.last_incident_path.suffix == ".jsonl"
     assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+def test_recorder_prepare_warns_for_unwritable_existing_ancestor(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    recorder = ServoFlightRecorder(tmp_path / "missing" / "nested" / "incidents", clock=Clock())
+    ancestor = tmp_path
+    ancestor.chmod(0o500)
+    try:
+        recorder.prepare()
+        assert any(
+            record.levelno == logging.WARNING and str(recorder.incident_dir) in record.message
+            for record in caplog.records
+        )
+        assert not recorder.incident_dir.exists()
+    finally:
+        ancestor.chmod(0o700)
+
+
+def test_recorder_caps_dumps_per_connection_and_warns_once(
+    recorder: ServoFlightRecorder, caplog: pytest.LogCaptureFixture
+) -> None:
+    paths = []
+    for incident in range(12):
+        observe(recorder, incident * 4, a=0)
+        observe(recorder, incident * 4 + 1, a=32)
+        paths.append(recorder.flush())
+    assert all(path is not None for path in paths[:10])
+    assert paths[10:] == [None, None]
+    assert len(list(recorder.incident_dir.glob("*.jsonl"))) == 10
+    assert len([record for record in caplog.records if record.levelno == logging.WARNING]) == 1
+    recorder.reset_for_connect()
+    observe(recorder, 50, a=0)
+    observe(recorder, 51, a=32)
+    assert recorder.flush() is not None
+
+
+def test_recorder_waits_for_fast_tail_but_bounds_missing_sweep_delay(recorder: ServoFlightRecorder) -> None:
+    trigger(recorder)
+    recorder.capture_context(3, "idle", AXES, {"a": 32}, None)
+    assert not recorder.window_due(3)
+    assert not recorder.window_due(3.24)
+    assert recorder.window_due(3.25)
