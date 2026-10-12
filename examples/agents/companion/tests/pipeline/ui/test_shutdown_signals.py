@@ -57,6 +57,7 @@ asyncio.run(run_cli(None, read_stdin=False))
 """
 
 _TUI_CHILD = """
+import asyncio
 import sys
 import time
 import types
@@ -64,6 +65,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 workdir = Path(sys.argv[1])
+stop_during_connect = len(sys.argv) > 2
+sys.stderr.close()  # a hung-up terminal: the park report must not stand in the park's way
 
 
 class _Palmimo:
@@ -81,7 +84,9 @@ class _Runtime:
     palmimo = _Palmimo()
 
     async def connect(self):
-        pass
+        if stop_during_connect:
+            (workdir / "ready").touch()
+            await asyncio.sleep(30)
 
 
 wiring = types.ModuleType("palmimo_companion_agent.pipeline.wiring")
@@ -116,8 +121,8 @@ def _wait_for(marker: Path, proc: subprocess.Popen[bytes]) -> None:
         time.sleep(0.01)
 
 
-def _stop_and_check(child: str, tmp_path: Path, signum: signal.Signals, repeat: bool) -> None:
-    proc = subprocess.Popen([sys.executable, "-c", child, str(tmp_path)])
+def _stop_and_check(child: str, tmp_path: Path, signum: signal.Signals, repeat: bool, *args: str) -> None:
+    proc = subprocess.Popen([sys.executable, "-c", child, str(tmp_path), *args])
     try:
         _wait_for(tmp_path / "ready", proc)
         proc.send_signal(signum)
@@ -149,3 +154,7 @@ def test_run_tui_parks_and_exits_zero_when_stop_signal_arrives(
     tmp_path: Path, signum: signal.Signals, repeat: bool
 ) -> None:
     _stop_and_check(_TUI_CHILD, tmp_path, signum, repeat)
+
+
+def test_run_tui_parks_and_exits_zero_when_stop_signal_arrives_during_connect(tmp_path: Path) -> None:
+    _stop_and_check(_TUI_CHILD, tmp_path, signal.SIGTERM, False, "stop-during-connect")
