@@ -13,7 +13,6 @@ alongside its own settings type.
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 
@@ -125,9 +124,9 @@ def main(
             from .pipeline.ui.cli import run_cli
 
             if stdin is False:
-                asyncio.run(run_cli(settings, read_stdin=False))
+                run_cli(settings, read_stdin=False)
             else:
-                asyncio.run(run_cli(settings))
+                run_cli(settings)
         else:
             from .pipeline.ui.tui import run_tui
 

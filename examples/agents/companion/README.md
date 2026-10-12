@@ -217,6 +217,14 @@ one — so what it buys is that the guarantee now belongs to the stream rather
 than to each individual call site, and it extends to output produced inside the
 SDK.
 
+Under `--ui cli`, `/exit`, stdin EOF (unless `--no-stdin`), Ctrl+C,
+`kill -TERM <pid>`, and SIGHUP end the session and park the robot. A stop during
+build skips connecting; a stop during connect waits for it to finish before
+parking. Duplicate SIGTERM/SIGHUP deliveries are ignored during cleanup.
+A second Ctrl+C shortens cleanup while still releasing torque; if the process
+is stuck even in park, `kill -9 <pid>` ends it immediately and skips any remaining
+torque release. Unplug the AC adapter before handling a robot left energised.
+
 ## Options
 
 Settings resolve as CLI flag > process env > `.env` file > default. Every
@@ -229,7 +237,7 @@ also documented in [`.env.sample`](.env.sample).
 | `--hardware` / `--no-hardware` | `COMPANION_AGENT_HARDWARE` (`false` to disable) | on | Attach real hardware peripherals; `--no-hardware` runs fully compute-only (a bare `Palmimo`, no speech, no vision) |
 | `--port` | `COMPANION_AGENT_PORT` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0` |
 | `--log-path` | `COMPANION_AGENT_LOG_PATH` | none (disabled) | JSONL event log file path (every `History` event, same shape as the `cli` front end's stdout) |
-| `--stdin` / `--no-stdin` | (none) | on | `cli` only: `--no-stdin` keeps a headless session running with no stdin attached (a service manager) instead of exiting at once on EOF -- the session then ends on SIGTERM/SIGINT. Rejected with `--ui tui` |
+| `--stdin` / `--no-stdin` | (none) | on | `cli` only: `--no-stdin` keeps a headless session running with no stdin attached (a service manager) instead of exiting at once on EOF -- the session then ends on SIGTERM/SIGINT/SIGHUP. Rejected with `--ui tui` |
 | `--chat-model` | `COMPANION_AGENT_CHAT_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for both the idle and respond turns' tool-calling chat |
 | (none) | `COMPANION_AGENT_GUARD_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for the speech-classification guard |
 | (none) | `COMPANION_AGENT_VLM_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for image-to-text description (the `capture` tool) |

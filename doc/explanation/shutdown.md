@@ -58,7 +58,8 @@ entry points in this repository have **not** all moved onto it yet:
 |---|---|
 | A user script (`with Palmimo() as robot:`) | Covered. `Palmimo.disconnect()` enforces the rule on its own — see below — without the caller touching this module. |
 | MCP server (`palmimo_sdk/mcp/__main__.py`) | Parks on a terminating signal, using its own equivalent of `interrupt_on_signals` plus `_signals.signals_ignored`. It moves onto this module in a follow-up; the behaviour does not change when it does. |
-| companion TUI / CLI / realtime, wake-word agent | Not yet. Each carries its own stop handling, and the gaps are known — the wake-word agent's is described above. They move onto this module one at a time. |
+| companion CLI | Uses `stop_flag_on_signals` before build/connect, `loop_stop_on_signals` for the session, and `park_async` in the runtime's cleanup `finally`. An outer `signals_ignored(*TERMINATING_SIGNALS)` covers all phases. |
+| companion TUI / realtime, wake-word agent | Not yet. Each carries its own stop handling, and the gaps are known — the wake-word agent's is described above. They move onto this module one at a time. |
 
 Adding the module before its callers is deliberate: it is the half that has to
 be identical everywhere, and a guard that only some entry points can reach is
@@ -110,6 +111,17 @@ is for *doing* something in the loop, never for a checkpoint.
 ## The rule the shared half enforces
 
 **The park is the only uninterruptible stretch, and every path reaches it.**
+
+Open the outer terminating-signal ignore together with the startup delivery,
+before building the robot, and keep it until teardown finishes. Nested delivery
+contexts then restore SIGTERM/SIGHUP to that ignore: in particular,
+`stop_flag_on_signals` restores and re-delivers on its second signal, so a
+duplicate from systemd's process-group stop plus uv's forwarding is discarded.
+SIGINT stays outside the ignore, allowing a second Ctrl+C to shorten cleanup.
+Install the startup context in synchronous code before `asyncio.run`, so the
+Runner does not install its own SIGINT cancellation handler. Close the startup
+context before the session; leaving the session's in-loop delivery then restores
+Python's `KeyboardInterrupt` disposition for cleanup.
 
 - A teardown that has to reach a park holds `signals_ignored(*TERMINATING_SIGNALS)`
   over itself, not just over the park at its end. Leaving a delivery context

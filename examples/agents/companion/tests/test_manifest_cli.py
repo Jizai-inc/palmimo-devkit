@@ -80,7 +80,7 @@ def test_pipeline_manifest_defaults_parse_and_match_settings_defaults(monkeypatc
     argv = _build_argv(manifest)
     captured: dict[str, PipelineSettings] = {}
 
-    async def fake_run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> None:
+    def fake_run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> None:
         captured["settings"] = settings
 
     monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)

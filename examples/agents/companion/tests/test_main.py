@@ -56,7 +56,7 @@ def test_ui_cli_never_imports_the_tui_module(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setitem(sys.modules, "palmimo_companion_agent.pipeline.ui.tui", _PoisonedModule())
     captured: dict[str, PipelineSettings] = {}
 
-    async def fake_run_cli(settings: PipelineSettings) -> None:
+    def fake_run_cli(settings: PipelineSettings) -> None:
         captured["settings"] = settings
 
     monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)
@@ -90,7 +90,7 @@ def test_unknown_ui_value_fails(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_no_hardware_flag_sets_settings_hardware_false(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, PipelineSettings] = {}
 
-    async def fake_run_cli(settings: PipelineSettings) -> None:
+    def fake_run_cli(settings: PipelineSettings) -> None:
         captured["settings"] = settings
 
     monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)
@@ -106,7 +106,7 @@ def test_hardware_flag_defaults_to_settings_default_when_omitted(monkeypatch: py
     monkeypatch.setenv("COMPANION_AGENT_HARDWARE", "false")
     captured: dict[str, PipelineSettings] = {}
 
-    async def fake_run_cli(settings: PipelineSettings) -> None:
+    def fake_run_cli(settings: PipelineSettings) -> None:
         captured["settings"] = settings
 
     monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)
@@ -126,7 +126,7 @@ def test_no_stdin_with_tui_is_rejected() -> None:
 def test_no_stdin_flag_reaches_run_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    async def fake_run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> None:
+    def fake_run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> None:
         captured["read_stdin"] = read_stdin
 
     monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)
@@ -140,7 +140,7 @@ def test_no_stdin_flag_reaches_run_cli(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_port_and_log_path_flags_reach_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, PipelineSettings] = {}
 
-    async def fake_run_cli(settings: PipelineSettings) -> None:
+    def fake_run_cli(settings: PipelineSettings) -> None:
         captured["settings"] = settings
 
     monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)
@@ -169,7 +169,7 @@ def test_new_flags_reach_settings_overrides(
 ) -> None:
     captured: dict[str, PipelineSettings] = {}
 
-    async def fake_run_cli(settings: PipelineSettings) -> None:
+    def fake_run_cli(settings: PipelineSettings) -> None:
         captured["settings"] = settings
 
     monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)
@@ -199,7 +199,7 @@ def test_an_invalid_voice_backend_fails_via_settings_validation_not_a_traceback(
 
 
 def test_a_runtime_error_from_run_cli_exits_nonzero_with_a_clear_message(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_run_cli(settings: PipelineSettings) -> None:
+    def fake_run_cli(settings: PipelineSettings) -> None:
         raise RuntimeError("Missing required API key environment variable(s): GEMINI_API_KEY.")
 
     monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)
@@ -214,7 +214,7 @@ def test_a_connect_failure_with_hardware_enabled_prints_the_no_hardware_hint(mon
     """A hardware-connect RuntimeError (see wiring.py's all-or-nothing policy) must not be swallowed,
     and must point the user at --no-hardware as the compute-only fallback."""
 
-    async def fake_run_cli(settings: PipelineSettings) -> None:
+    def fake_run_cli(settings: PipelineSettings) -> None:
         raise RuntimeError("Servo bus not found. Check connection or specify with --port.")
 
     monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)
@@ -229,7 +229,7 @@ def test_a_connect_failure_with_hardware_enabled_prints_the_no_hardware_hint(mon
 def test_a_connect_failure_with_no_hardware_does_not_print_the_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     """--no-hardware is already the fallback the hint would point at -- suggesting it again would be noise."""
 
-    async def fake_run_cli(settings: PipelineSettings) -> None:
+    def fake_run_cli(settings: PipelineSettings) -> None:
         raise RuntimeError("some unrelated failure")
 
     monkeypatch.setattr("palmimo_companion_agent.pipeline.ui.cli.run_cli", fake_run_cli)

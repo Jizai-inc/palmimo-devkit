@@ -29,6 +29,7 @@ from palmimo_sdk import (
     OpenAiEngine,
     Palmimo,
     PiperEngine,
+    ServoDriver,
     Speaker,
     SpeakerConfig,
     TtsEngine,
@@ -258,10 +259,11 @@ class Runtime:
                     print(f"park attempt finished {elapsed:.2f}s after stop requested", file=sys.stderr, flush=True)
 
 
-def build_runtime(settings: PipelineSettings) -> Runtime:
+def build_runtime(settings: PipelineSettings, *, driver: ServoDriver | None = None) -> Runtime:
     """Build every real component and wire them into a ready-to-run :class:`Runtime`.
 
-    See the module docstring for the ``hardware`` true/false split.
+    See the module docstring for the ``hardware`` true/false split. An injected
+    servo driver replaces the physical bus, including in hardware-free runs.
 
     Raises:
         RuntimeError: A configured model's API key environment variable is
@@ -284,9 +286,10 @@ def build_runtime(settings: PipelineSettings) -> Runtime:
     wave_detector: WaveDetector | None = None
 
     if not settings.hardware:
-        palmimo = Palmimo()
+        palmimo = Palmimo(driver=driver)
     else:
-        driver = DynamixelDriver(port=settings.port)
+        if driver is None:
+            driver = DynamixelDriver(port=settings.port)
         display = FaceDisplay()
         speaker = Speaker(
             SpeakerConfig(lang=settings.language, device_name_hint=settings.speaker_device),

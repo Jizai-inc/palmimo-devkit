@@ -15,10 +15,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import signal
 import sys
 import threading
 from typing import TYPE_CHECKING, TextIO
+
+from palmimo_sdk.shutdown import (
+    TERMINATING_SIGNALS,
+    StopRequest,
+    loop_stop_on_signals,
+    signals_ignored,
+    stop_flag_on_signals,
+)
 
 from ..event_log import emit_event
 from ..wiring import Runtime, build_runtime
@@ -103,57 +110,60 @@ async def _stdin_loop(runtime: Runtime, *, stdin: TextIO | None = None) -> None:
             print(f"[stdin] failed to submit input: {exc!r}", file=sys.stderr, flush=True)
 
 
-async def run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> None:
-    """Build the runtime and drive it headlessly until ``/exit``, EOF, or a signal.
+def run_cli(settings: PipelineSettings, *, read_stdin: bool = True) -> None:
+    """Run the CLI until EOF, ``/exit``, or a stop signal, then release torque.
 
-    stdout carries JSONL history events exclusively; every log record goes to
-    stderr instead. ``basicConfig`` runs here as well as at the console entry
-    point, because this coroutine is also awaited directly by an external
-    driver that never passes through that entry point -- without a root handler
-    ``logging.lastResort`` would drop everything below ``WARNING``. It is a
-    no-op once the entry point has run, so the two do not fight.
-
-    This front end, and only this one, raises the agent's own logger and the
-    SDK's to ``INFO``: those records are per utterance and per mic generation,
-    which is what a headless run wants on stderr and what would scribble over
-    the TUI's rendering. SIGTERM (and SIGINT, so Ctrl+C also goes through the
-    same graceful path rather than raising ``KeyboardInterrupt`` mid-shutdown)
-    are installed before :meth:`~palmimo_companion_agent.pipeline.wiring.Runtime.start`
-    runs and cancel this coroutine's own task, so a signal arriving while the
-    robot is still connecting is caught by the same ``try``/``finally`` as one
-    arriving later -- :meth:`~palmimo_companion_agent.pipeline.wiring.Runtime.aclose`
-    always runs in the ``finally`` block below, whichever phase was interrupted.
-
-    ``read_stdin=False`` skips the stdin loop entirely and waits directly on
-    :class:`asyncio.Event` instead: a process launched by a service manager
-    (systemd) gets ``/dev/null`` as stdin, so reading it hits EOF immediately
-    and would otherwise end the session before the agent does anything (see
-    the ``--no-stdin`` option in ``main.py`` and the ``palmimo.toml`` app
-    manifest, which launches with it).
+    stdout carries JSONL history events; logging and park reports go to stderr.
+    ``read_stdin=False`` keeps a service session alive even with stdin at EOF.
     """
+    stop = StopRequest()
+    try:
+        # Runner must see the startup handler, so it does not install its own SIGINT handler.
+        with signals_ignored(*TERMINATING_SIGNALS), contextlib.ExitStack() as startup:
+            startup.enter_context(stop_flag_on_signals(stop))
+            asyncio.run(_run_cli(settings, read_stdin=read_stdin, stop=stop, startup=startup))
+    except KeyboardInterrupt:
+        pass
+
+
+async def _run_cli(
+    settings: PipelineSettings, *, read_stdin: bool, stop: StopRequest, startup: contextlib.ExitStack
+) -> None:
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
     logging.getLogger("palmimo_companion_agent").setLevel(logging.INFO)
     logging.getLogger("palmimo_sdk").setLevel(logging.INFO)
     runtime = build_runtime(settings)
-    runtime.history.subscribe(lambda event: emit_event(event, out=sys.stdout))
-
-    own_task = asyncio.current_task()
-    assert own_task is not None  # run_cli always runs as a task (awaited or ensure_future'd)
-    loop = asyncio.get_running_loop()
-    with contextlib.suppress(NotImplementedError):  # add_signal_handler isn't available on Windows
-        loop.add_signal_handler(signal.SIGTERM, own_task.cancel)
-        loop.add_signal_handler(signal.SIGINT, own_task.cancel)
-
     try:
-        with contextlib.suppress(asyncio.CancelledError):
-            await runtime.start()
-            session_task = asyncio.ensure_future(_stdin_loop(runtime) if read_stdin else asyncio.Event().wait())
-            await session_task
+        if stop.is_set():
+            print("stop requested before connect; skipping connection", file=sys.stderr, flush=True)
+            return
+        await runtime.connect()
+        if stop.is_set():
+            print("stop requested; connect finished, parking", file=sys.stderr, flush=True)
+            return
+        startup.close()
+        runtime.history.subscribe(lambda event: emit_event(event, out=sys.stdout))
+        own_task = asyncio.current_task()
+        assert own_task is not None
+
+        def end_session() -> None:
+            own_task.cancel()
+
+        with loop_stop_on_signals(stop, end_session):
+            try:
+                if stop.is_set():
+                    return
+                await runtime.start()
+                session = asyncio.create_task(_stdin_loop(runtime) if read_stdin else asyncio.Event().wait())
+                await session
+            except asyncio.CancelledError:
+                if not stop.is_set():
+                    raise
     finally:
-        with contextlib.suppress(NotImplementedError):
-            loop.remove_signal_handler(signal.SIGTERM)
-            loop.remove_signal_handler(signal.SIGINT)
-        await runtime.aclose()
+        try:
+            startup.close()
+        finally:
+            await runtime.aclose(stop)
 
 
 __all__ = ["run_cli"]
