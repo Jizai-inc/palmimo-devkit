@@ -58,7 +58,8 @@ entry points in this repository have **not** all moved onto it yet:
 |---|---|
 | A user script (`with Palmimo() as robot:`) | Covered. `Palmimo.disconnect()` enforces the rule on its own — see below — without the caller touching this module. |
 | MCP server (`palmimo_sdk/mcp/__main__.py`) | Parks on a terminating signal, using its own equivalent of `interrupt_on_signals` plus `_signals.signals_ignored`. It moves onto this module in a follow-up; the behaviour does not change when it does. |
-| companion TUI / CLI / realtime, wake-word agent | Not yet. Each carries its own stop handling, and the gaps are known — the wake-word agent's is described above. They move onto this module one at a time. |
+| companion pipeline CLI / TUI | Covered. The CLI stops through `loop_stop_on_signals`, the TUI through `interrupt_on_signals`, and both hold `signals_ignored` over the teardown. |
+| companion realtime, wake-word agent | Not yet. Each carries its own stop handling, and the gaps are known — the wake-word agent's is described above. They move onto this module one at a time. |
 
 Adding the module before its callers is deliberate: it is the half that has to
 be identical everywhere, and a guard that only some entry points can reach is
