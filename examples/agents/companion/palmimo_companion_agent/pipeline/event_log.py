@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 from typing import TYPE_CHECKING, TextIO
 
+from ..core.tool_arguments import serialize_tool_arguments
 from .history import ToolExecEvent
 
 
@@ -26,16 +27,13 @@ def emit_event(event: Event, *, out: TextIO) -> None:
     JSONL files writable as UTF-8; JSON readers restore text for display.
     """
     payload = {field.name: getattr(event, field.name) for field in dataclasses.fields(event)}
+    payload["ts"] = datetime.now().astimezone().isoformat(timespec="milliseconds")
     if isinstance(event, ToolExecEvent):
         payload.pop("arguments" if event.args is not None else "args")
-    payload["ts"] = datetime.now().astimezone().isoformat(timespec="milliseconds")
-    try:
-        line = json.dumps(payload, ensure_ascii=True, allow_nan=False)
-    except (RecursionError, ValueError):
-        if not isinstance(event, ToolExecEvent):
-            raise
-        payload.pop("args", None)
-        payload["arguments"] = event.arguments
-        line = json.dumps(payload, ensure_ascii=True, allow_nan=False)
+        fallback = {**payload, "arguments": event.arguments}
+        fallback.pop("args", None)
+        line = serialize_tool_arguments(payload, fallback)
+    else:
+        line = json.dumps(payload, ensure_ascii=True)
     out.write(line + "\n")
     out.flush()

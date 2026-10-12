@@ -122,3 +122,11 @@ def test_add_survives_a_failing_subscriber_and_still_notifies_the_rest() -> None
     history.add(event)
     assert history.events[-1] is event
     assert seen == [event]
+
+
+def test_tool_exec_event_is_hashable_with_args_and_compares_them() -> None:
+    event = ToolExecEvent("call-1", "dance", "{}", "done", args={"seconds": 4})
+    same = ToolExecEvent("call-1", "dance", "{}", "done", args={"seconds": 4})
+    different = ToolExecEvent("call-1", "dance", "{}", "done", args={"seconds": 5})
+    assert same in {event}
+    assert different not in {event}

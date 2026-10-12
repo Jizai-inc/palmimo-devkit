@@ -218,7 +218,9 @@ than to each individual call site, and it extends to output produced inside the
 SDK.
 
 Pipeline JSONL tool rows use `args` (an object) instead of `arguments` (the
-model's JSON string) for dispatched calls. Calls with invalid arguments,
+model's JSON string) for dispatched calls. These are the model-requested
+arguments accepted by dispatch, before the idle view removes `say` via
+`squash_say`. Calls with invalid arguments,
 or arguments that cannot be serialized as strict JSON, keep `arguments`
 instead; a row never contains both keys. LLM message replay keeps the original
 argument string.

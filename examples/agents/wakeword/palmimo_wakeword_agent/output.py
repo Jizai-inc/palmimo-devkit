@@ -12,9 +12,9 @@ Line buffering is set once, on the stream, rather than by passing
 reintroduce the problem, and ``flush=True`` cannot reach output produced inside
 the SDK at all.
 
-Deliberately duplicated in the companion example rather than shared: the two
-example projects are independent, and neither may grow a dependency on the
-other just to reuse a dozen lines.
+The companion example independently configures line buffering and also escapes
+unsafe text for journald and terminals; this example only configures buffering
+and logging.
 """
 
 from __future__ import annotations

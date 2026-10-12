@@ -1,4 +1,8 @@
-"""Process-wide output setup, applied at the console-script entry point."""
+"""Process-wide output setup, applied at the console-script entry point.
+
+Unlike the independent wake-word example, companion also escapes unsafe text
+for journald and terminals.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +22,7 @@ _ESCAPES = {
 
 
 class _SafeOutput:
-    """Escape unsafe text before forwarding redirected output.
+    """Escape unsafe text before forwarding output.
 
     Journald's JSON output makes fields containing U+007F through U+009F
     numeric arrays. ``splitlines()`` splits on U+0085 and U+2028/U+2029,
@@ -28,9 +32,11 @@ class _SafeOutput:
 
     def __init__(self, stream: TextIO) -> None:
         self._stream = stream
+        terminal = getattr(stream, "isatty", lambda: False)()
+        self._escapes = {code: value for code, value in _ESCAPES.items() if not terminal or code >= 0x80}
 
     def write(self, text: str) -> int:
-        self._stream.write(text.translate(_ESCAPES))
+        self._stream.write(text.translate(self._escapes))
         return len(text)
 
     def writelines(self, lines: Iterable[str]) -> None:
@@ -42,19 +48,23 @@ class _SafeOutput:
 
 
 def configure_output() -> None:
-    """Line-buffer stdout, escape non-terminal output, and log warnings to stderr.
+    """Line-buffer stdout, escape unsafe output, and log warnings to stderr.
 
     Terminal streams retain control sequences used by Textual. Logging stays
     at WARNING so library diagnostics do not overwhelm the UI or JSONL output.
     Streams substituted by a harness need not support reconfiguration.
     """
-    if isinstance(sys.stdout, io.TextIOWrapper):
-        with contextlib.suppress(ValueError):
-            sys.stdout.reconfigure(line_buffering=True)
     for name in ("stdout", "stderr"):
         stream = getattr(sys, name)
-        if not isinstance(stream, _SafeOutput) and not getattr(stream, "isatty", lambda: False)():
-            setattr(sys, name, cast(TextIO, _SafeOutput(stream)))
+        if stream is None or isinstance(stream, _SafeOutput):
+            continue
+        if isinstance(stream, io.TextIOWrapper):
+            with contextlib.suppress(ValueError):
+                stream.reconfigure(
+                    errors="backslashreplace",
+                    line_buffering=True if name == "stdout" else stream.line_buffering,
+                )
+        setattr(sys, name, cast(TextIO, _SafeOutput(stream)))
     logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 
 

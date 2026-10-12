@@ -199,13 +199,12 @@ async def execute_and_record(
     if name is None:
         return False
     arguments = tool_call.function.arguments or "{}"
-    args, argument_error = parse_tool_arguments(arguments)
+    args = parse_tool_arguments(arguments)
     reason = args.get("reason") if isinstance(args, dict) else None
     resolved_thought = reason if isinstance(reason, str) and reason else thought
 
-    if args is None:
-        assert argument_error is not None
-        result_text = argument_error
+    if isinstance(args, str):
+        result_text = args
         images: list[bytes] = []
         result_is_error = True
     else:
@@ -223,7 +222,7 @@ async def execute_and_record(
             result=result_text,
             error=result_is_error,
             thought=resolved_thought,
-            args=args,
+            args=args if isinstance(args, dict) else None,
         )
     )
     if images:
