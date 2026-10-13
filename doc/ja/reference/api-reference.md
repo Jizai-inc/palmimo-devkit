@@ -31,7 +31,7 @@ robot = Palmimo()
 | `robot.stretch()` | STRETCH | "stretch" |
 | `robot.stop()` | IDLE | "idle", "stop" |
 
-各モーションの動作は[モーション一覧](motions.md#available-motions)を参照してください。
+各モーションの動作は[モーション一覧](motions.md#利用可能なモーション)を参照してください。
 以下では、API レベルで関係する動作のみを説明します。
 
 `wave` / `wave_right` と `wave_left` は、右前脚または左前脚を選びます。
@@ -543,7 +543,7 @@ piper-plus 固有の設定（音声モデル、`data_dir`、`length_scale`、`vo
 そちらを参照してください。`PiperEngine` は `Speaker` が開く音声を、`open()` 時だけに
 ダウンロードします。保存先は `~/.cache/palmimo/models/piper/<voice>/` で、`data_dir` が
 別のルートを指定した場合は、その中に音声ごとに 1 ディレクトリを作ります。
-[音声出力の初回セットアップ](../guides/installation.md#first-time-setup-for-voice-output)を参照してください。
+[音声出力の初回セットアップ](../guides/installation.md#音声出力の初回セットアップ)を参照してください。
 
 `OpenAiEngine` は、代わりにロボットの外で合成します。別の音声を選べますが、高速には
 なりません。Pi 5 では、1 発話あたり piper が 0.19 秒なのに対し、このエンジンは

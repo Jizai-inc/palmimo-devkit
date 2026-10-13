@@ -314,6 +314,8 @@ def _check_for(path: Path) -> Callable[[Path], bool] | None:
 
 
 def _translation_original(path: Path) -> Path | None:
+    # Mirrored as _english_page in test_documentation_contracts.py (importlib
+    # import mode leaves sibling test modules unimportable) -- change both together.
     relative = path.relative_to(SOFTWARE_ROOT).as_posix()
     if relative == "README.ja.md":
         return SOFTWARE_ROOT / "README.md"

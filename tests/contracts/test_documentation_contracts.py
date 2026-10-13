@@ -184,6 +184,7 @@ def test_every_command_page_exists() -> None:
 
 
 def _english_page(relative: str) -> str:
+    # Mirrored as _translation_original in test_comment_language.py -- change both together.
     if relative == "README.ja.md":
         return "README.md"
     if relative.startswith("doc/ja/") and relative.endswith(".md"):

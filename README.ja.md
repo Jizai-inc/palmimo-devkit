@@ -6,9 +6,9 @@
 6 脚の卓上 AI ロボットです。オープンソースの SDK、MCP サーバー、エージェントのサンプルを
 [Jizai Inc.](https://jizai.ai/) が提供しています。
 
-[Website](https://palmimo.dev) · [Documentation](https://docs.palmimo.dev) · [Get a DevKit](https://palmimo.dev#specs)
+[Web サイト](https://palmimo.dev) · [ドキュメント](https://docs.palmimo.dev/ja/) · [DevKit を入手](https://palmimo.dev#specs)
 
-[English](README.md) | 日本語
+[English](README.md) | **日本語**
 
 ![CI](https://github.com/Jizai-inc/palmimo-devkit/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
@@ -52,10 +52,10 @@ Palmimo.forward() → step() → MotionEngine computes → {servo_name: tick} �
   `rotate_left/right`、`creep`）、ジェスチャー（`wave`、`bow`、`clap`、...）、
   ポーズ（`stretch`、`dance`、`pushup`、...）を、逆位相の
   **トライポッド歩容**で動かします。全一覧は
-  [モーション一覧](doc/ja/reference/motions.md#available-motions)を参照してください。
+  [モーション一覧](doc/ja/reference/motions.md#利用可能なモーション)を参照してください。
 - **ピッチ・ヨー方向に動く首** — `look(pitch, yaw)` で、歩行とは独立に、
   同時に向きを変えられます。首には 3 つ目の関節もあり、モーションエンジンはそれを
-  ニュートラルに保ちます。[モーションの制御](doc/ja/guides/controlling-motions.md#sending-to-real-hardware-too)を参照してください。
+  ニュートラルに保ちます。[モーションの制御](doc/ja/guides/controlling-motions.md#実際のハードウェアにも送る)を参照してください。
 - **振り付け** — `Palmimo.play_realtime()` で `(motion, seconds)` のステップを順に実行します。
 - **豊かな表情** — パラメトリックな（画像素材を使わず数式で描く）表情の
   バリエーション（HAPPY、ANGRY、SAD、EXCITED、THINKING、SLEEPY、…）を、USB-CDC 経由で
@@ -83,7 +83,7 @@ Palmimo DevKit は、21 個のシリアルバスサーボ
 （脚 18 個と首 3 個）、丸いフェイスディスプレイ、5 MP カメラ、マイクアレイ、ステレオ
 スピーカー、制御ホストの Raspberry Pi 5 を搭載しています。ソフトウェアが
 何と、何を介して通信するかは、
-[システムアーキテクチャ](doc/ja/explanation/architecture.md#execution-model)に記載しています。
+[システムアーキテクチャ](doc/ja/explanation/architecture.md#実行モデル)に記載しています。
 ハードウェアの設計ファイルはこのリポジトリに含まれません（
 [CONTRIBUTING → 対象範囲](CONTRIBUTING.md#scope-what-lives-here)を参照）。詳細な
 仕様は [palmimo.dev](https://palmimo.dev#specs) にあります。
@@ -192,7 +192,7 @@ for _ in range(100):
 
 ## 📖 ドキュメント
 
-同じページをサイトで閲覧できます: [docs.palmimo.dev](https://docs.palmimo.dev)。
+同じページをサイトで閲覧できます: [docs.palmimo.dev/ja/](https://docs.palmimo.dev/ja/)。
 
 **動かし始める**
 

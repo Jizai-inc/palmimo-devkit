@@ -6,9 +6,9 @@ Palmimo に新しいモーションを追加する手順を説明します。
 
 - [explanation/architecture.md](../explanation/architecture.md) を読み、責務の分離を理解します
 - サーボの配置と脚の番号は [motor_layout.drawio.svg](../../images/motor_layout.drawio.svg) を参照してください
-- サーボの可動範囲の制限は README の[安全上の注意](../../../README.md#-safety)を参照してください
+- サーボの可動範囲の制限は README の[安全上の注意](../../../README.ja.md#-安全上の注意)を参照してください
 - [installation.md](installation.md) のセットアップを完了します
-- ハードウェア診断を実行する前に、[リソース予約エラー](../reference/api-reference.md#resource-reservations)に対処してください。報告された占有元を停止してから再試行します。
+- ハードウェア診断を実行する前に、[リソース予約エラー](../reference/api-reference.md#リソースの予約)に対処してください。報告された占有元を停止してから再試行します。
 
 ## ステップ 1: モーションを定義する
 
@@ -114,7 +114,7 @@ def my_new_motion(self) -> None:
 ### ドライラン
 
 ドライバーを接続せずに Python API から新しいモーションを動かし
-（[Python API を試す](../../../README.md#try-the-python-api-no-hardware-needed)を参照）、
+（[Python API を試す](../../../README.ja.md#python-api-を試すハードウェア不要)を参照）、
 `step()` の出力を調べます。
 
 ### 安全性の検証
@@ -131,7 +131,7 @@ def my_new_motion(self) -> None:
 
 ドライランとハードウェアを浮かせた状態での検証に合格したら、接続済みの
 `DynamixelDriver` を持つ `Palmimo` インスタンスを通じて実機でモーションを動かします
-（[周辺機器と接続](../reference/api-reference.md#peripherals--connection)を参照）。
+（[周辺機器と接続](../reference/api-reference.md#周辺機器と接続)を参照）。
 - 見た目が意図したモーションになっていること
 - サーボから異音（こすれる音、カチカチ音）がしないこと
 - ロボットが安定していること（転倒しないこと）

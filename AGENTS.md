@@ -174,8 +174,8 @@ to different readers.
 | `README.md` | The product's face | What Palmimo is, plus a Quickstart. Route to the rest; do not host it |
 | `doc/guides/` | How-to — the reader has a goal | Steps in order, commands included |
 | `doc/reference/` | Reference — the reader wants a fact | Complete and lookup-shaped. No procedures |
-| `doc/ja/` | Japanese translations of the English documentation | Mirror the English structure and update with the source; English is the source of truth |
 | `doc/explanation/` | Explanation — the reader wants to understand | Why it is built this way. No procedures |
+| `doc/ja/` | Japanese translations of the English documentation | Mirror the English structure and update with the source; English is the source of truth |
 | `examples/**/README.md` | Runnable examples | **Self-contained** — an example a reader copies out has to still make sense, so these are not split across `doc/` |
 | `docs-site/` | The documentation site | A rendering of `doc/`, built by `sync-doc.mjs`. Write the page in `doc/`; only one splash per locale is written here |
 | `integrations/**` | Separate uv workspaces | Own their install and run commands; this workspace cannot state them |

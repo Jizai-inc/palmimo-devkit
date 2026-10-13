@@ -2,7 +2,7 @@
 
 自分のスクリプトに歩行を組み込むには、
 [robot.py](../../../packages/palmimo_sdk/palmimo_sdk/robot.py) の `Palmimo` クラスを使います。公開するメソッドはすべて
-[コアメソッド](../reference/api-reference.md#core-methods)に記載しています。
+[コアメソッド](../reference/api-reference.md#コアメソッド)に記載しています。
 このページでは、それらの呼び出し方を示します。
 
 ## 実行前に
@@ -11,7 +11,7 @@
 |-----|-----|
 | すべてのモーターが応答することを確認する | [`diagnose_servos.py scan`](../../../scripts/README.md) |
 | ニュートラル姿勢に戻す | `Palmimo.stop()` が滑らかにニュートラルへ戻します |
-| トルクを無効にする（手で動かす） | アプリを終了する / 電源を切る（[安全上の注意](../../../README.md#-safety)を参照） |
+| トルクを無効にする（手で動かす） | アプリを終了する / 電源を切る（[安全上の注意](../../../README.ja.md#-安全上の注意)を参照） |
 
 新しいモーションを初めて実行するときは、本体を持ち上げて脚を浮かせてください。
 
@@ -34,17 +34,17 @@ for _ in range(60):               # return to neutral
 
 > ⚠️ tick の範囲は 0-4095 ですが、モーションは安全範囲 **200-3900** 内に収めてください。
 > 両端の値は機械的な限界です。
-> [安全設計](../explanation/architecture.md#safety-design)を参照してください。
+> [安全設計](../explanation/architecture.md#安全設計)を参照してください。
 
 ## 実際のハードウェアにも送る
 
 `step()` の戻り値は、脚のモーター 18 個と
 `neck_yaw`、`neck_pitch1`、`neck_pitch2` の計 21 個のモーターの目標 tick を格納する辞書です。
 2 つの首のピッチ関節が視線の目標をどう分担するかは、
-[コアメソッド](../reference/api-reference.md#core-methods)の `robot.look()` を参照してください。この戻り値は
+[コアメソッド](../reference/api-reference.md#コアメソッド)の `robot.look()` を参照してください。この戻り値は
 `DynamixelDriver.write_positions()` が受け取るものなので、そこへ渡すと実機が動きます。具体的なバス初期化手順は、
 [DynamixelDriver](../../../packages/palmimo_sdk/palmimo_sdk/io/dynamixel.py) と API リファレンスの
-[周辺機器と接続](../reference/api-reference.md#peripherals--connection)
+[周辺機器と接続](../reference/api-reference.md#周辺機器と接続)
 の節を参照してください。
 
 ## 振り付け

@@ -157,7 +157,7 @@ inode を使い続けられるようにします。`/run/lock/palmimo` 以下の
 ロックやメタデータの書き込みを行います。既存ファイルを `O_CREAT` なしで開くことで、
 Linux の `fs.protected_regular` の下でも協調できます。共有ディレクトリが使えない場合は、
 予約を黙って個別の一時ストレージに分散させず、失敗させます。API、ストレージ、エラーの契約は、
-[リソース予約](../reference/api-reference.md#resource-reservations)を参照してください。
+[リソース予約](../reference/api-reference.md#リソースの予約)を参照してください。
 
 ### パッケージ構成
 
@@ -329,7 +329,7 @@ scripts/                                # Supported user diagnostics (diagnose_s
   脚のトリップではゲインに触れません。腕が戻ったかどうかは、電流ではなく位置で判断します。
   つかまれた腕は、ソフトゲインでは電流が小さくても、ニュートラルから離れたままだからです。
   しきい値、トリップ API、首のガードと同じ適用範囲については、
-  [API リファレンス](../reference/api-reference.md#overload-guard)を参照してください
+  [API リファレンス](../reference/api-reference.md#過負荷ガード)を参照してください
 - **電源レール電圧には対処します**（`rail.py` の `RailGuard`。過負荷ガードと同じ 30 Hz の
   脚のテレメトリ走査から値を受け取り、バスの追加読み取りは行いません）。合計電流が高いと、
   電源経路の抵抗によって、すべての軸の入力電圧が一緒に下がります。
@@ -344,7 +344,7 @@ scripts/                                # Supported user diagnostics (diagnose_s
   通常歩行中に 3.8 V 未満となる最長区間は 67 ms で、サーボの
   Min Voltage Limit は 3.5 V です。電圧低下時にサーボがどれだけ早くラッチするかは
   未測定なので、ラッチより先にガードが作動するとは主張しません。
-  [API リファレンス](../reference/api-reference.md#rail-undervoltage-guard)を参照してください
+  [API リファレンス](../reference/api-reference.md#電源レールの低電圧ガード)を参照してください
 - **脚の温度は報告しますが、対処はしません** — すでに熱い脚のサーボは、
   ガードが反応する速さでは冷えないため、モーションを終了する効果は小さいからです。
   また、8 時間の展示日の間、これらのサーボは約 50 °C と測定され、
@@ -366,7 +366,7 @@ scripts/                                # Supported user diagnostics (diagnose_s
   読み取り値を信用しません。ただし、古くなる前に HOT だった場合、ロックアウト自体
   （`neck_lock_active`）は維持します。観測できない首は、まだ熱いかもしれないためです。
   ロックアウトを解除するのは、切断時か、新しい走査で 55 °C 以下になったときだけです。
-  完全な状態表は、[API リファレンス](../reference/api-reference.md#neck-thermal-guard)を
+  完全な状態表は、[API リファレンス](../reference/api-reference.md#首のサーマルガード過熱保護)を
   参照してください。脚は、前述の報告だけの動作を維持します。
   **適用範囲**: ガードが届くのは `Palmimo.step()` を通る呼び出し元だけです
   （`run()`/`play()`、MCP サーバー、エージェントのツール層）。LeRobot の遠隔操作

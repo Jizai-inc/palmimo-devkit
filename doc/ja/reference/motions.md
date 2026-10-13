@@ -30,7 +30,7 @@
 [robot.py](../../../packages/palmimo_sdk/palmimo_sdk/robot.py) の `Palmimo._MOTION_MAP` で定義されています。
 
 各モーションを開始するメソッドについては、
-API リファレンスの[コアメソッド](api-reference.md#core-methods)を参照してください。
+API リファレンスの[コアメソッド](api-reference.md#コアメソッド)を参照してください。
 
 ## 歩容パラメーター
 

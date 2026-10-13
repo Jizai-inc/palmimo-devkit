@@ -7,7 +7,7 @@ Pi に SSH で接続できます。
 
 > このガイドは、開発用 PC から切り離し、**Pi 単体で** Palmimo を動かすための
 > 最初の具体的な手順です。この実行モデルは
-> [explanation/architecture.md](../explanation/architecture.md#execution-model) で説明しています。
+> [explanation/architecture.md](../explanation/architecture.md#実行モデル) で説明しています。
 > アーキテクチャは変わりません。`palmimo_sdk` を実行するホストが PC から
 > Pi に移るだけです。制御ループ（歩容の生成 → サーボへの書き込み、60 Hz）は
 > すべて Pi 上で動き、サーボバスの USB アダプターは Pi に直接接続する前提です。
@@ -30,7 +30,7 @@ Pi に SSH で接続できます。
 > 必須条件は **64 ビット（aarch64）**の OS です。
 > `opencv-python` や `piper-plus` などの依存パッケージは aarch64 の
 > wheel を提供しますが、armv7l の wheel は提供しません。そのため 32 ビットの Pi OS では依存関係を解決できません。
-> [I/O ランタイム環境の要件](../explanation/architecture.md#io-runtime-environment-requirements)を参照してください。
+> [I/O ランタイム環境の要件](../explanation/architecture.md#io-実行環境の要件)を参照してください。
 
 ## 1. ヘッドレスでカードに書き込む
 
@@ -164,19 +164,19 @@ sudo apt-get install -y libportaudio2
 ```
 
 TTS 用の音声モデルのダウンロードは、
-[インストールガイド](installation.md#first-time-setup-for-voice-output)で説明しています。
+[インストールガイド](installation.md#音声出力の初回セットアップ)で説明しています。
 
 ## 4. Pi 上で Palmimo を動かす
 
 コードは Pi に置き、Pi 上で実行します。制御ループがネットワークを
 またぐことはありません。ランタイムを用意した後の手順は、
-[クイックスタート](../../../README.md#-quickstart)で説明しています。リポジトリをクローンし、
+[クイックスタート](../../../README.ja.md#-クイックスタート)で説明しています。リポジトリをクローンし、
 ワークスペースを同期し、サーボバスを確認します。
 
 開発中は、ワークステーションから `ssh palmimo` で接続し、これらのコマンドを
 Pi 上で実行します。自律動作時には SSH は一切不要です。目標は、電源投入時に安全な初期姿勢から
 起動し、PC を切り離して動作させることです（
-[実行モデル](../explanation/architecture.md#execution-model)を参照）。各アプリの自動起動は、
+[実行モデル](../explanation/architecture.md#実行モデル)を参照）。各アプリの自動起動は、
 そのアプリ用の systemd ユーザーサービスで設定します。このリポジトリには含まれていません。
 
 ## 付録
