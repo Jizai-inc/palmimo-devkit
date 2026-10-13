@@ -89,8 +89,8 @@ keyframe leaves out holds where it was.
    from palmimo_sdk import Keyframe, Palmimo
 
    raise_front_right = [
-       Keyframe(1.0, {"leg_6_pitch1": 30.0, "neck_yaw": 10.0}),  # lift the leg, glance aside
-       Keyframe(1.5, {"leg_6_yaw": 15.0}),                         # swing it out; the rest hold
+       Keyframe(1.0, {"leg_6_pitch1": -30.0, "neck_yaw": 10.0}), # lift the leg, glance aside
+       Keyframe(1.5, {"leg_6_yaw": 15.0}),                         # swing it sideways; the rest hold
        Keyframe(2.5, {"leg_6_pitch1": 0.0, "leg_6_yaw": 0.0}),     # put it back
    ]
 
