@@ -151,6 +151,11 @@ export function rewriteLink(docRelSourcePath, target) {
       );
     }
     const docRel = toPosix(path.relative(DOC_ROOT, abs));
+    if (docRelSourcePath.startsWith('ja/') && !docRel.startsWith('ja/')) {
+      throw new Error(
+        `Link to the Japanese version doc/ja/${docRel} instead of "${target}" from doc/${docRelSourcePath}`
+      );
+    }
     if (!(englishDocPath(docRel) in SIDEBAR_ORDER)) {
       throw new Error(
         `"${docRel}" has no SIDEBAR_ORDER entry -- register its sidebar order before linking to it from doc/${docRelSourcePath}`

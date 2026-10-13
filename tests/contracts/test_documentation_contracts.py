@@ -92,6 +92,7 @@ RASPBERRY_PI_IMAGER_URL = re.compile(rf"https://www\.raspberrypi\.com/{_STALE_SU
 # place so both contracts cover the same files.
 MARKDOWN_SCAN_ROOTS = (
     REPO_ROOT / "README.md",
+    REPO_ROOT / "README.ja.md",
     REPO_ROOT / "CLAUDE.md",
     REPO_ROOT / "CONTRIBUTING.md",
     REPO_ROOT / "doc",
@@ -165,7 +166,7 @@ def _markdown_files(*roots: Path) -> list[Path]:
     selected = sorted(
         path
         for path in files
-        if (any(path == root or root in path.parents for root in roots) or path == REPO_ROOT / "README.ja.md")
+        if any(path == root or root in path.parents for root in roots)
         # --cached keeps a deleted-but-tracked path listed; nothing to scan there.
         and path.is_file()
         and path.name != "AGENTS.md"
@@ -189,6 +190,8 @@ def _english_page(relative: str) -> str:
         return "README.md"
     if relative.startswith("doc/ja/") and relative.endswith(".md"):
         return "doc/" + relative.removeprefix("doc/ja/")
+    if relative == "docs-site/src/site-pages/ja/index.mdx":
+        return "docs-site/src/site-pages/index.mdx"
     return relative
 
 

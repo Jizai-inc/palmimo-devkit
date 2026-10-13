@@ -3,7 +3,7 @@
 # Palmimo DevKit
 
 **AI エージェントに身体を。** Palmimo DevKit は、自分で書いた Python で動かせる
-6 脚の卓上 AI ロボットです。オープンソースの SDK、MCP サーバー、エージェントのサンプルを
+6 本脚の卓上 AI ロボットです。オープンソースの SDK、MCP サーバー、エージェントのサンプルを
 [Jizai Inc.](https://jizai.ai/) が提供しています。
 
 [Web サイト](https://palmimo.dev) · [ドキュメント](https://docs.palmimo.dev/ja/) · [DevKit を入手](https://palmimo.dev#specs)
@@ -15,7 +15,7 @@
 ![ステータス](https://img.shields.io/badge/status-pre--release-orange)
 ![ライセンス](https://img.shields.io/badge/license-Apache--2.0-blue)
 
-<img src="doc/images/palmimo-hero.jpg" alt="木と黒を基調とした 6 脚の卓上ロボット Palmimo。丸いフェイスディスプレイが黄色く光っています" width="440">
+<img src="doc/images/palmimo-hero.jpg" alt="木と黒を基調とした 6 本脚の卓上ロボット Palmimo。丸いフェイスディスプレイが黄色く光っています" width="440">
 
 </div>
 
@@ -45,7 +45,7 @@ Palmimo.forward() → step() → MotionEngine computes → {servo_name: tick} �
   （歩く、手を振る、視線を向ける、表情を変える、話す、フレームを撮影する）。背後のモデルは
   差し替え可能です。`palmimo_sdk.mcp` は同じツールを MCP 経由で Claude Code、
   OpenClaw、その他の MCP クライアントに提供します。サンプルアプリにはウェイクワードエージェントと
-  常時動作するコンパニオンエージェントがあります。[サンプル](examples/README.md)と
+  常時稼働するコンパニオンエージェントがあります。[サンプル](examples/README.md)と
   [MCP での提供](doc/ja/guides/mcp-server.md)を参照してください。
 - **数行の Python で操作** — `robot.wave()`、`robot.look(...)`、`robot.forward()`。
 - **18 種類の組み込みモーション** — 歩行と旋回（`forward`、`strafe_left/right`、

@@ -40,7 +40,12 @@ render into `src/content/docs/ja/` and are served at `/ja/` (for example,
 `doc/ja/guides/installation.md` becomes `/ja/guides/installation/`).
 `SIDEBAR_ORDER` holds only English paths: Japanese pages look up their order
 with the `ja/` prefix removed, and a translation without its English original
-fails the build. Each translation's `editUrl` points to its own `doc/ja/` source.
+fails the build. The reverse is allowed: a missing Japanese translation does
+not itself fail the build, and Starlight serves the English body at its
+`/ja/...` route with an untranslated-content notice. Links to missing source
+files still fail sync, so removing a translation that other pages link to
+is not equivalent to adding a new English page without a translation.
+Each translation's `editUrl` points to its own `doc/ja/` source.
 The splash tree is copied recursively, preserving each locale's `index.mdx`.
 
 Two more fields ride along: `description`, the page's first prose paragraph
@@ -61,6 +66,10 @@ Links are rewritten as they pass through:
 `PALMIMO_DOC_BLOB_BASE` to build those links against a fork or a mirror
 instead.
 
+A link from a Japanese page to an English `doc/` page also fails the build;
+link to its `doc/ja/` counterpart instead. Shared images and links outside
+`doc/` keep the mappings above.
+
 A link that resolves to nothing fails the build rather than shipping broken.
 That is the point of doing this at build time: the site cannot drift from
 `doc/`, because it is not stored separately from it.
@@ -79,8 +88,10 @@ get right is the checkout, because `doc/` sits above this directory:
 
 Leaving the root directory at the repository root is the whole trick: a host
 that prunes the checkout to `docs-site` hides `doc/`, and the build fails
-rather than shipping an empty site. The build includes all registered `doc/` pages,
-the locale splashes that exist, and shared images. On Vercel, setting a Root Directory of `docs-site` also needs
+rather than shipping an empty site. Verified from a clean clone: 12 English
+documentation pages, 12 Japanese documentation pages, and two splashes, with
+shared images (plus the generated 404 page). On Vercel, setting a Root
+Directory of `docs-site` also needs
 "Include files outside the root directory" enabled; the settings above avoid
 the question entirely.
 

@@ -109,7 +109,7 @@ robot.stop()
 実行中の `run()`（または `perform_dance()` / `play_realtime()`）へ中止を通知します。
 次のフレーム境界で `MotionCancelled` を送出します。
 `perform_dance()` とエージェントのツール層のモーションツールは、
-`MotionCancelled` が伝播する前に、短い IDLE 送信で脚を滑らかに立脚姿勢へ移します。
+`MotionCancelled` が伝播する前に、短い IDLE 送信で脚を滑らかに立ち姿勢へ移します。
 これにより、呼び出し元が次の動作を決める間、片方のトライポッドが歩行途中の
 曲がって負荷のかかった状態で止まったままになるのを防ぎます。
 
@@ -148,7 +148,7 @@ robot.cancel()          # from the main thread (or any other)
 t.join()                 # the worker thread's run() raised MotionCancelled
 ```
 
-キャンセル後にロボットを立脚姿勢へ戻したい場合は、`run()` の周囲で
+キャンセル後にロボットを立ち姿勢へ戻したい場合は、`run()` の周囲で
 `MotionCancelled` を捕捉し、`finally` で `robot.stop()` を呼びます。
 これは `palmimo_sdk.agent.tools._run_motion` が、モーション途中のほかの失敗に対しても
 使っているパターンそのもので、その層で特別な処理は必要ありません。
@@ -830,7 +830,7 @@ with stream.stream() as chunks:
 `INFO` で 30 秒ごとに再記録し、長時間 HOT のままの場合にログで追跡できるようにします。
 エージェントのツール層の `LookTool`/`NodTool`/`HeadShakeTool` は、ジェスチャーを
 実行したと報告せず、結果テキストで拒否を伝えます
-（例: 「首を冷却中です（63°C）。look は無視しました」）。
+（例: "neck is cooling down (63°C), look ignored"）。
 
 ## 過負荷ガード
 

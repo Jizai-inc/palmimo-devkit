@@ -90,6 +90,10 @@ Data flow: `robot.forward()` -> `robot.step()` -> MotionEngine computes -> retur
   corresponding Japanese page in the same PR (including `README.ja.md` for
   `README.md`). Contributors who cannot write Japanese must say so in the
   PR description so a maintainer can take over the translation.
+  A PR adding an English documentation page must also add its counterpart
+  under `doc/ja/`. A missing Japanese counterpart does not itself fail the
+  build: Starlight serves the English body with an untranslated-content
+  notice at `/ja/...`; links to missing source files still fail sync.
 - **The tree carries no translation debt.** `JAPANESE_COMMENT_DEBT`
   ([tests/contracts/test_comment_language.py](tests/contracts/test_comment_language.py))
   is empty, and a test keeps it empty — translate a file rather than parking it

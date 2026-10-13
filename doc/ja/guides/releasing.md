@@ -131,14 +131,14 @@ Palmimo Portal は `examples-v` リリースからのみカタログを読み込
 
 | ラベル | 見出し |
 |---|---|
-| `breaking-change` | 破壊的変更 |
-| `sdk`, `motion` | SDK とモーション |
-| `example`, `integration` | サンプルと連携 |
-| `bug` | 修正 |
-| `documentation` | ドキュメント |
+| `breaking-change` | Breaking changes |
+| `sdk`, `motion` | SDK & motions |
+| `example`, `integration` | Examples & integrations |
+| `bug` | Fixes |
+| `documentation` | Documentation |
 | `skip-changelog` | 完全に除外 |
 | `dependencies` | 完全に除外 |
-| （上記のいずれでもない） | その他の変更 |
+| （上記のいずれでもない） | Other changes |
 
 ## 4. リリースの検証
 

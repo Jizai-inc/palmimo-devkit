@@ -42,6 +42,10 @@ A PR changing an English page must also update its corresponding Japanese
 page in `doc/ja/` (or `README.ja.md` for the README) in the same PR.
 If you cannot write Japanese, say so in the PR description and a maintainer
 will take over the translation.
+A PR adding an English documentation page must also add its counterpart
+under `doc/ja/`. A missing Japanese counterpart does not itself fail the
+build: Starlight serves the English body with an untranslated-content notice
+at `/ja/...`; links to missing source files still fail sync.
 
 ## License of contributions
 

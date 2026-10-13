@@ -199,9 +199,14 @@ test('Japanese pages link to Japanese pages and share images', async (t) => {
     ['mcp-server.md#認証', '/ja/guides/mcp-server/#認証'],
     ['../../images/motor_layout.drawio.svg', '/images/motor_layout.drawio.svg'],
     ['../../../README.md#safety', BLOB_BASE + '/README.md#safety'],
+    ['../../guides/mcp-server.md', null],
   ]) {
     await t.test(link, () => {
-      assert.equal(rewriteLink('ja/guides/installation.md', link), expected);
+      if (expected === null) {
+        assert.throws(() => rewriteLink('ja/guides/installation.md', link));
+      } else {
+        assert.equal(rewriteLink('ja/guides/installation.md', link), expected);
+      }
     });
   }
 });
