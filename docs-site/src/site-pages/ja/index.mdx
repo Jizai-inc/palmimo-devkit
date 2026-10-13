@@ -1,0 +1,139 @@
+---
+title: Palmimo DevKit
+template: splash
+hero:
+  title: |
+    <img class="hero-logo light:sl-hidden" src="/palmimo-devkit-logo-white.png" alt="" />
+    <img class="hero-logo dark:sl-hidden" src="/palmimo-devkit-logo.png" alt="Palmimo DevKit" />
+  tagline: AI エージェントに身体を。自分のコードで動かす 6 本脚の卓上 AI ロボット、Palmimo DevKit の開発者向けドキュメントです。
+  image:
+    html: '<img src="/images/palmimo-dev-scene.jpg" alt="ノートパソコンを使う開発者の隣で机の上に立つ Palmimo。丸いフェイスディスプレイが黄色に光っています" />'
+  actions:
+    - text: はじめる
+      link: /ja/guides/installation/
+      icon: right-arrow
+    - text: GitHub で見る
+      link: https://github.com/Jizai-inc/palmimo-devkit
+      icon: external
+      variant: minimal
+    - text: DevKit を入手する
+      link: https://palmimo.dev
+      icon: external
+      variant: minimal
+---
+
+import RobotConsole from '@/components/RobotConsole.astro';
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+Palmimo DevKit は AI エージェントに身体を与えます。自分のコードで動かせる、カスタマイズ可能な汎用 AI ロボットです。
+組み立てとテストを済ませた状態でお届けします。Palmimo は
+6 本脚のデスクトップコンパニオンロボットです。脚の 18 個のサーボがトライポッド
+歩容で歩かせ、サーボで動く首が丸いフェイスディスプレイの向きを変え、小さな表情エンジンが
+表情を作ります。カメラ、マイク、
+スピーカーも備え、SDK はどれも同じ方法でロボットに提供します。
+そのため、下のロボットは指示に応じて表情を変え、見えているものを表示し、
+録音します。
+
+<RobotConsole
+  src="/models/palmimo.glb"
+  alt="Palmimo の 3D モデル。3 関節の脚 6 本が丸い胴体を支え、3 関節の首がフェイスディスプレイを保持しています"
+  caption="ドラッグで回転、スクロールでズームします。Python プロンプトからこのロボットを動かせます。そこで実行した操作を、ここでロボットが行います。"
+  examples={[
+    'robot.forward()',
+    'robot.backward()',
+    'robot.rotate_left()',
+    'robot.strafe_left()',
+    'robot.look(yaw=NeckYawDegrees(20))',
+    'robot.wave()',
+    'robot.dance()',
+    'robot.pushup()',
+    'robot.set_expression("happy")',
+    'robot.set_expression("sleepy")',
+    'robot.camera.read()',
+    'robot.stop()',
+  ]}
+/>
+
+1 つの**モーションエンジン**（I/O を含まない、歩容と逆運動学の純粋な計算）が、
+交換可能なフロントエンドである `palmimo_sdk` Python API と
+サンプルのエージェントアプリを通じてロボットを動かします。どのモーションもサーボに届く前に、
+ハードウェアを接続しないドライランで計算できます。
+
+<div class="gait">
+  <div class="gait__legs" aria-hidden="true">
+    <span class="gait__leg gait__leg--a"></span>
+    <span class="gait__leg"></span>
+    <span class="gait__leg gait__leg--a"></span>
+    <span class="gait__leg"></span>
+    <span class="gait__leg gait__leg--a"></span>
+    <span class="gait__leg"></span>
+  </div>
+  <p class="gait__caption">トライポッド A とトライポッド B は逆位相です。3 本の脚が支えている間に、残りの 3 本が遊脚になります。</p>
+</div>
+
+## 動かしてみる
+
+まだロボットがなくても大丈夫です。どのモーションもハードウェアなしで計算できるので、どこからでも始められます。
+
+<CardGrid>
+  <LinkCard
+    title="制御ホストをセットアップする"
+    description="Raspberry Pi をネットワークに接続し、実行の準備を整えます。"
+    href="/ja/guides/raspberry-pi-setup/"
+  />
+  <LinkCard
+    title="ワークスペースをインストールする"
+    description="uv sync で SDK を同期し、ドライランでモーションを実行します。"
+    href="/ja/guides/installation/"
+  />
+</CardGrid>
+
+## 頭脳を与える
+
+<CardGrid>
+  <LinkCard
+    title="MCP 経由で提供する"
+    description="ロボットのツールを Claude Code、OpenClaw、その他の MCP クライアントに公開します。"
+    href="/ja/guides/mcp-server/"
+  />
+  <LinkCard
+    title="サンプルエージェント"
+    description="SDK のエージェント層で構築した、ウェイクワードエージェントと常時稼働するコンパニオンです。"
+    href="https://github.com/Jizai-inc/palmimo-devkit/blob/main/examples/README.md"
+  />
+  <LinkCard
+    title="LeRobot 連携"
+    description="ロボットを遠隔操作し、データセットを記録します。"
+    href="https://github.com/Jizai-inc/palmimo-devkit/blob/main/integrations/lerobot/README.md"
+  />
+</CardGrid>
+
+## 調べる
+
+<CardGrid>
+  <LinkCard
+    title="Python API"
+    description="Palmimo ファサードの全メソッドです。"
+    href="/ja/reference/api-reference/"
+  />
+  <LinkCard
+    title="モーション"
+    description="全 18 種類のモーションと調整項目です。"
+    href="/ja/reference/motions/"
+  />
+</CardGrid>
+
+## 仕組みを理解する
+
+<CardGrid>
+  <LinkCard
+    title="アーキテクチャ"
+    description="モーションエンジンが I/O に触れない理由を説明します。"
+    href="/ja/explanation/architecture/"
+  />
+  <LinkCard
+    title="モーションシステム"
+    description="6 本の脚で歩く仕組みを説明します。"
+    href="/ja/explanation/motion-system/"
+  />
+</CardGrid>
