@@ -43,6 +43,15 @@ const labels = japanese ? {
   try: 'Try:',
 };
 
+const runtimeLabels = japanese ? {
+  idle: labels.idle,
+  starting: 'Python を起動しています',
+  loading: 'SDK を読み込んでいます',
+  ready: 'このページで palmimo_sdk が動作しています。ロボットに実行結果が反映されます。',
+  cleared: 'トランスクリプトを消去しました。ロボットは直前の動作を続けます。',
+  startError: 'Python を起動できませんでした: ',
+} : undefined;
+
 const inputAttributes = { class: 'console__input', name: 'command', 'aria-label': labels.command };
 const inputBehavior = { autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' };
 
@@ -80,7 +89,7 @@ const preamble = SESSION_PREAMBLE.join('\n');
   </p>
   <p class="stage__caption">{caption}</p>
 
-  <div class="console">
+  <div class="console" data-console-labels={runtimeLabels && JSON.stringify(runtimeLabels)}>
     <div class="console__status">
       <p class="console__status-motion" role="status">
         <span class="console__status-dot" aria-hidden="true">○</span>

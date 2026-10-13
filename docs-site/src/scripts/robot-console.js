@@ -5,6 +5,33 @@
 // and what the robot looks like is the stage's.
 import { loadRuntime } from './robot-runtime.js';
 
+const DEFAULT_LABELS = {
+  idle: 'idle',
+  starting: 'Starting Python',
+  loading: 'Loading the SDK',
+  ready: 'palmimo_sdk is running in this page. The robot is its output.',
+  cleared: 'The transcript is clear. The robot kept whatever it was doing.',
+  startError: 'Could not start Python: ',
+};
+
+/**
+ * @param {Record<string, string>} labels
+ * @param {string} state
+ * @param {string} [value]
+ * @returns {string}
+ */
+export function consoleText(labels, state, value = '') {
+  if (state === 'motion') {
+    return value === 'idle' ? labels.idle ?? DEFAULT_LABELS.idle : value;
+  }
+  if (state === 'progress') {
+    const key = { 'Starting Python': 'starting', 'Loading the SDK': 'loading' }[value];
+    return key ? labels[key] ?? DEFAULT_LABELS[key] : value;
+  }
+  const text = labels[state] ?? DEFAULT_LABELS[state] ?? value;
+  return state === 'startError' ? text + value : text;
+}
+
 const PROMPT = '>>>';
 const CONTINUATION = '...';
 // Ceiling on the cycles one frame may catch up on. A tab returning from the
@@ -36,6 +63,7 @@ export function mountConsole(root, stage) {
   const stopButton = root.querySelector('.console__ghost--stop');
   const clearButton = root.querySelector('.console__ghost--clear');
   const exampleButtons = root.querySelectorAll('.console__example');
+  const labels = JSON.parse(root.dataset.consoleLabels ?? '{}');
   const history = [];
   let recalled = history.length;
   let runtime = null;
@@ -67,27 +95,27 @@ export function mountConsole(root, stage) {
     const running = motion !== 'idle';
     statusDot.textContent = running ? '●' : '○';
     statusDot.classList.toggle('console__status-dot--active', running);
-    statusLabel.textContent = motion;
+    statusLabel.textContent = consoleText(labels, 'motion', motion);
     stopButton.disabled = !running;
   }
 
   async function start() {
-    const note = write('Starting Python', 'note');
+    const note = write(consoleText(labels, 'starting'), 'note');
     try {
       runtime = await loadRuntime(
         (text) => write(text.replace(/\n$/, ''), 'output'),
         (phase) => {
-          note.textContent = phase;
+          note.textContent = consoleText(labels, 'progress', phase);
         }
       );
     } catch (error) {
       note.remove();
       // Rethrown with the context the caller cannot add: submit() owns what
       // the transcript says about a failure, wherever it came from.
-      throw new Error(`Could not start Python: ${error.message}`);
+      throw new Error(consoleText(labels, 'startError', error.message));
     }
     note.remove();
-    write('palmimo_sdk is running in this page. The robot is its output.', 'note');
+    write(consoleText(labels, 'ready'), 'note');
     // From here the robot is the SDK's: every step is a control cycle, the
     // same call a connected driver would be writing to the servos. The clock
     // is the SDK's too -- one cycle per frame would run every gait at double
@@ -197,6 +225,6 @@ export function mountConsole(root, stage) {
 
   clearButton.addEventListener('click', () => {
     transcript.replaceChildren();
-    write('The transcript is clear. The robot kept whatever it was doing.', 'note');
+    write(consoleText(labels, 'cleared'), 'note');
   });
 }

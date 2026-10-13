@@ -532,13 +532,14 @@ def _prose_paragraphs(text: str) -> list[list[tuple[int, str]]]:
         if fence is not None:
             continue
         if tag:
-            tag = not stripped.endswith(">")
+            tag = ">" not in stripped
             current = []
             continue
         if re.match(r"^</?[A-Za-z]|^<!--", stripped):
-            tag = not stripped.endswith(">")
-            current = []
-            continue
+            tag = ">" not in stripped
+            if tag or stripped.endswith(">"):
+                current = []
+                continue
         if not stripped or re.match(r"^(?:#{1,6}\s|\||import\s|[-*_]{3,}$)", stripped):
             current = []
             continue
@@ -556,7 +557,7 @@ def _prose_paragraphs(text: str) -> list[list[tuple[int, str]]]:
     return paragraphs
 
 
-def test_japanese_translation_paragraphs_do_not_wrap_between_japanese_characters() -> None:
+def test_japanese_translation_paragraphs_do_not_wrap_before_japanese_characters() -> None:
     paths = [
         REPO_ROOT / "README.ja.md",
         *sorted((DOC_ROOT / "ja").rglob("*.md")),
@@ -566,10 +567,34 @@ def test_japanese_translation_paragraphs_do_not_wrap_between_japanese_characters
     for path in paths:
         for paragraph in _prose_paragraphs(path.read_text(encoding="utf-8")):
             for previous, following in pairwise(paragraph):
-                end = previous[1].rstrip()
                 start = following[1].lstrip()
-                if end and start and JAPANESE_CHARACTER.fullmatch(end[-1]) and JAPANESE_CHARACTER.fullmatch(start[0]):
+                if start and JAPANESE_CHARACTER.fullmatch(start[0]):
                     offenders.append(f"{path.relative_to(REPO_ROOT)}:{previous[0] + 1}")
     assert offenders == [], (
         f"Join Japanese paragraph continuations without a space: {offenders[:10]} (total {len(offenders)})"
     )
+
+
+@pytest.mark.parametrize(
+    ("source", "line"),
+    [
+        ("# T\n\nこれは\n日本語です。\n", 3),
+        ('# T\n\nこれは\n日本語です。\n\n<a href="x">リンク</a>です\nこれは\n日本語です。\n', 7),
+        ("# T\n\nこれは [x](y)\n日本語です。\n", 3),
+        ("# T\n\nこれは `x`\n日本語です。\n", 3),
+        ("# T\n\nこれは **x**\n日本語です。\n", 3),
+    ],
+)
+def test_japanese_translation_wrapped_paragraph_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, line: int
+) -> None:
+    page = tmp_path / "README.ja.md"
+    page.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "DOC_ROOT", tmp_path / "doc")
+    monkeypatch.setattr(sys.modules[__name__], "SITE_PAGE_SOURCES", tmp_path / "site-pages")
+    splash = tmp_path / "site-pages/ja/index.mdx"
+    splash.parent.mkdir(parents=True)
+    splash.write_text("# Splash\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match=rf"README\.ja\.md:{line}\b"):
+        test_japanese_translation_paragraphs_do_not_wrap_before_japanese_characters()

@@ -154,7 +154,7 @@ export function rewriteLink(docRelSourcePath, target) {
     const sourceIsJapanese = docRelSourcePath.startsWith('ja/');
     const targetIsJapanese = docRel.startsWith('ja/');
     if (!sourceIsJapanese && targetIsJapanese) {
-      throw new Error(`Link to the English version of doc/${docRel} from doc/${docRelSourcePath}`);
+      throw new Error(`Link to the English version doc/${docRel.slice(3)} instead of "${target}" from doc/${docRelSourcePath}`);
     }
     if (sourceIsJapanese && !targetIsJapanese && fs.existsSync(path.join(DOC_ROOT, 'ja', docRel))) {
       throw new Error(
@@ -255,9 +255,10 @@ export function descriptionFor(body) {
 
   const cut = collapsed.slice(0, DESCRIPTION_TRUNCATE_AT);
   if (/[぀-ヿ㐀-鿿]/u.test(collapsed)) {
-    const sentence = cut.lastIndexOf('。');
-    const boundary = sentence >= 0 ? sentence : cut.lastIndexOf('、');
-    return `${boundary >= 0 ? cut.slice(0, boundary + 1) : cut}…`;
+    const minimum = Math.floor(DESCRIPTION_TRUNCATE_AT / 2);
+    const sentence = Math.max(...['。', '！', '？'].map((mark) => cut.lastIndexOf(mark)));
+    const boundary = sentence >= minimum ? sentence : cut.lastIndexOf('、');
+    if (boundary >= minimum) return `${cut.slice(0, boundary + 1)}…`;
   }
   const lastSpace = cut.lastIndexOf(' ');
   return `${lastSpace > 0 ? cut.slice(0, lastSpace) : cut}…`;
