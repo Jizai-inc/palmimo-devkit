@@ -2,8 +2,7 @@
 
 ## 利用可能なモーション
 
-[engine.py](../../../packages/palmimo_sdk/palmimo_sdk/engine.py) の `Motion` 列挙型で定義されています。
-次の 18 種類を Python API から呼び出せます。
+[engine.py](../../../packages/palmimo_sdk/palmimo_sdk/engine.py) の `Motion` 列挙型で定義されています。次の 18 種類を Python API から呼び出せます。
 
 | 列挙値 | 文字列名 | 説明 |
 |--------|--------|------|
@@ -26,16 +25,13 @@
 | `NOD` | `nod` | 「はい」とうなずきます（首のみ、1 回のみ） |
 | `HEAD_SHAKE` | `head_shake` / `shake_head` | 「いいえ」と首を振ります（首のみ、1 回のみ） |
 
-`set_motion(name)` でモーションを文字列指定するためのキーの一覧は、
-[robot.py](../../../packages/palmimo_sdk/palmimo_sdk/robot.py) の `Palmimo._MOTION_MAP` で定義されています。
+`set_motion(name)` でモーションを文字列指定するためのキーの一覧は、 [robot.py](../../../packages/palmimo_sdk/palmimo_sdk/robot.py) の `Palmimo._MOTION_MAP` で定義されています。
 
-各モーションを開始するメソッドについては、
-API リファレンスの[コアメソッド](api-reference.md#コアメソッド)を参照してください。
+各モーションを開始するメソッドについては、 API リファレンスの[コアメソッド](api-reference.md#コアメソッド)を参照してください。
 
 ## 歩容パラメーター
 
-[engine.py](../../../packages/palmimo_sdk/palmimo_sdk/engine.py) の
-`MotionEngine.__init__` で定義されています。
+[engine.py](../../../packages/palmimo_sdk/palmimo_sdk/engine.py) の `MotionEngine.__init__` で定義されています。
 
 | パラメーター | デフォルト | 単位 | 説明 | 設定方法 |
 |----------|------|-----|------|------|
@@ -44,11 +40,9 @@ API リファレンスの[コアメソッド](api-reference.md#コアメソッ�
 | `step_height` | `30.0` | mm | 遊脚中の足先の持ち上げ高さ（歩行と旋回に適用） | `MotionEngine` または `Palmimo` のコンストラクター |
 | `yaw_amplitude` | `250` | tick | 歩行中のヨー関節の最大振幅（中心 2048 からのオフセット） | `MotionEngine` のコンストラクターのみ。`Palmimo` はこの値を転送しません |
 
-`Palmimo` インスタンスから、転送されない調整値にアクセスするには、そのインスタンスが
-所有するエンジンを使います。`robot.engine.yaw_amplitude = 200`。
+`Palmimo` インスタンスから、転送されない調整値にアクセスするには、そのインスタンスが所有するエンジンを使います。`robot.engine.yaw_amplitude = 200`。
 
-ジェスチャーごとの調整（手を振る、うなずく、首を振る、ダンス）は、
-[API リファレンス](api-reference.md)に記載しています。
+ジェスチャーごとの調整（手を振る、うなずく、首を振る、ダンス）は、 [API リファレンス](api-reference.md)に記載しています。
 
 ## 実装ファイル
 

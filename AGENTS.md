@@ -84,16 +84,8 @@ Data flow: `robot.forward()` -> `robot.step()` -> MotionEngine computes -> retur
   record), `#` comments in the config files (`pyproject.toml`, YAML, shell,
   `.gitignore`, `.env` samples), Markdown prose, and the labels in
   `doc/images/*.drawio.svg`.
-- `README.ja.md`, `doc/ja/**/*.md`, and
-  `docs-site/src/site-pages/ja/index.mdx` are Japanese translations; English
-  is the source of truth. A PR changing an English page must update its
-  corresponding Japanese page in the same PR (including `README.ja.md` for
-  `README.md`). Contributors who cannot write Japanese must say so in the
-  PR description so a maintainer can take over the translation.
-  A PR adding an English documentation page must also add its counterpart
-  under `doc/ja/`. A missing Japanese counterpart does not itself fail the
-  build: Starlight serves the English body with an untranslated-content
-  notice at `/ja/...`; links to missing source files still fail sync.
+- Japanese translations follow the English originals. See
+  [CONTRIBUTING.md — Language](CONTRIBUTING.md#language) for translation rules.
 - **The tree carries no translation debt.** `JAPANESE_COMMENT_DEBT`
   ([tests/contracts/test_comment_language.py](tests/contracts/test_comment_language.py))
   is empty, and a test keeps it empty — translate a file rather than parking it

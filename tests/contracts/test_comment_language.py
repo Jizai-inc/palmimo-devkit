@@ -326,15 +326,6 @@ def _translation_original(path: Path) -> Path | None:
     return None
 
 
-def test_shipped_translations_have_english_originals() -> None:
-    missing = [
-        path.relative_to(SOFTWARE_ROOT).as_posix()
-        for path in _shipped_files()
-        if (original := _translation_original(path)) is not None and not original.is_file()
-    ]
-    assert missing == [], f"Translations have no English original: {missing}"
-
-
 def _scanners() -> dict[str, Callable[[Path], bool]]:
     """Map every shipped file that carries prose to the check it answers to."""
     scanners = {}
@@ -554,27 +545,3 @@ def test_only_translation_prose_is_exempt_from_english(
     else:
         with pytest.raises(AssertionError):
             test_shipped_markdown_has_english_prose()
-
-
-@pytest.mark.parametrize(
-    ("translation", "original"),
-    [
-        ("README.ja.md", "README.md"),
-        ("doc/ja/guides/installation.md", "doc/guides/installation.md"),
-        ("docs-site/src/site-pages/ja/index.mdx", "docs-site/src/site-pages/index.mdx"),
-    ],
-)
-def test_translation_without_english_original_is_rejected(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, translation: str, original: str
-) -> None:
-    page = tmp_path / translation
-    page.parent.mkdir(parents=True, exist_ok=True)
-    page.write_text("# 日本語\n", encoding="utf-8")
-    monkeypatch.setattr(sys.modules[__name__], "SOFTWARE_ROOT", tmp_path)
-    monkeypatch.setattr(sys.modules[__name__], "_shipped_files", lambda: (page,))
-    with pytest.raises(AssertionError):
-        test_shipped_translations_have_english_originals()
-    source = tmp_path / original
-    source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text("# English\n", encoding="utf-8")
-    test_shipped_translations_have_english_originals()

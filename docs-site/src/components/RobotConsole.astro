@@ -15,6 +15,36 @@ interface Props {
 }
 
 const { src, alt, caption, examples } = Astro.props;
+const japanese = Astro.currentLocale === 'ja';
+const labels = japanese ? {
+  camera: '頭部カメラ',
+  mic: 'マイク',
+  fallback: '3D モデルの表示には JavaScript が必要です。上の写真は同じロボットです。',
+  idle: '待機中',
+  stop: '停止',
+  clear: '消去',
+  output: 'コンソールの出力',
+  note: '# 実行済み -- 実際の palmimo_sdk を使い、このページがカメラ、ディスプレイ、マイクの代わりになります。',
+  command: 'Python コマンド',
+  placeholder: 'Enter で行を実行、↑ / ↓ で実行済みのコマンドを表示',
+  examples: 'コマンドの例',
+  try: '試してみる:',
+} : {
+  camera: 'head camera',
+  mic: 'mic',
+  fallback: 'The 3D model needs JavaScript. The photograph above shows the same robot.',
+  idle: 'idle',
+  stop: 'stop',
+  clear: 'clear',
+  output: 'Console output',
+  note: '# Already run -- the real palmimo_sdk, with this page standing in for the camera, display and mic.',
+  command: 'Python command',
+  examples: 'Example commands',
+  try: 'Try:',
+};
+
+const inputAttributes = { class: 'console__input', name: 'command', 'aria-label': labels.command };
+const inputBehavior = { autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false' };
 
 // Shown above the prompt because it is what the reader would write themselves:
 // the page has already run these lines, and everything they type continues the
@@ -35,18 +65,18 @@ const preamble = SESSION_PREAMBLE.join('\n');
       <!-- The renderer draws into this element's own box, so the border here
            and the picture inside it cannot come apart. -->
       <figure class="stage__view">
-        <figcaption class="stage__view-label">head camera</figcaption>
+        <figcaption class="stage__view-label">{labels.camera}</figcaption>
       </figure>
       <!-- The mic has nothing of its own to draw, so a capture is something to
            watch happen here rather than a number that comes back. -->
       <p class="stage__mic">
-        <span class="stage__mic-label">mic</span>
+        <span class="stage__mic-label">{labels.mic}</span>
         <span class="stage__mic-meter"><span class="stage__mic-fill"></span></span>
       </p>
     </div>
   </div>
   <p class="stage__fallback">
-    The 3D model needs JavaScript. The photograph above shows the same robot.
+    {labels.fallback}
   </p>
   <p class="stage__caption">{caption}</p>
 
@@ -54,34 +84,28 @@ const preamble = SESSION_PREAMBLE.join('\n');
     <div class="console__status">
       <p class="console__status-motion" role="status">
         <span class="console__status-dot" aria-hidden="true">○</span>
-        <span class="console__status-label">idle</span>
+        <span class="console__status-label">{labels.idle}</span>
       </p>
       <div class="console__status-actions">
-        <button class="console__ghost console__ghost--stop" type="button" disabled>stop</button>
-        <button class="console__ghost console__ghost--clear" type="button">clear</button>
+        <button class="console__ghost console__ghost--stop" type="button" disabled>{labels.stop}</button>
+        <button class="console__ghost console__ghost--clear" type="button">{labels.clear}</button>
       </div>
     </div>
-    <div class="console__log" role="log" aria-live="polite" aria-label="Console output">
+    <div class="console__log" role="log" aria-live="polite" aria-label={labels.output}>
       <pre class="console__preamble">{preamble}</pre>
-      <pre class="console__line console__line--note"># Already run -- the real palmimo_sdk, with this page standing in for the camera, display and mic.</pre>
+      <pre class="console__line console__line--note">{labels.note}</pre>
       {/* What the reader runs, kept apart from the two lines above: "clear" empties this and only this. */}
       <div class="console__transcript"></div>
     </div>
     <form class="console__form">
       <span class="console__caret" aria-hidden="true">&gt;&gt;&gt;</span>
-      <input
-        class="console__input"
-        name="command"
-        aria-label="Python command"
-        placeholder="Enter runs the line &mdash; &uarr; / &darr; for what you have already run"
-        autocomplete="off"
-        autocapitalize="off"
-        autocorrect="off"
-        spellcheck="false"
-      />
+      {japanese
+        ? <input {...inputAttributes} placeholder={labels.placeholder} {...inputBehavior} />
+        : <input {...inputAttributes} placeholder="Enter runs the line &mdash; &uarr; / &darr; for what you have already run" {...inputBehavior} />}
+
     </form>
-    <div class="console__examples" role="group" aria-label="Example commands">
-      <span class="console__examples-label" aria-hidden="true">Try:</span>
+    <div class="console__examples" role="group" aria-label={labels.examples}>
+      <span class="console__examples-label" aria-hidden="true">{labels.try}</span>
       {examples.map((example) => <button class="console__example" type="button">{example}</button>)}
     </div>
   </div>

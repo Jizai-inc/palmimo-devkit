@@ -151,7 +151,12 @@ export function rewriteLink(docRelSourcePath, target) {
       );
     }
     const docRel = toPosix(path.relative(DOC_ROOT, abs));
-    if (docRelSourcePath.startsWith('ja/') && !docRel.startsWith('ja/')) {
+    const sourceIsJapanese = docRelSourcePath.startsWith('ja/');
+    const targetIsJapanese = docRel.startsWith('ja/');
+    if (!sourceIsJapanese && targetIsJapanese) {
+      throw new Error(`Link to the English version of doc/${docRel} from doc/${docRelSourcePath}`);
+    }
+    if (sourceIsJapanese && !targetIsJapanese && fs.existsSync(path.join(DOC_ROOT, 'ja', docRel))) {
       throw new Error(
         `Link to the Japanese version doc/ja/${docRel} instead of "${target}" from doc/${docRelSourcePath}`
       );
@@ -161,7 +166,8 @@ export function rewriteLink(docRelSourcePath, target) {
         `"${docRel}" has no SIDEBAR_ORDER entry -- register its sidebar order before linking to it from doc/${docRelSourcePath}`
       );
     }
-    const slug = docRel.slice(0, -'.md'.length);
+    const routeRel = sourceIsJapanese && !targetIsJapanese ? `ja/${docRel}` : docRel;
+    const slug = routeRel.slice(0, -'.md'.length);
     return `/${slug}/${anchor}`;
   }
 
@@ -248,6 +254,11 @@ export function descriptionFor(body) {
   }
 
   const cut = collapsed.slice(0, DESCRIPTION_TRUNCATE_AT);
+  if (/[぀-ヿ㐀-鿿]/u.test(collapsed)) {
+    const sentence = cut.lastIndexOf('。');
+    const boundary = sentence >= 0 ? sentence : cut.lastIndexOf('、');
+    return `${boundary >= 0 ? cut.slice(0, boundary + 1) : cut}…`;
+  }
   const lastSpace = cut.lastIndexOf(' ');
   return `${lastSpace > 0 ? cut.slice(0, lastSpace) : cut}…`;
 }
@@ -441,6 +452,13 @@ function checkSitePageRoutes() {
     const content = fs.readFileSync(srcFile, 'utf8');
     for (const routeRe of SITE_ROUTE_RES) {
       for (const [, route] of content.matchAll(routeRe)) {
+        const routePath = route.split(/[?#]/)[0];
+        const asset = routePath.startsWith('/images/') || path.extname(routePath) !== '';
+        const japanesePage = toPosix(path.relative(SITE_PAGES_DIR, srcFile)).startsWith('ja/');
+        const japaneseRoute = /^\/ja(?:\/|$)/.test(routePath);
+        if (!asset && japanesePage !== japaneseRoute) {
+          throw new Error(`Site page ${srcFile} links to a different locale: ${route}`);
+        }
         if (!routeExists(route)) {
           throw new Error(`"${route}" in ${srcFile} is not a route this site builds`);
         }
@@ -462,10 +480,11 @@ export function routeExists(route) {
     const asset = path.resolve(PUBLIC_DIR, slug);
     return isInside(PUBLIC_DIR, asset) && fs.existsSync(asset);
   }
-  return PAGE_EXTENSIONS.some((ext) =>
-    fs.existsSync(path.join(CONTENT_DOCS_DIR, `${slug}${ext}`)) ||
-    fs.existsSync(path.join(CONTENT_DOCS_DIR, slug, `index${ext}`))
-  );
+  const slugs = slug.startsWith('ja/') ? [slug, slug.slice(3)] : [slug];
+  return slugs.some((candidate) => PAGE_EXTENSIONS.some((ext) =>
+    fs.existsSync(path.join(CONTENT_DOCS_DIR, `${candidate}${ext}`)) ||
+    fs.existsSync(path.join(CONTENT_DOCS_DIR, candidate, `index${ext}`))
+  ));
 }
 
 // Collects the Python the browser has to have on disk before it can

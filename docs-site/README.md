@@ -66,8 +66,11 @@ Links are rewritten as they pass through:
 `PALMIMO_DOC_BLOB_BASE` to build those links against a fork or a mirror
 instead.
 
-A link from a Japanese page to an English `doc/` page also fails the build;
-link to its `doc/ja/` counterpart instead. Shared images and links outside
+A link from a Japanese page to an English `doc/` page fails the build when
+its `doc/ja/` counterpart exists; link to that translation instead. When the
+translation does not exist, the English source link becomes the `/ja/...`
+Starlight fallback route. English doc pages cannot link into `doc/ja/`, and
+each splash must link to page routes in its own locale. Shared images and links outside
 `doc/` keep the mappings above.
 
 A link that resolves to nothing fails the build rather than shipping broken.

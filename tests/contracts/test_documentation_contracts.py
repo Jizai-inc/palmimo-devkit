@@ -9,6 +9,7 @@ import subprocess
 import sys
 import unicodedata
 from functools import cache
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -499,3 +500,76 @@ def test_translated_commands_follow_the_original_page_policy(
     else:
         with pytest.raises(AssertionError):
             test_commands_live_on_their_documented_page()
+
+
+JAPANESE_CHARACTER = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\u3000-\u303f\uff01-\uff60]")
+
+
+def _prose_paragraphs(text: str) -> list[list[tuple[int, str]]]:
+    paragraphs: list[list[tuple[int, str]]] = []
+    current: list[tuple[int, str]] = []
+    fence: str | None = None
+    frontmatter = text.startswith("---\n")
+    tag = False
+    quote = ""
+    for index, line in enumerate(text.splitlines()):
+        if frontmatter:
+            if index > 0 and line == "---":
+                frontmatter = False
+            continue
+        match = re.match(r"^(\s*(?:>\s*)*)(.*)$", line)
+        assert match is not None
+        prefix, body = match.groups()
+        stripped = body.strip()
+        marker = re.match(r"(`{3,}|~{3,})", stripped)
+        if marker:
+            if fence is None:
+                fence = marker[1]
+            elif stripped.startswith(fence):
+                fence = None
+            current = []
+            continue
+        if fence is not None:
+            continue
+        if tag:
+            tag = not stripped.endswith(">")
+            current = []
+            continue
+        if re.match(r"^</?[A-Za-z]|^<!--", stripped):
+            tag = not stripped.endswith(">")
+            current = []
+            continue
+        if not stripped or re.match(r"^(?:#{1,6}\s|\||import\s|[-*_]{3,}$)", stripped):
+            current = []
+            continue
+        item = re.match(r"^([-*+]\s+|\d+[.)]\s+)(.*)$", body)
+        next_quote = ">" * prefix.count(">")
+        if item:
+            body = item[2]
+            current = []
+        if next_quote != quote:
+            current = []
+        quote = next_quote
+        if not current:
+            paragraphs.append(current)
+        current.append((index, body))
+    return paragraphs
+
+
+def test_japanese_translation_paragraphs_do_not_wrap_between_japanese_characters() -> None:
+    paths = [
+        REPO_ROOT / "README.ja.md",
+        *sorted((DOC_ROOT / "ja").rglob("*.md")),
+        SITE_PAGE_SOURCES / "ja" / "index.mdx",
+    ]
+    offenders = []
+    for path in paths:
+        for paragraph in _prose_paragraphs(path.read_text(encoding="utf-8")):
+            for previous, following in pairwise(paragraph):
+                end = previous[1].rstrip()
+                start = following[1].lstrip()
+                if end and start and JAPANESE_CHARACTER.fullmatch(end[-1]) and JAPANESE_CHARACTER.fullmatch(start[0]):
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{previous[0] + 1}")
+    assert offenders == [], (
+        f"Join Japanese paragraph continuations without a space: {offenders[:10]} (total {len(offenders)})"
+    )

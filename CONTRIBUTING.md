@@ -43,9 +43,9 @@ page in `doc/ja/` (or `README.ja.md` for the README) in the same PR.
 If you cannot write Japanese, say so in the PR description and a maintainer
 will take over the translation.
 A PR adding an English documentation page must also add its counterpart
-under `doc/ja/`. A missing Japanese counterpart does not itself fail the
-build: Starlight serves the English body with an untranslated-content notice
-at `/ja/...`; links to missing source files still fail sync.
+under `doc/ja/`.
+Build behavior and link language rules are documented in
+[the docs site README](docs-site/README.md#how-the-render-works).
 
 ## License of contributions
 
