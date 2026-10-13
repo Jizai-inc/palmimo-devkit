@@ -5,14 +5,18 @@ source has to understand is English-only: Python comments, docstrings, and
 diagnostics, ``#`` comments in the config files, Markdown prose, and diagram
 labels.
 
+Translations (``README.ja.md``, ``doc/ja/**/*.md``, and the Japanese
+splash) carry Japanese prose with an English original as the source of truth.
+They are a separate category, not comment debt.
+
 Japanese the product itself emits stays untouched — the strings it speaks and
 returns, fenced code samples, and runtime text files listed in
 ``RUNTIME_TEXT_FILES`` (a system prompt an app ships) are output, not
 explanation.
 
-Files that still carry Japanese are listed in ``JAPANESE_COMMENT_DEBT``. The
-list is empty and locked empty by a test: the tree is fully English, so a new
-file is translated rather than parked on a list.
+Original explanation files that still carry Japanese are listed in
+``JAPANESE_COMMENT_DEBT``. The list is empty and locked empty by a test: original explanations are English,
+so a new explanation is translated rather than parked on a list.
 
 Every shipped file must answer to one of those checks, be a binary asset, or
 be recorded in ``UNCHECKED_BY_DESIGN`` with the reason it carries no prose —
@@ -24,6 +28,7 @@ import io
 import os
 import re
 import subprocess
+import sys
 import tokenize
 from collections.abc import Callable, Mapping
 from functools import cache
@@ -308,13 +313,33 @@ def _check_for(path: Path) -> Callable[[Path], bool] | None:
     return None
 
 
+def _translation_original(path: Path) -> Path | None:
+    relative = path.relative_to(SOFTWARE_ROOT).as_posix()
+    if relative == "README.ja.md":
+        return SOFTWARE_ROOT / "README.md"
+    if relative.startswith("doc/ja/") and path.suffix == ".md":
+        return SOFTWARE_ROOT / "doc" / relative.removeprefix("doc/ja/")
+    if relative == "docs-site/src/site-pages/ja/index.mdx":
+        return SOFTWARE_ROOT / "docs-site/src/site-pages/index.mdx"
+    return None
+
+
+def test_shipped_translations_have_english_originals() -> None:
+    missing = [
+        path.relative_to(SOFTWARE_ROOT).as_posix()
+        for path in _shipped_files()
+        if (original := _translation_original(path)) is not None and not original.is_file()
+    ]
+    assert missing == [], f"Translations have no English original: {missing}"
+
+
 def _scanners() -> dict[str, Callable[[Path], bool]]:
     """Map every shipped file that carries prose to the check it answers to."""
     scanners = {}
     for path in _shipped_files():
         relative = path.relative_to(SOFTWARE_ROOT).as_posix()
         check = _check_for(path)
-        if check is not None and relative not in RUNTIME_TEXT_FILES:
+        if check is not None and relative not in RUNTIME_TEXT_FILES and _translation_original(path) is None:
             scanners[relative] = check
     return scanners
 
@@ -498,3 +523,56 @@ def test_markdown_code_samples_may_stay_japanese_while_prose_may_not(tmp_path: P
 
     page.write_text("The robot speaks 日本語 here.\n", encoding="utf-8")
     assert _has_japanese_markdown_prose(page)
+
+
+@pytest.mark.parametrize(
+    ("relative", "is_translation"),
+    [
+        ("README.ja.md", True),
+        ("doc/ja/guides/installation.md", True),
+        ("docs-site/src/site-pages/ja/index.mdx", True),
+        ("doc/guides/japanese.md", False),
+        ("doc/ja/guides/installation.mdx", False),
+        ("examples/README.ja.md", False),
+        ("docs-site/src/site-pages/ja/other.mdx", False),
+    ],
+)
+def test_only_translation_prose_is_exempt_from_english(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str, is_translation: bool
+) -> None:
+    english = tmp_path / "README.md"
+    english.write_text("# English\n", encoding="utf-8")
+    page = tmp_path / relative
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text("# 日本語\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "SOFTWARE_ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "_shipped_files", lambda: (english, page))
+    if is_translation:
+        test_shipped_markdown_has_english_prose()
+    else:
+        with pytest.raises(AssertionError):
+            test_shipped_markdown_has_english_prose()
+
+
+@pytest.mark.parametrize(
+    ("translation", "original"),
+    [
+        ("README.ja.md", "README.md"),
+        ("doc/ja/guides/installation.md", "doc/guides/installation.md"),
+        ("docs-site/src/site-pages/ja/index.mdx", "docs-site/src/site-pages/index.mdx"),
+    ],
+)
+def test_translation_without_english_original_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, translation: str, original: str
+) -> None:
+    page = tmp_path / translation
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text("# 日本語\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "SOFTWARE_ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "_shipped_files", lambda: (page,))
+    with pytest.raises(AssertionError):
+        test_shipped_translations_have_english_originals()
+    source = tmp_path / original
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("# English\n", encoding="utf-8")
+    test_shipped_translations_have_english_originals()

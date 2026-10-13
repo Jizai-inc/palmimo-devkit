@@ -74,7 +74,7 @@ Data flow: `robot.forward()` -> `robot.step()` -> MotionEngine computes -> retur
 - Each gait method only modifies servo positions — no side effects
 - New motions MUST transition smoothly from/to neutral stance
 - Tests: dry-run first (`--live` flag off), verify servo range 200-3900 (safe range)
-- When changing palmimo_sdk (robot.py, engine.py, kinematics.py), update the co-located docs under `doc/` ([api-reference.md](doc/reference/api-reference.md), [architecture.md](doc/explanation/architecture.md), [motion-development-guide.md](doc/guides/motion-development-guide.md)) in the same commit
+- When changing palmimo_sdk (robot.py, engine.py, kinematics.py), update the co-located docs under `doc/` ([api-reference.md](doc/reference/api-reference.md), [architecture.md](doc/explanation/architecture.md), [motion-development-guide.md](doc/guides/motion-development-guide.md)) and their corresponding Japanese translations in the same commit
 
 ## Comments
 
@@ -84,6 +84,12 @@ Data flow: `robot.forward()` -> `robot.step()` -> MotionEngine computes -> retur
   record), `#` comments in the config files (`pyproject.toml`, YAML, shell,
   `.gitignore`, `.env` samples), Markdown prose, and the labels in
   `doc/images/*.drawio.svg`.
+- `README.ja.md`, `doc/ja/**/*.md`, and
+  `docs-site/src/site-pages/ja/index.mdx` are Japanese translations; English
+  is the source of truth. A PR changing an English page must update its
+  corresponding Japanese page in the same PR (including `README.ja.md` for
+  `README.md`). Contributors who cannot write Japanese must say so in the
+  PR description so a maintainer can take over the translation.
 - **The tree carries no translation debt.** `JAPANESE_COMMENT_DEBT`
   ([tests/contracts/test_comment_language.py](tests/contracts/test_comment_language.py))
   is empty, and a test keeps it empty — translate a file rather than parking it
@@ -168,9 +174,10 @@ to different readers.
 | `README.md` | The product's face | What Palmimo is, plus a Quickstart. Route to the rest; do not host it |
 | `doc/guides/` | How-to — the reader has a goal | Steps in order, commands included |
 | `doc/reference/` | Reference — the reader wants a fact | Complete and lookup-shaped. No procedures |
+| `doc/ja/` | Japanese translations of the English documentation | Mirror the English structure and update with the source; English is the source of truth |
 | `doc/explanation/` | Explanation — the reader wants to understand | Why it is built this way. No procedures |
 | `examples/**/README.md` | Runnable examples | **Self-contained** — an example a reader copies out has to still make sense, so these are not split across `doc/` |
-| `docs-site/` | The documentation site | A rendering of `doc/`, built by `sync-doc.mjs`. Write the page in `doc/`; the only page written here is the splash |
+| `docs-site/` | The documentation site | A rendering of `doc/`, built by `sync-doc.mjs`. Write the page in `doc/`; only one splash per locale is written here |
 | `integrations/**` | Separate uv workspaces | Own their install and run commands; this workspace cannot state them |
 | `scripts/README.md` | The user-facing CLI surface | Reference for every subcommand, with its usage |
 | `CONTRIBUTING.md` | The contributor loop | Checks, conventions, review |
@@ -191,7 +198,8 @@ to different readers.
   are fine.
 - **When you change the SDK core**, update the pages co-located with it in the
   same commit: `doc/reference/api-reference.md`,
-  `doc/explanation/architecture.md`, `doc/guides/motion-development-guide.md`.
+  `doc/explanation/architecture.md`, `doc/guides/motion-development-guide.md`,
+  and their corresponding pages under `doc/ja/`.
 
 | Purpose | Reference |
 |---------|-----------|

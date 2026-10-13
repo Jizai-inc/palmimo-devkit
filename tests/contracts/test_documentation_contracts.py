@@ -6,9 +6,12 @@ roots stay inside it, so the suite runs unchanged wherever the tree lives.
 
 import re
 import subprocess
+import sys
 import unicodedata
 from functools import cache
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -46,6 +49,7 @@ DOC_ROOT = REPO_ROOT / "doc"
 # render lands in holds no tracked page at all.
 SITE_PAGE_SOURCES = REPO_ROOT / "docs-site" / "src" / "site-pages"
 SITE_SPLASH = SITE_PAGE_SOURCES / "index.mdx"
+SITE_SPLASHES = frozenset({SITE_SPLASH, SITE_PAGE_SOURCES / "ja" / "index.mdx"})
 SITE_RENDER_DIR = REPO_ROOT / "docs-site" / "src" / "content" / "docs"
 SITE_PUBLIC_DIR = REPO_ROOT / "docs-site" / "public"
 # A path segment that is already the slug Astro would generate for it.
@@ -161,7 +165,7 @@ def _markdown_files(*roots: Path) -> list[Path]:
     selected = sorted(
         path
         for path in files
-        if any(path == root or root in path.parents for root in roots)
+        if (any(path == root or root in path.parents for root in roots) or path == REPO_ROOT / "README.ja.md")
         # --cached keeps a deleted-but-tracked path listed; nothing to scan there.
         and path.is_file()
         and path.name != "AGENTS.md"
@@ -179,12 +183,20 @@ def test_every_command_page_exists() -> None:
     assert missing == [], f"COMMAND_PAGES names pages this tree does not have: {missing}"
 
 
+def _english_page(relative: str) -> str:
+    if relative == "README.ja.md":
+        return "README.md"
+    if relative.startswith("doc/ja/") and relative.endswith(".md"):
+        return "doc/" + relative.removeprefix("doc/ja/")
+    return relative
+
+
 def test_commands_live_on_their_documented_page() -> None:
     candidates = _markdown_files(*MARKDOWN_SCAN_ROOTS)
     offenders = [
         relative
         for path in candidates
-        if (relative := path.relative_to(REPO_ROOT).as_posix()) not in COMMAND_PAGES
+        if _english_page(relative := path.relative_to(REPO_ROOT).as_posix()) not in COMMAND_PAGES
         and STRAY_COMMAND.search(path.read_text(encoding="utf-8"))
     ]
 
@@ -225,8 +237,8 @@ def _doc_source_for_site_route(page: Path, target: str) -> Path | None:
     if not target.startswith("/") or not page.is_relative_to(SITE_PAGE_SOURCES):
         return None
     route = target.strip("/")
-    if not route:
-        return SITE_SPLASH
+    if route in {"", "ja"}:
+        return SITE_PAGE_SOURCES / route / "index.mdx"
     # /images/ is rendered out of doc/images/, so the tree's copy of a diagram
     # is there and not in the generated public/images/.
     if route.startswith("images/"):
@@ -316,7 +328,8 @@ def test_the_site_hosts_no_hand_written_page_beside_the_splash() -> None:
     offenders = [
         path.relative_to(REPO_ROOT).as_posix()
         for path in _git_tracked_markdown_files()
-        if (path.is_relative_to(SITE_PAGE_SOURCES) and path != SITE_SPLASH) or path.is_relative_to(SITE_RENDER_DIR)
+        if (path.is_relative_to(SITE_PAGE_SOURCES) and path not in SITE_SPLASHES)
+        or path.is_relative_to(SITE_RENDER_DIR)
     ]
 
     assert offenders == [], (
@@ -458,3 +471,27 @@ def test_markdown_and_contracts_avoid_stale_software_paths() -> None:
         "Found a reference to the pre-migration subdirectory (or a `cd` into it) -- this "
         f"repository's root is already the published tree, so point at it directly: {offenders}"
     )
+
+
+@pytest.mark.parametrize(
+    ("relative", "commands_allowed"),
+    [
+        ("README.ja.md", True),
+        ("doc/ja/guides/installation.md", True),
+        ("doc/ja/reference/api-reference.md", False),
+        ("doc/ja/explanation/architecture.md", False),
+    ],
+)
+def test_translated_commands_follow_the_original_page_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str, commands_allowed: bool
+) -> None:
+    page = tmp_path / relative
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text("# Translation\n\n```bash\nuv sync\n```\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "_markdown_files", lambda *roots: [page])
+    if commands_allowed:
+        test_commands_live_on_their_documented_page()
+    else:
+        with pytest.raises(AssertionError):
+            test_commands_live_on_their_documented_page()

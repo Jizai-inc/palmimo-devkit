@@ -2,6 +2,8 @@
 // this test ships with the docs site, not the palmimo_sdk package.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -192,4 +194,32 @@ test('descriptionFor truncates a long paragraph at a word boundary', () => {
 test('lastCommitDate is omitted on a shallow checkout', () => {
   const thisFile = fileURLToPath(import.meta.url);
   assert.equal(lastCommitDate(thisFile, true), undefined);
+});
+
+
+test('Japanese pages resolve links relative to their locale and share images', async (t) => {
+  const target = fileURLToPath(new URL('../doc/ja/guides/mcp-server.md', import.meta.url));
+  const created = !fs.existsSync(target);
+  if (created) {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, '# MCP server\n', { flag: 'wx' });
+  }
+  try {
+    for (const [link, expected] of [
+      ['mcp-server.md#認証', '/ja/guides/mcp-server/#認証'],
+      ['../../images/motor_layout.drawio.svg', '/images/motor_layout.drawio.svg'],
+      ['../../../README.md#safety', BLOB_BASE + '/README.md#safety'],
+    ]) {
+      await t.test(link, () => {
+        assert.equal(rewriteLink('ja/guides/installation.md', link), expected);
+      });
+    }
+  } finally {
+    if (created) {
+      fs.unlinkSync(target);
+      for (const dir of [path.dirname(target), path.dirname(path.dirname(target))]) {
+        if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+      }
+    }
+  }
 });

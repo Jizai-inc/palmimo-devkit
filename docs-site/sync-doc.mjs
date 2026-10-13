@@ -108,6 +108,15 @@ function isInside(parentDir, target) {
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
+function englishDocPath(docRelPath) {
+  if (!docRelPath.startsWith('ja/')) return docRelPath;
+  const original = docRelPath.slice('ja/'.length);
+  if (!fs.statSync(path.join(DOC_ROOT, original), { throwIfNoEntry: false })?.isFile()) {
+    throw new Error('Japanese translation has no English original: doc/' + docRelPath);
+  }
+  return original;
+}
+
 export function rewriteLink(docRelSourcePath, target) {
   if (/^(https?:|mailto:)/.test(target)) {
     return target;
@@ -142,7 +151,7 @@ export function rewriteLink(docRelSourcePath, target) {
       );
     }
     const docRel = toPosix(path.relative(DOC_ROOT, abs));
-    if (!(docRel in SIDEBAR_ORDER)) {
+    if (!(englishDocPath(docRel) in SIDEBAR_ORDER)) {
       throw new Error(
         `"${docRel}" has no SIDEBAR_ORDER entry -- register its sidebar order before linking to it from doc/${docRelSourcePath}`
       );
@@ -239,7 +248,7 @@ export function descriptionFor(body) {
 }
 
 export function frontmatterFor(docRelPath, h1Text, description, lastUpdated) {
-  const order = SIDEBAR_ORDER[docRelPath];
+  const order = SIDEBAR_ORDER[englishDocPath(docRelPath)];
   if (order === undefined) {
     throw new Error(`"${docRelPath}" has no SIDEBAR_ORDER entry -- register its sidebar order before generating it`);
   }
@@ -449,7 +458,8 @@ export function routeExists(route) {
     return isInside(PUBLIC_DIR, asset) && fs.existsSync(asset);
   }
   return PAGE_EXTENSIONS.some((ext) =>
-    fs.existsSync(path.join(CONTENT_DOCS_DIR, `${slug}${ext}`))
+    fs.existsSync(path.join(CONTENT_DOCS_DIR, `${slug}${ext}`)) ||
+    fs.existsSync(path.join(CONTENT_DOCS_DIR, slug, `index${ext}`))
   );
 }
 
