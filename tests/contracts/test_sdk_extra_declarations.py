@@ -68,6 +68,7 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     # urllib + hashlib model fetching; no third-party package involved.
     "palmimo_sdk.download": _NO_EXTRA,
     "palmimo_sdk.engine": _NO_EXTRA,
+    "palmimo_sdk.hardware_error": _NO_EXTRA,
     "palmimo_sdk.kinematics": _NO_EXTRA,
     "palmimo_sdk.mcp": frozenset({"mcp"}),
     "palmimo_sdk.mcp.server": frozenset({"mcp"}),
@@ -158,6 +159,9 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:ServoDriver": _NO_EXTRA,
     "palmimo_sdk:ServoPositions": _NO_EXTRA,
     "palmimo_sdk:ServoTelemetry": _NO_EXTRA,
+    "palmimo_sdk:HardwareErrorRead": _NO_EXTRA,
+    "palmimo_sdk:HARDWARE_ERROR_BITS": _NO_EXTRA,
+    "palmimo_sdk:describe_hardware_error": _NO_EXTRA,
     "palmimo_sdk:kinematics": _NO_EXTRA,
     "palmimo_sdk:shutdown": _NO_EXTRA,
     # -- Name matching and ALSA card resolution: stdlib only (difflib,

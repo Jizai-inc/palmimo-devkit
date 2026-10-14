@@ -372,3 +372,9 @@ def test_read_positions_span_is_optional_and_names_the_driver_that_lacks_it() ->
     driver = RecordingDriver()
     with pytest.raises(NotImplementedError, match="RecordingDriver"):
         driver.read_positions_span()
+
+
+def test_read_hardware_errors_is_optional() -> None:
+    driver = RecordingDriver()
+    with pytest.raises(NotImplementedError, match="RecordingDriver"):
+        driver.read_hardware_errors()
