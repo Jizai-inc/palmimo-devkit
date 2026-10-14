@@ -3,7 +3,8 @@ try:
     from .palmimo import PalmimoTeleop
 
     __all__ = ["PalmimoTeleop", "PalmimoTeleopConfig"]
-except ImportError:
-    # lerobot not installed — teleop classes unavailable.
-    # The engine/facade now live in palmimo_sdk; import from there instead.
+except ModuleNotFoundError as error:
+    # Only an absent lerobot is tolerated; any other missing module is a real defect.
+    if error.name != "lerobot":
+        raise
     __all__ = []

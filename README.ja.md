@@ -4,7 +4,7 @@
 
 **AI エージェントに身体を。** Palmimo DevKit は、自分で書いた Python で動かせる 6 本脚の卓上 AI ロボットです。オープンソースの SDK、MCP サーバー、エージェントのサンプルを [Jizai Inc.](https://jizai.ai/) が提供しています。
 
-[Web サイト](https://palmimo.dev) · [ドキュメント](https://docs.palmimo.dev/ja/) · [DevKit を入手](https://palmimo.dev#specs)
+[Web サイト](https://palmimo.dev) · [ドキュメント](https://docs.palmimo.dev/ja/) · [DevKit を入手](https://palmimo.dev)
 
 [English](README.md) | **日本語**
 
