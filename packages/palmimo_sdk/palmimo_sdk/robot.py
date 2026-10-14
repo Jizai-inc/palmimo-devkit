@@ -2690,8 +2690,12 @@ class Palmimo:
         # lands on the facade's rate instead of a stale value captured from
         # another, possibly abandoned, generator.
         try:
-            for entry in routine:
-                cue = self._coerce_step(entry)
+            # Check every cue before the first frame, so a bad one later in the
+            # routine cannot fail after the robot has started moving.
+            cues = [self._coerce_step(entry) for entry in routine]
+            if any(cue.motion == Motion.KEYFRAMES for cue in cues):
+                raise ValueError("A routine cannot play Motion.KEYFRAMES: use play_keyframes().")
+            for cue in cues:
                 steps = self._duration_to_steps(cue.seconds, fps)
                 if cue.wave_leg is not None:
                     self._engine.wave_leg = cue.wave_leg

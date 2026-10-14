@@ -228,7 +228,7 @@ def test_keyframes_motion_cannot_be_selected_without_a_track() -> None:
 
     with pytest.raises(ValueError, match="load_keyframes"):
         robot.engine.motion = Motion.KEYFRAMES
-    with pytest.raises(ValueError, match="load_keyframes"):
+    with pytest.raises(ValueError, match="play_keyframes"):
         list(robot.play([RoutineStep(motion=Motion.KEYFRAMES, seconds=1.0)]))
 
 
@@ -477,3 +477,13 @@ def test_an_out_of_range_track_keeps_its_own_message_at_any_speed() -> None:
 def test_speed_must_be_a_positive_finite_number(speed: float) -> None:
     with pytest.raises(ValueError, match="speed"):
         _neutral_robot().iter_keyframes([Keyframe(1.0, {})], speed=speed)
+
+
+def test_a_routine_with_a_keyframes_cue_fails_before_any_cue_moves() -> None:
+    robot = _neutral_robot()
+    routine = [RoutineStep(motion=Motion.FORWARD, seconds=1.0), RoutineStep(motion=Motion.KEYFRAMES, seconds=1.0)]
+
+    with pytest.raises(ValueError, match="play_keyframes"):
+        next(robot.play(routine))
+
+    assert robot.motion == "idle"
