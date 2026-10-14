@@ -27,7 +27,8 @@ The following 18 are callable through the Python API.
 | `HEAD_SHAKE` | `head_shake` / `shake_head` | Shake the head "no" (neck only, one-shot) |
 
 `KEYFRAMES` is the 19th value: it plays a list of timed joint poses and has no
-string name, because it needs the poses as data. Start it with
+string name, because it needs the poses as data. It cannot be selected
+directly (`ValueError`); start it with
 [`play_keyframes()`](api-reference.md#keyframe-playback).
 
 The key list for specifying a motion by string with `set_motion(name)` is defined in

@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 
-from palmimo_sdk import MAX_JOINT_SPEED_DEG_S, Keyframe, MotionCancelled, Palmimo, ServoDriver
+from palmimo_sdk import MAX_JOINT_SPEED_DEG_S, Keyframe, Motion, MotionCancelled, Palmimo, RoutineStep, ServoDriver
 from palmimo_sdk.engine import MotionEngine
 from palmimo_sdk.io.base import SAFE_MIN_TICK, ServoTelemetry
 from palmimo_sdk.keyframes import JOINTS, KeyframeTrack, degrees_to_tick
@@ -192,18 +192,44 @@ def test_iter_keyframes_plays_at_the_facade_rate_whatever_engine_dt_was_left_at(
     assert frames[60]["leg_6_pitch1"] == degrees_to_tick(30.0)
 
 
-def test_iter_keyframes_holds_the_last_pose_when_not_returning() -> None:
+def test_closing_the_iterator_early_leaves_no_track_to_resume() -> None:
     robot = _neutral_robot()
-
-    frames = list(robot.iter_keyframes([Keyframe(1.0, {"leg_6_pitch1": 30.0})], return_to_neutral=False))
-
-    assert len(frames) == 61
-    assert robot.motion == "keyframes"
+    frames = robot.iter_keyframes([Keyframe(2.0, {"leg_6_pitch1": 30.0})])
     for _ in range(30):
-        assert robot.step()["leg_6_pitch1"] == degrees_to_tick(30.0)
-    robot.stop()
-    robot.return_to_neutral()
-    assert robot.positions["leg_6_pitch1"] == NEUTRAL
+        mid = next(frames)["leg_6_pitch1"]
+
+    frames.close()  # type: ignore[attr-defined]
+
+    assert robot.motion == "idle"
+    after = [robot.step()["leg_6_pitch1"] for _ in range(60)]
+    assert after[-1] == NEUTRAL
+    assert all(abs(t - NEUTRAL) <= abs(mid - NEUTRAL) for t in after)
+
+
+def test_an_error_from_the_callback_leaves_no_track_running() -> None:
+    robot = _neutral_robot()
+    seen: list[dict[str, int]] = []
+
+    def fail_on_tenth(pos: dict[str, int]) -> None:
+        seen.append(pos)
+        if len(seen) == 10:
+            raise RuntimeError("callback failed")
+
+    with pytest.raises(RuntimeError, match="callback failed"):
+        robot.play_keyframes([Keyframe(1.0, {"leg_6_pitch1": 30.0})], arm_legs=[6], callback=fail_on_tenth)
+
+    assert robot.motion == "idle"
+    assert robot._keyframe_arm_legs == ()
+
+
+def test_keyframes_motion_cannot_be_selected_without_a_track() -> None:
+    robot = _neutral_robot()
+    list(robot.iter_keyframes([Keyframe(0.5, {"leg_6_pitch1": 10.0})]))  # a finished track stays loaded nowhere
+
+    with pytest.raises(ValueError, match="load_keyframes"):
+        robot.engine.motion = Motion.KEYFRAMES
+    with pytest.raises(ValueError, match="load_keyframes"):
+        list(robot.play([RoutineStep(motion=Motion.KEYFRAMES, seconds=1.0)]))
 
 
 def test_iter_keyframes_validates_before_the_first_frame() -> None:
@@ -362,8 +388,8 @@ def test_guard_trip_mid_track_glides_the_legs_toward_neutral() -> None:
 def test_guard_trip_on_the_last_frame_still_settles_the_legs() -> None:
     driver = _TelemetryDriver()
     robot, clock = _guarded_robot(driver)
-    frames = iter(robot.iter_keyframes([Keyframe(1.0, {"leg_6_pitch1": 60.0})], return_to_neutral=False))
-    _pull(frames, clock, 58)  # the trip lands on the 3rd strained frame: the track's 61st and last
+    frames = iter(robot.iter_keyframes([Keyframe(1.0, {"leg_6_pitch1": 60.0})]))
+    _pull(frames, clock, 118)  # the trip lands on the 3rd strained frame: the 121st and last (glide home included)
     driver.currents = {"leg_6_pitch1": 1300}
 
     after = _pull(frames, clock, 200)

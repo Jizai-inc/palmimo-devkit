@@ -2744,7 +2744,6 @@ class Palmimo:
         keyframes: Sequence[Keyframe],
         *,
         arm_legs: Iterable[int] = (),
-        return_to_neutral: bool = True,
         speed: float = 1.0,
     ) -> Iterator[dict[str, int]]:
         """Play a keyframe track, yielding positions for each frame.
@@ -2752,7 +2751,8 @@ class Palmimo:
         Unpaced counterpart of :meth:`play_keyframes` (as :meth:`play` is to
         :meth:`play_realtime`): a dry run with no driver; with a driver it moves
         the robot as fast as frames are pulled. Validates on the call; arguments
-        as for :meth:`play_keyframes`.
+        as for :meth:`play_keyframes`. Closing the iterator early stops the
+        motion, so an abandoned track does not resume on the next :meth:`step`.
 
         Returns:
             Iterator[dict[str, int]]: Servo positions for each frame.
@@ -2764,24 +2764,24 @@ class Palmimo:
             raise ValueError(f"speed must be a positive number, got {speed!r}.")
         legs = self._keyframe_arm_legs_from(arm_legs)
         try:
-            track = self._keyframe_track(self._scaled(keyframes, speed), return_to_neutral)
+            track = self._keyframe_track(self._scaled(keyframes, speed))
         except ValueError as exc:
-            fastest = self._fastest_speed(keyframes, return_to_neutral, below=speed) if speed != 1.0 else None
+            fastest = self._fastest_speed(keyframes, below=speed) if speed != 1.0 else None
             if fastest is None:
                 raise
             raise ValueError(f"Too fast at x{speed:g}: this track plays at up to x{fastest:.2f}. ({exc})") from None
-        return self._keyframe_frames(track, legs, return_to_neutral)
+        return self._keyframe_frames(track, legs)
 
     @staticmethod
     def _scaled(keyframes: Sequence[Keyframe], speed: float) -> list[Keyframe]:
         return [Keyframe(key.time / speed, key.joints) for key in keyframes]
 
-    def _fastest_speed(self, keyframes: Sequence[Keyframe], return_to_neutral: bool, below: float) -> float | None:
+    def _fastest_speed(self, keyframes: Sequence[Keyframe], below: float) -> float | None:
         """Highest speed under *below*, to 0.01, at which the track validates; ``None`` if speed is not the problem."""
 
         def fits(speed: float) -> bool:
             try:
-                self._keyframe_track(self._scaled(keyframes, speed), return_to_neutral)
+                self._keyframe_track(self._scaled(keyframes, speed))
             except ValueError:
                 return False
             return True
@@ -2799,11 +2799,13 @@ class Palmimo:
         keyframes: Sequence[Keyframe],
         *,
         arm_legs: Iterable[int] = (),
-        return_to_neutral: bool = True,
         speed: float = 1.0,
         callback: Callable[[dict[str, int]], None] | None = None,
     ) -> dict[str, int]:
         """Play a keyframe track in real time (blocking), starting from the current pose.
+
+        After the last keyframe the robot glides back to the neutral pose over
+        ``1.0`` s, so the next motion starts from neutral.
 
         The whole track is validated before anything moves (see
         :class:`~palmimo_sdk.keyframes.KeyframeTrack`). Frames go through
@@ -2815,11 +2817,6 @@ class Palmimo:
             keyframes (Sequence[Keyframe]): The poses to reach, in time order.
             arm_legs (Iterable[int]): Legs (1-6) lifted as arms; judged by the
                 arm overload threshold (no wave servo tuning).
-            return_to_neutral (bool): Glide back to the neutral pose after the
-                last keyframe, over ``1.0`` s. ``False`` holds the last pose;
-                call ``return_to_neutral(duration=...)`` (``return_to_neutral()``
-                with no driver) before another motion,
-                which would otherwise start by jumping to its own pose.
             speed (float): Playback rate (``2.0`` = twice as fast); validated
                 at that rate; the glide home keeps its own pace.
             callback (Callable, optional): Extra per-frame callback, as for
@@ -2833,7 +2830,7 @@ class Palmimo:
             MotionCancelled: If :meth:`cancel` is called during playback.
         """
         snapshot = self._take_cancel_snapshot()
-        frames = self.iter_keyframes(keyframes, arm_legs=arm_legs, return_to_neutral=return_to_neutral, speed=speed)
+        frames = self.iter_keyframes(keyframes, arm_legs=arm_legs, speed=speed)
         try:
             self._pace(frames, self._fps, snapshot, callback=callback)
         except MotionCancelled:
@@ -2841,6 +2838,8 @@ class Palmimo:
             with contextlib.suppress(MotionCancelled):
                 self.run(seconds=_CANCEL_SETTLE_S)
             raise
+        finally:
+            frames.close()  # type: ignore[attr-defined]
         return self.positions
 
     @staticmethod
@@ -2852,20 +2851,18 @@ class Palmimo:
             raise ValueError(f"arm_legs must be leg IDs 1-6; got {unknown}.")
         return legs
 
-    def _keyframe_track(self, keyframes: Sequence[Keyframe], return_to_neutral: bool) -> KeyframeTrack:
-        """Build the track from the current pose, appending the glide home when asked."""
+    def _keyframe_track(self, keyframes: Sequence[Keyframe]) -> KeyframeTrack:
+        """Build the track from the current pose, with the glide home appended."""
         start = self._engine.get_positions()
         center = self._engine.neck_pitch_center()
         track = KeyframeTrack(start, keyframes, neck_pitch_center=center)
-        if not return_to_neutral:
-            return track
         neutral = {joint: tick_to_degrees(tick) for joint, tick in self._neutral_targets().items()}
         return KeyframeTrack(
             start, [*keyframes, Keyframe(track.duration + _KEYFRAME_RETURN_S, neutral)], neck_pitch_center=center
         )
 
     def _keyframe_frames(
-        self, track: KeyframeTrack, arm_legs: tuple[int, ...], return_to_neutral: bool
+        self, track: KeyframeTrack, arm_legs: tuple[int, ...]
     ) -> Generator[dict[str, int], None, None]:
         """Step through *track*, stopping early if anything takes the engine off it.
 
@@ -2875,19 +2872,24 @@ class Palmimo:
         """
         self._keyframe_arm_legs = arm_legs
         self._engine.load_keyframes(track)
-        for _ in range(self._duration_to_steps(track.duration, self._fps) + 1):
-            if self._engine.motion != Motion.KEYFRAMES:
-                break
-            # The track was validated at this rate; play() can leave dt elsewhere.
-            self._engine.dt = 1.0 / self._fps
-            yield self.step()
-        # Checked after the loop, so a trip on the track's last frame settles too.
-        if self._engine.motion == Motion.IDLE:
-            for _ in range(self._duration_to_steps(_CANCEL_SETTLE_S, self._fps)):
+        try:
+            for _ in range(self._duration_to_steps(track.duration, self._fps) + 1):
+                if self._engine.motion != Motion.KEYFRAMES:
+                    break
+                # The track was validated at this rate; play() can leave dt elsewhere.
                 self._engine.dt = 1.0 / self._fps
                 yield self.step()
-        elif return_to_neutral and self._engine.motion == Motion.KEYFRAMES:
-            self.stop()
+            # Checked after the loop, so a trip on the track's last frame settles too.
+            if self._engine.motion == Motion.IDLE:
+                for _ in range(self._duration_to_steps(_CANCEL_SETTLE_S, self._fps)):
+                    self._engine.dt = 1.0 / self._fps
+                    yield self.step()
+        finally:
+            # However playback ends -- finished, tripped, closed early, or an
+            # exception -- the track must not stay selected for the next step().
+            if self._engine.motion == Motion.KEYFRAMES:
+                self.stop()
+            self._keyframe_arm_legs = ()
 
     # ================================================================
     # ENGINE ACCESS (advanced)

@@ -382,6 +382,8 @@ class MotionEngine:
 
     @motion.setter
     def motion(self, value: Motion) -> None:
+        if value == Motion.KEYFRAMES:
+            raise ValueError("Motion.KEYFRAMES plays a track: start it with load_keyframes().")
         # Restart the wave from the ground every time it's (re)selected — incl.
         # switching the waving leg — so the slow eased lift always plays. Dance
         # likewise restarts from phase 0 so the sway always begins at center
@@ -418,6 +420,8 @@ class MotionEngine:
                 self._neck["neck_pitch2"] - self.NEUTRAL,
                 self._neck["neck_yaw"] - self.NEUTRAL,
             )
+        if self._motion == Motion.KEYFRAMES:
+            self._keyframe_track = None  # a track plays once; reselecting needs a new load
         self._motion = value
 
     @property

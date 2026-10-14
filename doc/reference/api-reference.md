@@ -346,10 +346,12 @@ One timed pose for `play_keyframes()` / `iter_keyframes()`, exported from `palmi
 The angle is the servo's own: the same number turns a left and a right leg in
 mirrored directions, and `neck_pitch1`'s front is the rest-trimmed center, not 0.
 
-### `robot.play_keyframes(keyframes, *, arm_legs=(), return_to_neutral=True, speed=1.0, callback=None) -> Dict[str, int]`
+### `robot.play_keyframes(keyframes, *, arm_legs=(), speed=1.0, callback=None) -> Dict[str, int]`
 Play a list of `Keyframe`s in real time (blocking), starting from the current
 pose. Between keyframes every joint eases in and out with a raised cosine, so
-the robot comes to rest at each keyframe. Returns the final positions.
+the robot comes to rest at each keyframe. After the last keyframe it glides to
+the neutral pose over 1.0 s and the motion is `idle`, so the next motion starts
+from neutral. Returns the final positions.
 
 The whole track is validated before anything moves, and a violation raises
 `ValueError`:
@@ -369,12 +371,6 @@ into the body or another leg. Play a new track with the robot lifted first.
   [Overload Guard](#overload-guard) judges them by `arm_overload_current`, as it
   does a wave's arm; every other leg keeps the weight-bearing threshold. Only
   the threshold changes: the wave's servo tuning is not applied.
-- return_to_neutral: `True` glides to the neutral pose over 1.0 s after the last
-  keyframe and leaves the motion at `idle`. `False` holds the last pose (motion
-  `keyframes`). Bring it home with `return_to_neutral(duration=1.0)` (on a dry
-  run with no driver, `return_to_neutral()`) before
-  starting another motion: a gait writes its own pose on the first frame, so
-  switching straight from a held pose makes the legs jump.
 - speed: playback rate. Every keyframe time is divided by it (`2.0` plays twice
   as fast) and the track is validated at that rate, so a speed that pushes a
   joint past the speed limit raises before anything moves, naming the fastest
@@ -388,17 +384,18 @@ motion drops to `idle` and the legs glide toward neutral for 0.5 s, then
 `drain_rail_trips()` to tell a trip from a finished track. When the thermal lock engages, the neck glides to
 center and stays out of the rest of that track; the legs keep playing.
 Cancellable from another thread like `run()`: on `cancel()` the legs glide to
-neutral and `MotionCancelled` propagates.
+neutral and `MotionCancelled` propagates. Any other exception (a callback
+raising, for one) also leaves the motion at `idle`, never on the track.
 
-### `robot.iter_keyframes(keyframes, *, arm_legs=(), return_to_neutral=True, speed=1.0) -> Iterator[Dict[str, int]]`
+### `robot.iter_keyframes(keyframes, *, arm_legs=(), speed=1.0) -> Iterator[Dict[str, int]]`
 The unpaced counterpart of `play_keyframes()`, as `play()` is to
 `play_realtime()`: it validates on the call and returns an iterator that yields
 one frame per `step()`. On a facade with no driver this is a dry run; with a
 driver attached it moves the robot as fast as the loop pulls frames, so use
 `play_keyframes()` there. The iterator ends early if a guard trip or another
-motion command takes the engine off the track. The track starts from the pose
-at the call, so pull the frames right away rather than stepping the robot in
-between.
+motion command takes the engine off the track; closing it early stops the
+motion. The track starts from the pose at the call, so pull the frames right
+away rather than stepping the robot in between.
 
 ## Peripherals & Connection
 
