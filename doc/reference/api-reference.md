@@ -377,8 +377,8 @@ into the body or another leg. Play a new track with the robot lifted first.
   switching straight from a held pose makes the legs jump.
 - speed: playback rate. Every keyframe time is divided by it (`2.0` plays twice
   as fast) and the track is validated at that rate, so a speed that pushes a
-  joint past the speed limit raises before anything moves. The glide home keeps
-  its own 1.0 s.
+  joint past the speed limit raises before anything moves, naming the fastest
+  speed the track allows. The glide home keeps its own 1.0 s.
 - callback: as for `play_realtime()`
 
 Every frame goes through `step()`, so the neck thermal guard and the leg

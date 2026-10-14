@@ -1,6 +1,7 @@
 """Keyframe tracks — validation, interpolation, and playback through the Palmimo facade."""
 
 import math
+import re
 from collections.abc import Sequence
 from typing import cast
 
@@ -423,6 +424,27 @@ def test_speed_that_breaks_the_joint_speed_limit_raises_before_moving() -> None:
 
     with pytest.raises(ValueError, match="leg_6_pitch1 would move"):
         robot.iter_keyframes(track, speed=3.0)
+
+
+def test_a_speed_too_fast_reports_the_fastest_speed_the_track_allows() -> None:
+    robot = _neutral_robot()
+    track = [Keyframe(1.0, {"leg_6_pitch1": 60.0})]  # peaks at about 94 deg/s at 1x
+
+    with pytest.raises(ValueError, match=r"Too fast at x5: this track plays at up to x(\d+\.\d+)") as caught:
+        robot.iter_keyframes(track, speed=5.0)
+
+    found = re.search(r"up to x(\d+\.\d+)", str(caught.value))
+    assert found is not None
+    fastest = float(found.group(1))
+    robot.iter_keyframes(track, speed=fastest)  # the reported speed plays
+    with pytest.raises(ValueError):
+        robot.iter_keyframes(track, speed=fastest + 0.02)
+
+
+def test_an_out_of_range_track_keeps_its_own_message_at_any_speed() -> None:
+    robot = _neutral_robot()
+    with pytest.raises(ValueError, match="outside its range"):
+        robot.iter_keyframes([Keyframe(1.0, {"neck_yaw": 60.0})], speed=2.0)
 
 
 @pytest.mark.parametrize("speed", [0.0, -1.0, math.inf, math.nan])

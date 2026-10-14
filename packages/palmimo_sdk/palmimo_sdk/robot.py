@@ -2763,9 +2763,36 @@ class Palmimo:
         if not (math.isfinite(speed) and speed > 0):
             raise ValueError(f"speed must be a positive number, got {speed!r}.")
         legs = self._keyframe_arm_legs_from(arm_legs)
-        scaled = [Keyframe(key.time / speed, key.joints) for key in keyframes]
-        track = self._keyframe_track(scaled, return_to_neutral)
+        try:
+            track = self._keyframe_track(self._scaled(keyframes, speed), return_to_neutral)
+        except ValueError as exc:
+            fastest = self._fastest_speed(keyframes, return_to_neutral, below=speed) if speed != 1.0 else None
+            if fastest is None:
+                raise
+            raise ValueError(f"Too fast at x{speed:g}: this track plays at up to x{fastest:.2f}. ({exc})") from None
         return self._keyframe_frames(track, legs, return_to_neutral)
+
+    @staticmethod
+    def _scaled(keyframes: Sequence[Keyframe], speed: float) -> list[Keyframe]:
+        return [Keyframe(key.time / speed, key.joints) for key in keyframes]
+
+    def _fastest_speed(self, keyframes: Sequence[Keyframe], return_to_neutral: bool, below: float) -> float | None:
+        """Highest speed under *below*, to 0.01, at which the track validates; ``None`` if speed is not the problem."""
+
+        def fits(speed: float) -> bool:
+            try:
+                self._keyframe_track(self._scaled(keyframes, speed), return_to_neutral)
+            except ValueError:
+                return False
+            return True
+
+        low, high = 0.01, below
+        if not fits(low):
+            return None  # fails however slowly it plays: a range error, not speed
+        while high - low > 0.005:
+            mid = (low + high) / 2
+            low, high = (mid, high) if fits(mid) else (low, mid)
+        return math.floor(low * 100) / 100
 
     def play_keyframes(
         self,
