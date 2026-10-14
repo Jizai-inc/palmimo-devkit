@@ -346,7 +346,7 @@ One timed pose for `play_keyframes()` / `iter_keyframes()`, exported from `palmi
 The angle is the servo's own: the same number turns a left and a right leg in
 mirrored directions, and `neck_pitch1`'s front is the rest-trimmed center, not 0.
 
-### `robot.play_keyframes(keyframes, *, arm_legs=(), return_to_neutral=True, callback=None) -> Dict[str, int]`
+### `robot.play_keyframes(keyframes, *, arm_legs=(), return_to_neutral=True, speed=1.0, callback=None) -> Dict[str, int]`
 Play a list of `Keyframe`s in real time (blocking), starting from the current
 pose. Between keyframes every joint eases in and out with a raised cosine, so
 the robot comes to rest at each keyframe. Returns the final positions.
@@ -375,6 +375,10 @@ into the body or another leg. Play a new track with the robot lifted first.
   run with no driver, `return_to_neutral()`) before
   starting another motion: a gait writes its own pose on the first frame, so
   switching straight from a held pose makes the legs jump.
+- speed: playback rate. Every keyframe time is divided by it (`2.0` plays twice
+  as fast) and the track is validated at that rate, so a speed that pushes a
+  joint past the speed limit raises before anything moves. The glide home keeps
+  its own 1.0 s.
 - callback: as for `play_realtime()`
 
 Every frame goes through `step()`, so the neck thermal guard and the leg
@@ -386,7 +390,7 @@ center and stays out of the rest of that track; the legs keep playing.
 Cancellable from another thread like `run()`: on `cancel()` the legs glide to
 neutral and `MotionCancelled` propagates.
 
-### `robot.iter_keyframes(keyframes, *, arm_legs=(), return_to_neutral=True) -> Iterator[Dict[str, int]]`
+### `robot.iter_keyframes(keyframes, *, arm_legs=(), return_to_neutral=True, speed=1.0) -> Iterator[Dict[str, int]]`
 The unpaced counterpart of `play_keyframes()`, as `play()` is to
 `play_realtime()`: it validates on the call and returns an iterator that yields
 one frame per `step()`. On a facade with no driver this is a dry run; with a

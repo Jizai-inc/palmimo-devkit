@@ -406,3 +406,26 @@ def test_thermal_lock_takes_the_neck_out_of_the_track() -> None:
     assert pulled[-1]["neck_yaw"] == NEUTRAL
     assert pulled[-1]["neck_pitch1"] == center
     assert pulled[-1]["leg_6_pitch1"] == degrees_to_tick(20.0)  # the legs still play
+
+
+def test_speed_divides_every_keyframe_time_but_not_the_glide_home() -> None:
+    robot = _neutral_robot()
+
+    frames = list(robot.iter_keyframes([Keyframe(1.5, {"leg_6_pitch1": 30.0})], speed=1.5))
+
+    assert len(frames) == 60 * 2 + 1  # 1.5 s at 1.5x = 1 s, then the 1 s glide home
+    assert frames[60]["leg_6_pitch1"] == degrees_to_tick(30.0)
+
+
+def test_speed_that_breaks_the_joint_speed_limit_raises_before_moving() -> None:
+    robot = _neutral_robot()
+    track = [Keyframe(0.5, {"leg_6_pitch1": 60.0})]  # fine at 1x (188 deg/s)
+
+    with pytest.raises(ValueError, match="leg_6_pitch1 would move"):
+        robot.iter_keyframes(track, speed=3.0)
+
+
+@pytest.mark.parametrize("speed", [0.0, -1.0, math.inf, math.nan])
+def test_speed_must_be_a_positive_finite_number(speed: float) -> None:
+    with pytest.raises(ValueError, match="speed"):
+        _neutral_robot().iter_keyframes([Keyframe(1.0, {})], speed=speed)

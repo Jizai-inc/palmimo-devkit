@@ -2745,6 +2745,7 @@ class Palmimo:
         *,
         arm_legs: Iterable[int] = (),
         return_to_neutral: bool = True,
+        speed: float = 1.0,
     ) -> Iterator[dict[str, int]]:
         """Play a keyframe track, yielding positions for each frame.
 
@@ -2763,8 +2764,11 @@ class Palmimo:
         Raises:
             ValueError: The track or *arm_legs* is invalid; nothing has moved.
         """
+        if not (math.isfinite(speed) and speed > 0):
+            raise ValueError(f"speed must be a positive number, got {speed!r}.")
         legs = self._keyframe_arm_legs_from(arm_legs)
-        track = self._keyframe_track(keyframes, return_to_neutral)
+        scaled = [Keyframe(key.time / speed, key.joints) for key in keyframes]
+        track = self._keyframe_track(scaled, return_to_neutral)
         return self._keyframe_frames(track, legs, return_to_neutral)
 
     def play_keyframes(
@@ -2773,6 +2777,7 @@ class Palmimo:
         *,
         arm_legs: Iterable[int] = (),
         return_to_neutral: bool = True,
+        speed: float = 1.0,
         callback: Callable[[dict[str, int]], None] | None = None,
     ) -> dict[str, int]:
         """Play a keyframe track in real time (blocking).
@@ -2812,6 +2817,11 @@ class Palmimo:
                 call ``return_to_neutral(duration=...)`` (``return_to_neutral()``
                 with no driver) before another motion,
                 which would otherwise start by jumping to its own pose.
+            speed (float): Playback rate: every keyframe time is divided by
+                it, so ``2.0`` plays twice as fast. The track is validated at
+                that rate, so a speed that pushes a joint past
+                ``MAX_JOINT_SPEED_DEG_S`` raises before anything moves. The
+                glide home keeps its own pace.
             callback (Callable, optional): Extra per-frame callback, as for
                 :meth:`play_realtime`.
 
@@ -2819,11 +2829,11 @@ class Palmimo:
             dict[str, int]: The final servo positions.
 
         Raises:
-            ValueError: The track or *arm_legs* is invalid; nothing has moved.
+            ValueError: The track, *arm_legs* or *speed* is invalid; nothing has moved.
             MotionCancelled: If :meth:`cancel` is called during playback.
         """
         snapshot = self._take_cancel_snapshot()
-        frames = self.iter_keyframes(keyframes, arm_legs=arm_legs, return_to_neutral=return_to_neutral)
+        frames = self.iter_keyframes(keyframes, arm_legs=arm_legs, return_to_neutral=return_to_neutral, speed=speed)
         try:
             self._pace(frames, self._fps, snapshot, callback=callback)
         except MotionCancelled:
