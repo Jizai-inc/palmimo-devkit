@@ -160,11 +160,18 @@ class Playback:
     #: clears.
     _WARN_INTERVAL_S = 30.0
 
+    #: How long the writer holds a warning back to see whether a stop explains
+    #: the failure. A stop signal reaches ``aplay`` and this process together,
+    #: so the pipe can break before :meth:`interrupt` has run.
+    _STOP_GRACE_S = 1.0
+
     def __init__(self, pitch: PitchShifter | None = None, device: str | None = None) -> None:
         self._pitch = pitch
         self._device = device
         self._process: subprocess.Popen[bytes] | None = None
         self._process_lock = threading.Lock()
+        #: Notified, under ``_process_lock``, when `interrupt` or `close` runs.
+        self._reclaimed = threading.Condition(self._process_lock)
         #: Guarded by ``_process_lock`` alongside ``_process``: once set,
         #: `_ensure_process` must never spawn a new ``aplay`` again, even if
         #: the writer thread is still draining a straggler chunk.
@@ -218,17 +225,32 @@ class Playback:
                 )
             return self._process
 
-    def _record_write_failure(self) -> None:
+    def _reclaimed_within_grace(self, generation: int) -> bool:
+        """Wait up to ``_STOP_GRACE_S`` for an `interrupt` or `close` newer than *generation*."""
+        with self._reclaimed:
+            return self._reclaimed.wait_for(
+                lambda: self._closed or generation != self._generation, timeout=self._STOP_GRACE_S
+            )
+
+    def _record_write_failure(self, generation: int | None = None) -> None:
         """Count a playback failure and warn the operator, at most once per ``_WARN_INTERVAL_S``.
 
         Only called for failures not explained by an in-flight
         :meth:`interrupt` -- barge-in killing the process mid-write is
         expected and must not look like a dead audio device (see
-        :meth:`_drain`'s ``stale`` check).
+        :meth:`_drain`'s ``stale`` check). *generation* is the one the failed
+        write belonged to: a failure about to warn is dropped instead if an
+        `interrupt` or `close` follows it within ``_STOP_GRACE_S``, because
+        that is a stop the pipe broke ahead of, not a dead device. Only a
+        failure about to warn waits, so a lasting failure does not slow the
+        writer down on every chunk.
         """
-        self._write_failures += 1
         now = time.monotonic()
-        if self._last_warning is not None and now - self._last_warning < self._WARN_INTERVAL_S:
+        warns = self._last_warning is None or now - self._last_warning >= self._WARN_INTERVAL_S
+        if warns and generation is not None and self._reclaimed_within_grace(generation):
+            return
+        self._write_failures += 1
+        if not warns:
             return
         self._last_warning = now
         print(
@@ -278,7 +300,7 @@ class Playback:
                 with self._process_lock:
                     stale = process is not self._process or generation != self._generation
                 if not stale:
-                    self._record_write_failure()
+                    self._record_write_failure(generation)
                 # else: interrupt() already reclaimed this chunk's process --
                 # an expected teardown, not a playback failure worth a warning.
 
@@ -330,6 +352,7 @@ class Playback:
         with self._process_lock:
             process, self._process = self._process, None
             self._generation += 1
+            self._reclaimed.notify_all()
         if process is None:
             return
         thread = threading.Thread(target=self._kill_and_reap_tracked, args=(process,), daemon=True)
@@ -376,6 +399,7 @@ class Playback:
         """
         with self._process_lock:
             self._closed = True
+            self._reclaimed.notify_all()
         if self._writer is not None:
             with contextlib.suppress(queue.Empty):
                 while True:
