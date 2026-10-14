@@ -417,12 +417,16 @@ def _spaced_text(element: ElementTree.Element) -> str:
     return f" {element.text or ''} {inner} "
 
 
-def _drawing_words(svg_root: ElementTree.Element) -> Counter[str]:
+def _drawing_words(element: ElementTree.Element) -> Counter[str]:
     # What a browser shows: <text>, plus the HTML draw.io puts in <foreignObject> for rich labels.
+    tag = element.tag.rpartition("}")[2]
+    if tag in ("text", "foreignObject"):
+        return Counter(_spaced_text(element).split())
+    # A <switch> renders only its first child; the rest is draw.io's fallback and export warning.
+    children = list(element)[:1] if tag == "switch" else list(element)
     words: Counter[str] = Counter()
-    for element in svg_root.iter():
-        if element.tag.rpartition("}")[2] in ("text", "foreignObject"):
-            words.update(_spaced_text(element).split())
+    for child in children:
+        words.update(_drawing_words(child))
     return words
 
 
@@ -431,14 +435,20 @@ def _model_words(svg_root: ElementTree.Element) -> Counter[str] | None:
     content = svg_root.get("content")
     if content is None:
         return None
+    # The drawing is the first page only; later pages ride along in the model but are not drawn.
+    diagram = ElementTree.fromstring(content).find("diagram")
+    if diagram is None:
+        return None
+    model = diagram.find("mxGraphModel")
+    if model is None:
+        packed = base64.b64decode("".join((diagram.text or "").split()))
+        model = ElementTree.fromstring(urllib.parse.unquote(zlib.decompressobj(-15).decompress(packed).decode()))
     words: Counter[str] = Counter()
-    for diagram in ElementTree.fromstring(content).iter("diagram"):
-        model = diagram.find("mxGraphModel")
-        if model is None:
-            packed = base64.b64decode("".join((diagram.text or "").split()))
-            model = ElementTree.fromstring(urllib.parse.unquote(zlib.decompressobj(-15).decompress(packed).decode()))
-        for cell in model.iter("mxCell"):
-            words.update(html.unescape(re.sub(r"<[^>]+>", " ", cell.get("value", ""))).split())
+    for cell in model.iter():
+        # A cell with a link or properties keeps its label on a <UserObject>/<object> wrapper.
+        label = cell.get("value") if cell.tag == "mxCell" else cell.get("label")
+        if cell.tag in ("mxCell", "UserObject", "object") and cell.get("visible") != "0" and label:
+            words.update(html.unescape(re.sub(r"<[^>]+>", " ", label)).split())
     return words
 
 
@@ -496,6 +506,8 @@ def test_drawio_svg_label_check_rejects_a_label_edited_in_one_layer_and_a_missin
 
     assert _layer_label_difference(svg("Servo")) is None
     assert _layer_label_difference(svg("<tspan>Servo</tspan>")) is None
+    html_label = f'<svg xmlns="http://www.w3.org/2000/svg" content="{content}"><switch><foreignObject><div>Servo</div></foreignObject><text>Ser...</text></switch></svg>'
+    assert _layer_label_difference(html_label) is None
     assert _layer_label_difference(svg("Motor")) is not None
     assert _layer_label_difference(svg("Servo", attributes="")) == "no embedded draw.io model"
 
