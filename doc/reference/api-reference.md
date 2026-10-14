@@ -240,6 +240,12 @@ Wake from limp: glide to neutral while ramping leg Position_P_Gain from
 of snapping. The neck is held at full gain the whole time so the head can't drop.
 Falls back to a plain glide if the driver can't ramp gain.
 
+Reads the starting pose per motor, re-asking each motor the
+first sweep missed up to three times. If some still do not answer, `wake()` raises `RuntimeError`
+naming them and writes nothing to the driver, not even a gain: gliding from a
+guessed pose would snap those joints. A driver that cannot sense position at all
+still gets a single neutral command.
+
 `connect()` already runs this automatically once every resource is open
 (`auto_wake=True`, the `Palmimo(...)` default) — call `wake()` directly only for
 a custom *duration* / *start_gain*, or to re-wake without a full reconnect.
@@ -260,6 +266,8 @@ held where it is during the glide, and once the head has settled onto the top
 plate its goal is rewritten to the pose it actually reached — leaving no stored
 error for the next gain write to release as a jolt. The leg ramp starts from the
 gain the legs are actually at, so a second `sleep()` does not raise them first.
+If some motor cannot be read after retrying, the glide is skipped (the motors are
+named in a warning log) while the gain ramp, neck release and park still run.
 
 Degrades rather than skipping the point: a driver that can't sense position
 still gets the gain ramp and the neck release (only the glide needs feedback),
@@ -276,7 +284,10 @@ Ease all servos back to neutral. With *duration* (seconds), a single timed glide
 without it, advances control cycles (up to *max_steps*, a safety cap) until every
 joint has settled within *settle_ticks* of its target. Releases any active wave
 tuning first (see below). The timed glide needs a connected driver and raises
-`RuntimeError` without one; the default path also works compute-only.
+`RuntimeError` without one; the default path also works compute-only. The timed
+glide reads the starting pose per motor, re-asking each motor the first sweep
+missed up to three times; if some still do not answer it raises `RuntimeError` naming them
+and writes nothing.
 
 ### `robot.set_p_gain(value: int | None) -> None`
 Set Position_P_Gain on all motors (`None` restores per-motor defaults captured at

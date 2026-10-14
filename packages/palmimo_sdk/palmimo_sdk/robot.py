@@ -214,6 +214,34 @@ def _deferred_interrupts() -> Iterator[None]:
 
 
 @dataclass(frozen=True)
+class _PoseRead:
+    """Present positions of the requested motors, and the ones that did not answer.
+
+    A motor in ``unread`` is unknown, not neutral: callers must not command it
+    from a stand-in value.
+    """
+
+    positions: dict[str, int]
+    unread: tuple[str, ...]
+
+
+def _read_answered_on(driver: ServoDriver, names: Sequence[str]) -> dict[str, int]:
+    """Read *names* without masking a failed read; a joint still silent after retries is left out.
+
+    One sweep first, then each joint it missed on its own: a sweep stops at
+    the first servo that does not answer, so re-sweeping would leave every
+    joint behind that servo unread on every attempt.
+    """
+    present = dict(driver.read_positions_span(list(names)).positions)
+    for name in names:
+        for _ in range(_POSE_READ_ATTEMPTS):
+            if name in present:
+                break
+            present.update(driver.read_positions_span([name]).positions)
+    return {name: int(present[name]) for name in names if name in present}
+
+
+@dataclass(frozen=True)
 class NeckPitchDegrees:
     """A neck PITCH angle expressed in real degrees.
 
@@ -956,6 +984,12 @@ class Palmimo:
         Falls back to a plain glide if the driver can't ramp gain, and to a single
         neutral command if it can't sense position.
 
+        Raises:
+            RuntimeError: If a sensing driver cannot read the present position
+                of some motors after retrying. The message names them, and the
+                driver has not been written to -- not even a gain -- because
+                gliding from a guessed pose would snap those joints.
+
         Writes the driver directly, without going through :meth:`step` --
         outside the neck thermal guard's reach (see :attr:`neck_lock_active`).
         That is safe here: the guard exists to stop the neck being commanded
@@ -970,14 +1004,18 @@ class Palmimo:
         self.stop()
         self._leg_safety.end_soft_return()
         targets = self._neutral_targets()
-        try:
-            current = driver.read_positions()
-        except NotImplementedError:
-            current = {}  # driver can't sense position — fall back to a single neutral command
-        if not current:
+        pose = self._read_pose(driver)
+        if pose is None:  # driver can't sense position — fall back to a single neutral command
             driver.write_positions(targets)
             self._seed_engine_pose(targets)
             return
+        if pose.unread:
+            raise RuntimeError(
+                "wake() could not read the present position of: "
+                + ", ".join(pose.unread)
+                + ". Nothing was written; check the bus and power, then retry."
+            )
+        current = pose.positions
         has_gain = hasattr(driver, "set_position_p_gain")
         # Only the legs ramp up from the soft start_gain — the neck must stay
         # firm the whole time, or the head sags the moment we soften it (the
@@ -1043,7 +1081,8 @@ class Palmimo:
         mic and camera stay open, so a sleeping robot can still be spoken to.
 
         Degrades rather than skipping the point: a driver that can't sense
-        position still gets the gain ramp and the neck release (only the glide
+        position, or that cannot read some motor after retrying (logged by
+        name), still gets the gain ramp and the neck release (only the glide
         needs feedback), and one that can't ramp gain still gets the glide.
 
         While :attr:`neck_lock_active` is ``True``, the multi-second
@@ -1071,10 +1110,13 @@ class Palmimo:
         self._sync_gesture_tuning()
         self._sync_neck_gesture_tuning()
         targets = self._neutral_targets()
-        try:
-            current = driver.read_positions()
-        except NotImplementedError:
-            current = {}  # driver can't sense position — no glide, but everything else still runs
+        pose = self._read_pose(driver)
+        current: dict[str, int] = {}  # empty: no glide, but everything else still runs
+        if pose is not None:
+            if pose.unread:
+                logger.warning("sleep() skips the glide; no position read from: %s", ", ".join(pose.unread))
+            else:
+                current = pose.positions
         has_gain = hasattr(driver, "set_position_p_gain")
         # Legs only, exactly as wake() does: the neck is softened afterwards by
         # _park_neck's own ramp, which is shaped to let the head down gently.
@@ -1165,15 +1207,41 @@ class Palmimo:
         """
         if not base:
             return  # nothing was glided, so there is no leg goal to preserve
-        settled = driver.read_positions()
-        neck = {n: p for n, p in settled.items() if n in _NECK_MOTORS}
-        if not neck:
+        pose = self._read_pose(driver, [n for n in self._engine.get_positions() if n in _NECK_MOTORS])
+        if pose is None or pose.unread or not pose.positions:
             return
+        neck = pose.positions
         # Carries *base* -- the last frame the glide landed -- alongside the
         # neck, because write_positions backfills an unnamed motor with NEUTRAL:
         # writing the neck alone would re-command every leg.
         driver.write_positions({**base, **neck})
         self._engine.set_neck_positions(neck)
+
+    def _read_pose(self, driver: ServoDriver, motors: Sequence[str] | None = None) -> _PoseRead | None:
+        """Read the present position of *motors* (default: every motor), per motor.
+
+        Reads through :func:`_read_answered_on`, so one silent motor does not
+        leave the motors behind it unread.
+
+        Returns:
+            _PoseRead | None: The positions read and the motors still unread, or
+            ``None`` when the driver cannot report positions at all -- a
+            capability gap, not a fault.
+        """
+        wanted = list(self._engine.get_positions() if motors is None else motors)
+        if hasattr(driver, "read_positions_span"):  # optional: duck-typed drivers may lack it
+            try:
+                positions = _read_answered_on(driver, wanted)
+            except NotImplementedError:
+                pass
+            else:
+                return _PoseRead(positions, tuple(n for n in wanted if n not in positions))
+        try:
+            raw = driver.read_positions()
+        except NotImplementedError:
+            return None
+        positions = {n: raw[n] for n in wanted if n in raw}
+        return _PoseRead(positions, tuple(n for n in wanted if n not in positions))
 
     def _timed_return_to_neutral(self, duration: float, cancel_snapshot: int | None = None) -> None:
         """Software glide straight to the driver, bypassing :meth:`step` (see :meth:`return_to_neutral`).
@@ -1185,14 +1253,16 @@ class Palmimo:
         if self._driver is None or not self._driver.is_connected:
             raise RuntimeError("Timed return-to-neutral needs a connected driver.")
         targets = self._neutral_targets()
-        current = self._driver.read_positions()
-        if not current:
-            # No position feedback (read failed) — can't interpolate a glide, so
-            # just command the neutral pose once rather than risk a
-            # profile-velocity snap.
-            self._driver.write_positions(targets)
-            self._seed_engine_pose(targets)
-            return
+        pose = self._read_pose(self._driver)
+        if pose is None:
+            raise NotImplementedError("The driver cannot report present positions.")
+        if pose.unread:
+            raise RuntimeError(
+                "return_to_neutral(duration=...) could not read the present position of: "
+                + ", ".join(pose.unread)
+                + ". Nothing was written; check the bus and power, then retry."
+            )
+        current = pose.positions
         # Software glide: interpolate every joint from its current tick to its
         # neutral target over *duration*, writing each frame at the control
         # rate. This eases in via raised cosine and — unlike a profile-velocity
@@ -2628,9 +2698,9 @@ class Palmimo:
         assert driver is not None
         legs = [n for n in self._engine.get_positions() if n not in _NECK_MOTORS]
         with contextlib.suppress(Exception):
-            present = driver.read_positions()
-            if present:
-                leg_present = {n: p for n, p in present.items() if n in legs}
+            pose = self._read_pose(driver, legs)
+            if pose is not None and not pose.unread:
+                leg_present = pose.positions
                 self._write_gain(driver, _DANCE_HOLD_GAIN, legs)
                 driver.write_positions(leg_present)  # neck backfilled to NEUTRAL (head up)
         try:
@@ -3022,20 +3092,8 @@ class Palmimo:
         return driver
 
     def _read_answered(self, names: Sequence[str]) -> dict[str, int]:
-        """Read *names* without masking a failed read; a joint still silent after retries is left out.
-
-        One sweep first, then each joint it missed on its own: a sweep stops at
-        the first servo that does not answer, so re-sweeping would leave every
-        joint behind that servo unread on every attempt.
-        """
-        driver = self._connected_driver()
-        present = dict(driver.read_positions_span(list(names)).positions)
-        for name in names:
-            for _ in range(_POSE_READ_ATTEMPTS):
-                if name in present:
-                    break
-                present.update(driver.read_positions_span([name]).positions)
-        return {name: int(present[name]) for name in names if name in present}
+        """Read *names* on the connected driver; see :func:`_read_answered_on`."""
+        return _read_answered_on(self._connected_driver(), names)
 
     def _read_present(self, names: Sequence[str]) -> dict[str, int]:
         """Read every one of *names*, raising if any stays silent after retries."""

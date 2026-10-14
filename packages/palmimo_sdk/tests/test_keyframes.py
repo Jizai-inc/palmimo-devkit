@@ -794,6 +794,7 @@ def test_gain_writes_skip_a_joint_a_failed_limp_exit_left_behind() -> None:
     robot, driver = _pose_robot()
     with pytest.raises(RuntimeError), robot.limp(["neck_yaw"]):
         driver.silent = {"neck_yaw"}
+    driver.silent = set()  # answering again: wake() refuses to move from an unread joint
     driver.log.clear()
 
     robot.set_p_gain(1200)
