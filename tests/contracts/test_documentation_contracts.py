@@ -4,11 +4,17 @@ Every contract here is scoped to the tree this test suite ships with: scan
 roots stay inside it, so the suite runs unchanged wherever the tree lives.
 """
 
+import base64
+import html
 import re
 import subprocess
 import unicodedata
+import urllib.parse
+import zlib
+from collections import Counter
 from functools import cache
 from pathlib import Path
+from xml.etree import ElementTree
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -403,6 +409,95 @@ def test_markdown_uses_assets_instead_of_box_style_ascii_diagrams() -> None:
     ]
 
     assert offenders == [], f"Replace ASCII diagrams with .drawio.svg assets: {offenders}"
+
+
+def _spaced_text(element: ElementTree.Element) -> str:
+    # Every element boundary separates words: lines of a label are separate <tspan>s or <div>s.
+    inner = " ".join(_spaced_text(child) + " " + (child.tail or "") for child in element)
+    return f" {element.text or ''} {inner} "
+
+
+def _drawing_words(svg_root: ElementTree.Element) -> Counter[str]:
+    # What a browser shows: <text>, plus the HTML draw.io puts in <foreignObject> for rich labels.
+    words: Counter[str] = Counter()
+    for element in svg_root.iter():
+        if element.tag.rpartition("}")[2] in ("text", "foreignObject"):
+            words.update(_spaced_text(element).split())
+    return words
+
+
+def _model_words(svg_root: ElementTree.Element) -> Counter[str] | None:
+    # None when the SVG carries no draw.io model, i.e. draw.io cannot edit it.
+    content = svg_root.get("content")
+    if content is None:
+        return None
+    words: Counter[str] = Counter()
+    for diagram in ElementTree.fromstring(content).iter("diagram"):
+        model = diagram.find("mxGraphModel")
+        if model is None:
+            packed = base64.b64decode("".join((diagram.text or "").split()))
+            model = ElementTree.fromstring(urllib.parse.unquote(zlib.decompressobj(-15).decompress(packed).decode()))
+        for cell in model.iter("mxCell"):
+            words.update(html.unescape(re.sub(r"<[^>]+>", " ", cell.get("value", ""))).split())
+    return words
+
+
+def _layer_label_difference(svg_text: str) -> str | None:
+    # Compared as words, not lines: draw.io wraps a long label only when it draws it.
+    root = ElementTree.fromstring(svg_text)
+    model = _model_words(root)
+    if model is None:
+        return "no embedded draw.io model"
+    if not model:
+        return "the embedded draw.io model has no labels"
+    drawing = _drawing_words(root)
+    only_model = sorted((model - drawing).elements())
+    only_drawing = sorted((drawing - model).elements())
+    if not only_model and not only_drawing:
+        return None
+    return f"only in the model: {only_model}; only in the drawing: {only_drawing}"
+
+
+def test_drawio_svg_files_carry_a_model_whose_labels_match_the_drawing() -> None:
+    """A .drawio.svg is two copies of one diagram: the model draw.io edits and the drawing a browser shows.
+
+    Editing one by hand leaves the other stale, and the next save from draw.io
+    regenerates the drawing from the stale model. Labels are compared rather
+    than shapes because they are what a reader takes from the figure, and they
+    map one to one between the layers where shapes do not.
+    """
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "*.drawio.svg"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    diagrams = sorted(REPO_ROOT / name for name in result.stdout.split("\0") if name)
+    assert diagrams, "git enumerated no .drawio.svg under this repository — the scan root moved."
+
+    offenders = [
+        f"{path.relative_to(REPO_ROOT).as_posix()}: {difference}"
+        for path in diagrams
+        if (difference := _layer_label_difference(path.read_text(encoding="utf-8"))) is not None
+    ]
+
+    assert offenders == [], f"Edit these diagrams in draw.io so both layers come from one save: {offenders}"
+
+
+def test_drawio_svg_label_check_rejects_a_label_edited_in_one_layer_and_a_missing_model() -> None:
+    model = '<mxGraphModel><root><mxCell id="1" value="Servo"/></root></mxGraphModel>'
+    packer = zlib.compressobj(wbits=-15)
+    packed = base64.b64encode(packer.compress(urllib.parse.quote(model).encode()) + packer.flush()).decode()
+    content = html.escape(f"<mxfile><diagram>{packed}</diagram></mxfile>", quote=True)
+
+    def svg(label: str, attributes: str = f'content="{content}"') -> str:
+        return f'<svg xmlns="http://www.w3.org/2000/svg" {attributes}><text>{label}</text></svg>'
+
+    assert _layer_label_difference(svg("Servo")) is None
+    assert _layer_label_difference(svg("<tspan>Servo</tspan>")) is None
+    assert _layer_label_difference(svg("Motor")) is not None
+    assert _layer_label_difference(svg("Servo", attributes="")) == "no embedded draw.io model"
 
 
 def test_every_user_script_is_documented_in_both_readmes() -> None:

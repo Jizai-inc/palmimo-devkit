@@ -189,6 +189,10 @@ to different readers.
 - **Diagrams are `.drawio.svg` assets in `doc/images/`**, referenced from the
   page. Do not draw box-style ASCII diagrams in Markdown; plain directory trees
   are fine.
+- **Edit a diagram in draw.io, never by hand.** A `.drawio.svg` carries the
+  draw.io model and the drawing exported from it; a contract test fails when
+  their labels disagree or the model is missing. Re-export with
+  `drawio -x -f svg -e --theme light --border 10 -o <file> <file>`.
 - **When you change the SDK core**, update the pages co-located with it in the
   same commit: `doc/reference/api-reference.md`,
   `doc/explanation/architecture.md`, `doc/guides/motion-development-guide.md`.
