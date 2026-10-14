@@ -400,6 +400,42 @@ def test_park_does_not_raise_a_driver_failure_out_of_a_callers_finally(
     park(robot)  # must not raise
 
 
+class _DeadStream(io.StringIO):
+    """A diagnostic stream whose terminal has gone away."""
+
+    def __init__(self, exc: Exception) -> None:
+        super().__init__()
+        self._exc = exc
+
+    def write(self, s: str) -> int:
+        raise self._exc
+
+
+_DEAD_STREAM_ERRORS = [OSError(5, "Input/output error"), ValueError("I/O operation on closed file")]
+
+
+@pytest.mark.parametrize("exc", _DEAD_STREAM_ERRORS, ids=["oserror", "valueerror"])
+def test_park_cuts_torque_when_the_report_stream_is_dead(exc: Exception) -> None:
+    driver = FakeDriver()
+    robot = _robot(driver)
+    robot.connect()
+
+    park(robot, out=_DeadStream(exc))  # must not raise
+
+    assert driver.disconnected
+
+
+@pytest.mark.parametrize("exc", _DEAD_STREAM_ERRORS, ids=["oserror", "valueerror"])
+def test_park_async_cuts_torque_when_the_report_stream_is_dead(exc: Exception) -> None:
+    driver = FakeDriver()
+    robot = _robot(driver)
+    robot.connect()
+
+    asyncio.run(park_async(robot, out=_DeadStream(exc)))  # must not raise
+
+    assert driver.disconnected
+
+
 def test_park_says_torque_may_still_be_on_when_the_teardown_failed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
