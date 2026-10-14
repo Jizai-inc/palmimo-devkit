@@ -6,7 +6,7 @@
 with your own Python — open-source SDK, MCP server, and agent examples by
 [Jizai Inc.](https://jizai.ai/)
 
-[Website](https://palmimo.dev/en) · [Documentation](https://docs.palmimo.dev) · [Get a DevKit](https://palmimo.dev/en#specs) · [Japanese](https://palmimo.dev)
+[Website](https://palmimo.dev/en) · [Documentation](https://docs.palmimo.dev) · [Get a DevKit](https://palmimo.dev/en) · [Japanese](https://palmimo.dev)
 
 ![CI](https://github.com/Jizai-inc/palmimo-devkit/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
