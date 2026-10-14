@@ -2749,14 +2749,10 @@ class Palmimo:
     ) -> Iterator[dict[str, int]]:
         """Play a keyframe track, yielding positions for each frame.
 
-        The unpaced counterpart of :meth:`play_keyframes`, as :meth:`play` is to
-        :meth:`play_realtime`: each frame goes through :meth:`step`, so on a
-        compute-only facade (no driver) this is a dry run that moves nothing,
-        and with a driver connected it drives the robot as fast as the caller
-        pulls frames.
-
-        The track is validated here, before the first frame: see
-        :meth:`play_keyframes` for the rules and the arguments.
+        Unpaced counterpart of :meth:`play_keyframes` (as :meth:`play` is to
+        :meth:`play_realtime`): a dry run with no driver; with a driver it moves
+        the robot as fast as frames are pulled. Validates on the call; arguments
+        as for :meth:`play_keyframes`.
 
         Returns:
             Iterator[dict[str, int]]: Servo positions for each frame.
@@ -2780,48 +2776,25 @@ class Palmimo:
         speed: float = 1.0,
         callback: Callable[[dict[str, int]], None] | None = None,
     ) -> dict[str, int]:
-        """Play a keyframe track in real time (blocking).
+        """Play a keyframe track in real time (blocking), starting from the current pose.
 
-        Playback starts from the current pose and reaches each
-        :class:`~palmimo_sdk.keyframes.Keyframe` at its ``time``. A joint a
-        keyframe leaves out holds its previous angle. Between keyframes every
-        joint eases in and out with a raised cosine, so the robot comes to rest
-        at each keyframe.
-
-        The whole track is validated before anything moves: times must start
-        after 0 and increase, joint names must be servo names, every angle must
-        sit inside its joint's range (the legs' safe tick range; for the neck,
-        the range the engine's own neck motions reach), and no joint may exceed ``MAX_JOINT_SPEED_DEG_S`` -- the
-        first segment, from the current pose, included.
-
-        Every frame goes through :meth:`step`, so the neck thermal guard and
-        the leg overload and rail guards stay active. A guard trip ends the
-        playback early: the motion drops to IDLE, the legs glide toward neutral
-        for ``_CANCEL_SETTLE_S``, and this returns normally -- see
-        :meth:`drain_overload_trips` / :meth:`drain_rail_trips`. When the thermal lock
-        engages, the neck glides to center and stays out of the rest of the
-        track.
-
-        Cancellable from another thread, like :meth:`run`: see :meth:`cancel`.
-        On cancellation the legs glide to neutral before
-        :class:`MotionCancelled` propagates.
+        The whole track is validated before anything moves (see
+        :class:`~palmimo_sdk.keyframes.KeyframeTrack`). Frames go through
+        :meth:`step`, so the guards stay active; a guard trip ends playback
+        early and returns normally -- check :meth:`drain_overload_trips` /
+        :meth:`drain_rail_trips`. Cancellable like :meth:`run`.
 
         Args:
             keyframes (Sequence[Keyframe]): The poses to reach, in time order.
-            arm_legs (Iterable[int]): Legs (1-6) the track lifts off the ground
-                as arms. They are judged by the lighter arm overload threshold
-                instead of the weight-bearing one, as a wave's arm is. The
-                wave's servo tuning is not applied.
+            arm_legs (Iterable[int]): Legs (1-6) lifted as arms; judged by the
+                arm overload threshold (no wave servo tuning).
             return_to_neutral (bool): Glide back to the neutral pose after the
                 last keyframe, over ``1.0`` s. ``False`` holds the last pose;
                 call ``return_to_neutral(duration=...)`` (``return_to_neutral()``
                 with no driver) before another motion,
                 which would otherwise start by jumping to its own pose.
-            speed (float): Playback rate: every keyframe time is divided by
-                it, so ``2.0`` plays twice as fast. The track is validated at
-                that rate, so a speed that pushes a joint past
-                ``MAX_JOINT_SPEED_DEG_S`` raises before anything moves. The
-                glide home keeps its own pace.
+            speed (float): Playback rate (``2.0`` = twice as fast); validated
+                at that rate; the glide home keeps its own pace.
             callback (Callable, optional): Extra per-frame callback, as for
                 :meth:`play_realtime`.
 
