@@ -22,7 +22,7 @@ from palmimo_sdk import (
     Speaker,
 )
 from palmimo_sdk.engine import MotionEngine
-from palmimo_sdk.io.base import ServoTelemetry
+from palmimo_sdk.io.base import ServoPositions, ServoTelemetry
 from palmimo_sdk.kinematics import LEG_MOTORS, leg_motors
 from palmimo_sdk.overload import OVERLOAD_POLL_INTERVAL_S, SOFT_RETURN_GAIN
 from palmimo_sdk.rail import RAIL_CONSECUTIVE
@@ -2431,7 +2431,7 @@ class _OverloadDriver(ServoDriver):
 
     def __init__(self, *, gain_raises: bool = False, torque_supported: bool = True) -> None:
         self.currents: dict[str, int] = {}
-        self.positions: dict[str, int] = dict.fromkeys(LEG_MOTORS, 2500)
+        self.positions: dict[str, int] = {**dict.fromkeys(LEG_MOTORS, 2500), **dict.fromkeys(NECK_MOTORS, 2048)}
         self.voltages: dict[str, float] = dict.fromkeys(LEG_MOTORS, 4.2)
         self.writes: list[dict[str, int]] = []
         self.telemetry_requests: list[tuple[str, ...] | None] = []
@@ -3065,3 +3065,95 @@ def test_rail_and_overload_trips_in_one_sweep_are_both_recorded_and_stop_the_mot
     assert robot.motion == "idle"
     assert len(robot.drain_rail_trips()) == 1
     assert len(robot.drain_overload_trips()) == 1
+
+
+class _SpanDriver(_OverloadDriver):
+    """Reports presence per motor: ``script`` lists the silent motors for each successive sweep,
+    then ``always_silent`` stays silent for every sweep after that."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.script: list[set[str]] = []
+        self.always_silent: set[str] = set()
+        self.span_requests: list[tuple[str, ...] | None] = []
+
+    def read_positions_span(self, motors: Sequence[str] | None = None) -> ServoPositions:
+        self.span_requests.append(None if motors is None else tuple(motors))
+        silent = self.script.pop(0) if self.script else self.always_silent
+        asked = list(self.positions) if motors is None else list(motors)
+        return ServoPositions(
+            positions={m: self.positions[m] for m in asked if m not in silent},
+            silent=tuple(m for m in asked if m in silent),
+        )
+
+
+def _span_robot(silent: str = "leg_3_pitch1") -> tuple[Palmimo, _SpanDriver]:
+    driver = _SpanDriver()
+    driver.always_silent = {silent}
+    return Palmimo(driver=cast(ServoDriver, driver), auto_wake=False), driver
+
+
+def test_wake_names_the_silent_motor_and_writes_nothing() -> None:
+    robot, driver = _span_robot()
+    with pytest.raises(RuntimeError, match="leg_3_pitch1"):
+        robot.wake(duration=0.05)
+    assert driver.writes == []
+    assert driver.gain_calls == []
+
+
+def test_timed_return_to_neutral_names_the_silent_motor_and_writes_nothing() -> None:
+    robot, driver = _span_robot()
+    with pytest.raises(RuntimeError, match="leg_3_pitch1"):
+        robot.return_to_neutral(duration=0.05)
+    assert driver.writes == []
+    assert driver.gain_calls == []
+
+
+def test_sleep_skips_the_glide_but_still_ramps_gain_when_a_motor_is_silent(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    robot, driver = _span_robot()
+    robot.sleep(duration=0.05)
+    assert driver.writes == []
+    assert driver.gain_calls
+    assert "leg_3_pitch1" in caplog.text
+
+
+def test_settle_neck_goal_writes_nothing_when_a_neck_motor_is_silent() -> None:
+    robot, driver = _span_robot(silent="neck_yaw")
+    robot._settle_neck_goal(cast(ServoDriver, driver), dict.fromkeys(LEG_MOTORS, 2048))
+    assert driver.writes == []
+
+
+def test_dance_end_hold_writes_nothing_when_a_leg_is_silent() -> None:
+    robot, driver = _span_robot()
+    robot._dance_end_hold(0.01, 0)
+    assert driver.writes == []
+
+
+def test_pose_read_asks_again_only_for_the_motors_that_were_silent() -> None:
+    robot, driver = _span_robot()
+    driver.always_silent = set()
+    driver.script = [{"leg_3_pitch1"}]
+    robot.wake(duration=0.05)
+    assert driver.span_requests[1] == ("leg_3_pitch1",)
+    assert len(driver.span_requests) == 2
+    assert driver.writes  # the glide ran
+
+
+def test_wake_raises_after_three_silent_reads() -> None:
+    robot, driver = _span_robot()
+    with pytest.raises(RuntimeError, match="leg_3_pitch1"):
+        robot.wake(duration=0.05)
+    assert len(driver.span_requests) == 3
+
+
+def test_pose_read_falls_back_to_read_positions_without_span() -> None:
+    driver = _OverloadDriver()
+    robot = Palmimo(driver=cast(ServoDriver, driver), auto_wake=False)
+    robot.wake(duration=0.05)
+    assert driver.writes
+    driver.positions.pop("leg_3_pitch1")
+    with pytest.raises(RuntimeError, match="leg_3_pitch1"):
+        robot.wake(duration=0.05)
