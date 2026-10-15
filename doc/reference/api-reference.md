@@ -408,10 +408,10 @@ Inside the `with` block, *joints* have `Position_P_Gain` 0, so a hand moves them
 freely. On entry the motion stops and the joints are commanded to where they
 are; on exit they are commanded to where the hand left them before the gain is
 restored, so nothing springs back, and the engine is seeded with that pose so
-the next `play_keyframes()` starts from it. If a joint cannot be read, or its
-profile cannot be switched off, on exit, its gain stays at 0, `RuntimeError` is
-raised, and later gain writes (`wake()`, `set_p_gain()`, gestures) skip it until
-the next `connect()`.
+the next `play_keyframes()` starts from it. If a joint cannot be read, sits
+outside the safe tick range, or its profile cannot be switched off on exit, its
+gain stays at 0, `RuntimeError` is raised, and later gain writes (`wake()`,
+`set_p_gain()`, gestures) skip it until the next `connect()`.
 
 > ⚠️ Use `limp()` only on a lifted robot, with every foot in the air. A limp
 > joint carries no load, and entry and exit re-command every other joint to

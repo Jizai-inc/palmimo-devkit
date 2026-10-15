@@ -871,3 +871,29 @@ def test_an_interrupt_inside_limp_is_not_replaced_by_a_failed_exit() -> None:
         raise KeyboardInterrupt
 
     assert "neck_yaw" in robot._limp_left
+
+
+def test_a_joint_posed_outside_the_safe_range_stays_limp_on_exit() -> None:
+    """The driver would clamp its hold goal, and the returning gain would drive it there."""
+    robot, driver = _pose_robot()
+
+    with pytest.raises(RuntimeError, match="safe tick range"), robot.limp(["leg_6_pitch1", "leg_6_yaw"]):
+        driver.present["leg_6_pitch1"] = SAFE_MIN_TICK - 50
+
+    gains = [cast("tuple[int | None, tuple[str, ...]]", v) for kind, v in driver.log if kind == "gain"]
+    assert gains[-1] == (None, ("leg_6_yaw",))
+    assert robot._limp_left == frozenset({"leg_6_pitch1"})
+
+
+def test_neck_park_holds_a_recovered_limp_axis_with_the_profile_off() -> None:
+    robot, driver = _pose_robot()
+    with pytest.raises(RuntimeError), robot.limp(["neck_yaw"]):
+        driver.silent = {"neck_yaw"}
+    driver.silent = set()
+    driver.log.clear()
+
+    robot._park_neck()
+
+    kinds = [(kind, v) for kind, v in driver.log if kind in ("pv", "write")]
+    assert kinds[0] == ("pv", (0, ("neck_yaw",)))
+    assert kinds[1][0] == "write"

@@ -72,6 +72,7 @@ from ._leg_safety import LegSafety
 from ._signals import signals_ignored
 from .engine import NECK_GESTURES, Motion, MotionEngine
 from .io import FaceDisplay, HeadCamera, Microphone, MicStream, ServoDriver, Speaker, SpeechHandle
+from .io.base import SAFE_MAX_TICK, SAFE_MIN_TICK
 from .keyframes import JOINTS, Keyframe, KeyframeTrack, tick_to_degrees
 from .kinematics import ALL_LEGS, leg_motors
 from .overload import (
@@ -1249,9 +1250,9 @@ class Palmimo:
             stale = [motor for motor in _NECK_MOTORS if motor in self._limp_left]
             if stale:
                 with contextlib.suppress(Exception):
-                    found = self._read_answered(stale)
+                    found = self._holdable(self._read_answered(stale))
                     if found:
-                        self._hold_present(driver, found)
+                        self._restore_from_limp(driver, found, restore_gain=False)
                         self._limp_left -= found.keys()
             neck = [motor for motor in _NECK_MOTORS if motor not in self._limp_left]
             if not neck:
@@ -2990,13 +2991,18 @@ class Palmimo:
         # Any failure to read counts every joint as left limp, so the neck
         # park knows not to stiffen it blindly.
         self._limp_left |= frozenset(names)
-        answered = self._read_answered(names)
+        answered = self._holdable(self._read_answered(names))
         if answered:
             self._restore_from_limp(driver, answered)
         self._limp_left -= answered.keys()
         lost = [name for name in names if name not in answered]
         if lost:
-            raise RuntimeError(f"No position read from {lost}; left limp at zero gain.")
+            raise RuntimeError(f"{lost} could not be read, or sit outside the safe tick range; left limp at zero gain.")
+
+    @staticmethod
+    def _holdable(present: dict[str, int]) -> dict[str, int]:
+        """The joints whose position the driver can command as is (it clamps the rest)."""
+        return {name: tick for name, tick in present.items() if SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK}
 
     @staticmethod
     def _pose_joints_from(joints: Iterable[str] | None) -> tuple[str, ...]:
@@ -3055,8 +3061,8 @@ class Palmimo:
         if keep:
             driver.set_position_p_gain(value, motors=keep)
 
-    def _restore_from_limp(self, driver: ServoDriver, present: dict[str, int]) -> None:
-        """Hold the limp joints where they are, then restore their gain.
+    def _restore_from_limp(self, driver: ServoDriver, present: dict[str, int], *, restore_gain: bool = True) -> None:
+        """Hold the limp joints where they are, then (unless told not to) restore their gain.
 
         A time-based profile starts each move from the servo's own trajectory
         position, which stays where the joint went limp while a hand moves it.
@@ -3080,7 +3086,8 @@ class Palmimo:
                     # Holding with the profile still on sweeps the joint back.
                     raise RuntimeError(f"Could not turn the profile off on {motors}; left limp at zero gain.") from exc
             self._hold_present(driver, present)
-            driver.set_position_p_gain(None, motors)  # raw: limp owns it
+            if restore_gain:
+                driver.set_position_p_gain(None, motors)  # raw: limp owns it
         finally:
             if profile_off:
                 try:
