@@ -4,11 +4,17 @@ Every contract here is scoped to the tree this test suite ships with: scan
 roots stay inside it, so the suite runs unchanged wherever the tree lives.
 """
 
+import base64
+import html
 import re
 import subprocess
 import unicodedata
+import urllib.parse
+import zlib
+from collections import Counter
 from functools import cache
 from pathlib import Path
+from xml.etree import ElementTree
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -403,6 +409,142 @@ def test_markdown_uses_assets_instead_of_box_style_ascii_diagrams() -> None:
     ]
 
     assert offenders == [], f"Replace ASCII diagrams with .drawio.svg assets: {offenders}"
+
+
+def _spaced_text(element: ElementTree.Element) -> str:
+    # Every element boundary separates words: lines of a label are separate <tspan>s or <div>s.
+    inner = " ".join(_spaced_text(child) + " " + (child.tail or "") for child in element)
+    return f" {element.text or ''} {inner} "
+
+
+def _drawing_words(element: ElementTree.Element) -> Counter[str]:
+    # What a browser shows: <text>, plus the HTML draw.io puts in <foreignObject> for rich labels.
+    tag = element.tag.rpartition("}")[2]
+    if tag in ("text", "foreignObject"):
+        return Counter(_spaced_text(element).split())
+    # A <switch> renders only its first child; the rest is draw.io's fallback and export warning.
+    children = list(element)[:1] if tag == "switch" else list(element)
+    words: Counter[str] = Counter()
+    for child in children:
+        words.update(_drawing_words(child))
+    return words
+
+
+def _pages(svg_root: ElementTree.Element) -> list[ElementTree.Element] | None:
+    # None when the SVG carries no draw.io model, i.e. draw.io cannot edit it.
+    content = svg_root.get("content")
+    return None if content is None else ElementTree.fromstring(content).findall("diagram")
+
+
+def _model_words(page: ElementTree.Element) -> Counter[str]:
+    # Counts labels of visible cells. Not handled: %placeholders%, collapsed groups, cells under a hidden layer.
+    model = page.find("mxGraphModel")
+    if model is None:
+        text = "".join((page.text or "").split())
+        if not text:
+            return Counter()
+        packed = base64.b64decode(text)
+        model = ElementTree.fromstring(urllib.parse.unquote(zlib.decompressobj(-15).decompress(packed).decode()))
+    # A cell with a link or properties keeps its label on a <UserObject>/<object> wrapper, its
+    # visibility on the inner <mxCell>.
+    wrappers = [cell for cell in model.iter() if cell.tag in ("UserObject", "object")]
+    wrapped = {id(inner) for wrapper in wrappers for inner in wrapper.findall("mxCell")}
+    words: Counter[str] = Counter()
+    for cell in model.iter():
+        if id(cell) in wrapped:
+            continue
+        if cell.tag == "mxCell":
+            label, hidden = cell.get("value"), cell.get("visible") == "0"
+        elif cell in wrappers:
+            inner = cell.find("mxCell")
+            label = cell.get("label")
+            hidden = cell.get("visible") == "0" or (inner is not None and inner.get("visible") == "0")
+        else:
+            continue
+        if label and not hidden:
+            words.update(html.unescape(re.sub(r"<[^>]+>", " ", label)).split())
+    return words
+
+
+def _layer_label_difference(svg_text: str) -> str | None:
+    # Compared as words, not lines: draw.io wraps a long label only when it draws it.
+    root = ElementTree.fromstring(svg_text)
+    pages = _pages(root)
+    if pages is None:
+        return "no embedded draw.io model"
+    if len(pages) > 1:
+        return f"the embedded draw.io model has {len(pages)} pages; keep one figure per .drawio.svg"
+    model = _model_words(pages[0]) if pages else Counter()
+    if not model:
+        return "the embedded draw.io model has no labels"
+    drawing = _drawing_words(root)
+    only_model = sorted((model - drawing).elements())
+    only_drawing = sorted((drawing - model).elements())
+    if not only_model and not only_drawing:
+        return None
+    return f"only in the model: {only_model}; only in the drawing: {only_drawing}"
+
+
+def test_drawio_svg_files_carry_a_model_whose_labels_match_the_drawing() -> None:
+    """A .drawio.svg is two copies of one diagram: the model draw.io edits and the drawing a browser shows.
+
+    Editing one by hand leaves the other stale, and the next save from draw.io
+    regenerates the drawing from the stale model. Labels are compared rather
+    than shapes because they are what a reader takes from the figure, and they
+    map one to one between the layers where shapes do not.
+    """
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "*.drawio.svg"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    diagrams = sorted(REPO_ROOT / name for name in result.stdout.split("\0") if name)
+    assert diagrams, "git enumerated no .drawio.svg under this repository — the scan root moved."
+
+    offenders = [
+        f"{path.relative_to(REPO_ROOT).as_posix()}: {difference}"
+        for path in diagrams
+        if (difference := _layer_label_difference(path.read_text(encoding="utf-8"))) is not None
+    ]
+
+    assert offenders == [], f"Edit these diagrams in draw.io so both layers come from one save: {offenders}"
+
+
+def test_drawio_svg_label_check_rejects_a_label_edited_in_one_layer_and_a_missing_model() -> None:
+    model = '<mxGraphModel><root><mxCell id="1" value="Servo"/></root></mxGraphModel>'
+    packer = zlib.compressobj(wbits=-15)
+    packed = base64.b64encode(packer.compress(urllib.parse.quote(model).encode()) + packer.flush()).decode()
+    content = html.escape(f"<mxfile><diagram>{packed}</diagram></mxfile>", quote=True)
+
+    def svg(label: str, attributes: str = f'content="{content}"') -> str:
+        return f'<svg xmlns="http://www.w3.org/2000/svg" {attributes}><text>{label}</text></svg>'
+
+    def plain(cells: str, pages: int = 1) -> str:
+        page = f"<diagram><mxGraphModel><root>{cells}</root></mxGraphModel></diagram>" * pages
+        return svg("Servo", f'content="{html.escape(f"<mxfile>{page}</mxfile>", quote=True)}"')
+
+    assert _layer_label_difference(svg("Servo")) is None
+    assert _layer_label_difference(svg("<tspan>Servo</tspan>")) is None
+    html_label = f'<svg xmlns="http://www.w3.org/2000/svg" content="{content}"><switch><foreignObject><div>Servo</div></foreignObject><text>Ser...</text></switch></svg>'
+    assert _layer_label_difference(html_label) is None
+    assert _layer_label_difference(svg("Motor")) is not None
+    assert _layer_label_difference(svg("Servo", attributes="")) == "no embedded draw.io model"
+
+    shown = '<mxCell id="1" value="Servo"/>'
+    assert _layer_label_difference(plain('<UserObject label="Servo" id="2"><mxCell/></UserObject>')) is None
+    wrapped_hidden = '<UserObject label="Gone" id="2"><mxCell visible="0"/></UserObject>'
+    assert _layer_label_difference(plain(shown + wrapped_hidden)) is None
+    assert _layer_label_difference(plain(shown + '<mxCell id="3" value="Gone" visible="0"/>')) is None
+    assert _layer_label_difference(plain(shown, pages=2)) == (
+        "the embedded draw.io model has 2 pages; keep one figure per .drawio.svg"
+    )
+    blank = html.escape("<mxfile><diagram>  </diagram></mxfile>", quote=True)
+    assert _layer_label_difference(svg("Servo", f'content="{blank}"')) == "the embedded draw.io model has no labels"
+    assert _layer_label_difference(svg("Servo", 'content="&lt;mxfile/&gt;"')) == (
+        "the embedded draw.io model has no labels"
+    )
 
 
 def test_every_user_script_is_documented_in_both_readmes() -> None:
