@@ -136,6 +136,8 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     # computation and stdlib, which is what makes compute-only use possible
     # with no extra at all.
     "palmimo_sdk:Keyframe": _NO_EXTRA,
+    "palmimo_sdk:load_keyframes": _NO_EXTRA,
+    "palmimo_sdk:save_keyframes": _NO_EXTRA,
     "palmimo_sdk:MAX_JOINT_SPEED_DEG_S": _NO_EXTRA,
     "palmimo_sdk:Motion": _NO_EXTRA,
     "palmimo_sdk:MotionCancelled": _NO_EXTRA,

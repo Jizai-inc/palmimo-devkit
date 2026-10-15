@@ -6,11 +6,14 @@ Pure computation, like :mod:`palmimo_sdk.engine`: a :class:`KeyframeTrack`
 turns a list of :class:`Keyframe` poses into the tick value of every joint at
 any time, and validates range and speed before anything moves. Playing a track
 on the robot is :meth:`palmimo_sdk.robot.Palmimo.play_keyframes`'s job.
+:func:`save_keyframes` / :func:`load_keyframes` keep a track in a JSON file.
 """
 
 from __future__ import annotations
 
+import json
 import math
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
@@ -47,6 +50,51 @@ class Keyframe:
 
     time: float
     joints: Mapping[str, float] = field(default_factory=dict)
+
+
+def save_keyframes(path: str | os.PathLike[str], keyframes: Sequence[Keyframe]) -> None:
+    """Write *keyframes* to *path* as JSON: a list of ``{"time": s, "joints": {name: deg}}``.
+
+    Angles are rounded to 0.01 deg, well inside a servo tick (about 0.088 deg),
+    so a pose read from the servos loads back to the same ticks.
+    """
+    data = [
+        {"time": key.time, "joints": {name: round(float(deg), 2) for name, deg in key.joints.items()}}
+        for key in keyframes
+    ]
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+
+
+def load_keyframes(path: str | os.PathLike[str]) -> list[Keyframe]:
+    """Read keyframes written by :func:`save_keyframes`.
+
+    Only the file's shape is checked here; times, joint names, ranges and
+    speeds are validated when the track is played.
+
+    Raises:
+        ValueError: The file is not a list of ``{"time": number, "joints": {str: number}}``.
+    """
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError(f"{path}: expected a JSON list of keyframes.")
+    keyframes: list[Keyframe] = []
+    for index, item in enumerate(data):
+        joints = item.get("joints") if isinstance(item, dict) else None
+        time_s = item.get("time") if isinstance(item, dict) else None
+        if (
+            not isinstance(time_s, int | float)
+            or isinstance(time_s, bool)
+            or not isinstance(joints, dict)
+            or not all(
+                isinstance(k, str) and isinstance(v, int | float) and not isinstance(v, bool) for k, v in joints.items()
+            )
+        ):
+            raise ValueError(f'{path}: keyframe {index} must be {{"time": number, "joints": {{name: number}}}}.')
+        keyframes.append(Keyframe(float(time_s), {k: float(v) for k, v in joints.items()}))
+    return keyframes
 
 
 def degrees_to_tick(degrees: float) -> int:

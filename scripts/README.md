@@ -1,6 +1,6 @@
 # User Diagnostics
 
-Setup and DYNAMIXEL diagnostic tools for Palmimo DevKit users.
+Setup, DYNAMIXEL diagnostic and motion-authoring tools for Palmimo DevKit users.
 The tools here are supported and distributed to end users.
 
 ## Audience and Safety
@@ -143,6 +143,27 @@ subcommand accepts `--port`/`-p` (auto-detected when omitted) and
   what is left is mechanical (jammed linkage, robot resting on the leg) — and
   exits non-zero.
 
+### record_keyframes.py
+
+Records a gesture by hand for `Palmimo.play_keyframes()`. The joints you pick
+go limp (`Position_P_Gain` 0) while you pose them. Pick whole legs with
+`--legs` (comma-separated, 1-6), the neck with `--neck`, single joints with
+`--joints` (servo names such as `leg_6_pitch1`), or single servos with `--ids`
+(1-21: legs 1-18, three per leg from the body out; neck 19-21); the choices
+combine. Enter captures the pose, `u` drops the last capture, `q` finishes. A
+pose with a joint outside its playback range (the neck's is narrower than a
+hand can move it) is refused on the spot, so you re-pose before going on.
+Each capture becomes a keyframe `--step` seconds after the previous one
+(default `1.5`), saved as JSON to `--out` (default `keyframes.json`) for
+`palmimo_sdk.load_keyframes()`. It offers to play the track back before it
+exits, then glides home; on that playback the overload guard judges every leg
+with a released joint as an arm. `--port`/`-p` picks the servo bus
+(auto-detected when omitted).
+
+**It moves the robot, and the released joints carry no weight.** Lift the robot
+so every foot is in the air before you start: it asks you to confirm, and does
+not connect until you type `yes`. A limp leg on the ground lets the body fall.
+
 ## Usage
 
 Run these from the repository root. Every subcommand opens the serial port
@@ -167,4 +188,9 @@ uv run python scripts/diagnose_servos.py joints
 # Confirm a single servo moves (lift the robot off the ground first)
 uv run python scripts/diagnose_servos.py oscillate --id 1
 uv run python scripts/diagnose_servos.py oscillate --id 4 --duration 8
+
+# Pose the front-right leg by hand and save the poses as keyframes (robot lifted)
+uv run python scripts/record_keyframes.py --legs 6 --out wave.json
+# Only leg 6's pitch1 (servo 17) and the neck yaw
+uv run python scripts/record_keyframes.py --ids 17 --joints neck_yaw --out nod_wave.json
 ```

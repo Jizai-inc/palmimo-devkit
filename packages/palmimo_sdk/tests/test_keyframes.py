@@ -3,13 +3,24 @@
 import math
 import re
 from collections.abc import Sequence
+from pathlib import Path
 from typing import cast
 
 import pytest
 
-from palmimo_sdk import MAX_JOINT_SPEED_DEG_S, Keyframe, Motion, MotionCancelled, Palmimo, RoutineStep, ServoDriver
+from palmimo_sdk import (
+    MAX_JOINT_SPEED_DEG_S,
+    Keyframe,
+    Motion,
+    MotionCancelled,
+    Palmimo,
+    RoutineStep,
+    ServoDriver,
+    load_keyframes,
+    save_keyframes,
+)
 from palmimo_sdk.engine import MotionEngine
-from palmimo_sdk.io.base import SAFE_MIN_TICK, ServoTelemetry
+from palmimo_sdk.io.base import SAFE_MIN_TICK, ServoPositions, ServoTelemetry
 from palmimo_sdk.keyframes import JOINTS, KeyframeTrack, degrees_to_tick
 from palmimo_sdk.kinematics import LEG_MOTORS, NEUTRAL
 from palmimo_sdk.overload import OVERLOAD_POLL_INTERVAL_S
@@ -435,6 +446,368 @@ def test_thermal_lock_takes_the_neck_out_of_the_track() -> None:
     assert pulled[-1]["leg_6_pitch1"] == degrees_to_tick(20.0)  # the legs still play
 
 
+# ================================================================
+# Recording by hand: read_pose / limp / save_keyframes / load_keyframes
+# ================================================================
+
+
+class _PoseDriver(ServoDriver):
+    """An in-memory driver with settable present positions that logs writes, gain and profile changes in order."""
+
+    def __init__(self) -> None:
+        self.present: dict[str, int] = dict.fromkeys(JOINTS, NEUTRAL)
+        self.silent: set[str] = set()
+        self.log: list[tuple[str, object]] = []
+        self.profile_velocity = 300
+        self._connected = True
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    def connect(self) -> None:
+        self._connected = True
+
+    def disconnect(self) -> None:
+        self._connected = False
+
+    def _write_positions(self, positions: dict[str, int]) -> None:
+        self.log.append(("write", dict(positions)))
+
+    def read_positions_span(self, motors: Sequence[str] | None = None) -> ServoPositions:
+        """Sweep in servo-ID order and stop at the first silent servo, as the real bus does."""
+        wanted = sorted(motors if motors is not None else JOINTS, key=JOINTS.index)
+        positions: dict[str, int] = {}
+        for i, motor in enumerate(wanted):
+            if motor in self.silent:
+                return ServoPositions(positions=positions, silent=(motor,), unreached=tuple(wanted[i + 1 :]))
+            positions[motor] = self.present[motor]
+        return ServoPositions(positions=positions)
+
+    def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
+        self.log.append(("gain", (value, tuple(motors or ()))))
+
+    def set_iir(self, enabled: bool, alpha: float | None = None, motors: list[str] | None = None) -> None:
+        self.log.append(("iir", enabled))
+
+    def set_profile_velocity_units(self, value: int, motors: list[str] | None = None) -> None:
+        self.log.append(("pv", (value, tuple(motors or ()))))
+
+
+def _pose_robot() -> tuple[Palmimo, _PoseDriver]:
+    driver = _PoseDriver()
+    robot = Palmimo(driver=cast(ServoDriver, driver), auto_wake=False)
+    return robot, driver
+
+
+def test_read_pose_reports_degrees_from_neutral() -> None:
+    robot, driver = _pose_robot()
+    driver.present["leg_6_pitch1"] = degrees_to_tick(-30.0)
+
+    pose = robot.read_pose(["leg_6_pitch1", "leg_6_yaw"])
+
+    assert list(pose) == ["leg_6_pitch1", "leg_6_yaw"]
+    assert pose["leg_6_pitch1"] == pytest.approx(-30.0, abs=0.05)
+    assert pose["leg_6_yaw"] == 0.0
+
+
+def test_read_pose_raises_instead_of_reporting_a_silent_joint_as_neutral() -> None:
+    robot, driver = _pose_robot()
+    driver.silent = {"leg_6_pitch2"}
+
+    with pytest.raises(RuntimeError, match="leg_6_pitch2"):
+        robot.read_pose(["leg_6_pitch1", "leg_6_pitch2"])
+
+
+def test_read_pose_needs_a_connected_driver_and_known_joints() -> None:
+    with pytest.raises(RuntimeError, match="connected driver"):
+        Palmimo().read_pose()
+    robot, _ = _pose_robot()
+    with pytest.raises(ValueError, match="leg_7_yaw"):
+        robot.read_pose(["leg_7_yaw"])
+
+
+def test_limp_holds_in_place_before_dropping_and_before_restoring_the_gain() -> None:
+    robot, driver = _pose_robot()
+    leg = ["leg_6_yaw", "leg_6_pitch1", "leg_6_pitch2"]
+
+    with robot.limp(leg):
+        driver.present["leg_6_pitch1"] = degrees_to_tick(-60.0)  # moved by hand
+        driver.log.append(("hand", None))
+
+    kinds = [kind for kind, _ in driver.log]
+    assert kinds == ["write", "gain", "hand", "pv", "write", "gain", "pv"]
+    assert driver.log[1][1] == (0, tuple(leg))
+    held = cast(dict[str, int], driver.log[4][1])
+    assert held["leg_6_pitch1"] == degrees_to_tick(-60.0)
+    assert driver.log[5][1] == (None, tuple(leg))
+    assert robot.positions["leg_6_pitch1"] == degrees_to_tick(-60.0)  # engine seeded
+
+
+def test_limp_exit_holds_with_the_profile_off_so_the_gain_returns_onto_the_present_position() -> None:
+    """A time-based profile would start the hold from where the joint went limp and sweep it back."""
+    robot, driver = _pose_robot()
+    leg = ["leg_6_pitch1", "leg_6_pitch2"]
+
+    with robot.limp(leg):
+        driver.log.clear()
+
+    assert driver.log[0] == ("pv", (0, tuple(leg)))
+    assert [kind for kind, _ in driver.log[1:3]] == ["write", "gain"]
+    assert driver.log[-1] == ("pv", (300, tuple(leg)))
+
+
+def test_limp_then_play_keyframes_starts_from_the_hand_posed_position() -> None:
+    robot, driver = _pose_robot()
+    with robot.limp(["leg_6_pitch1"]):
+        driver.present["leg_6_pitch1"] = degrees_to_tick(-40.0)
+
+    frames = list(robot.iter_keyframes([Keyframe(1.0, {"leg_6_pitch1": 0.0})]))
+
+    assert frames[0]["leg_6_pitch1"] == degrees_to_tick(-40.0)
+
+
+def test_limp_leaves_the_gain_at_zero_when_it_cannot_read_where_the_joint_is() -> None:
+    """Restoring stiffness toward a stale goal would snap the joint; staying limp does not."""
+    robot, driver = _pose_robot()
+
+    with pytest.raises(RuntimeError, match="leg_6_yaw"), robot.limp(["leg_6_yaw"]):
+        driver.silent = {"leg_6_yaw"}
+
+    gains = [value for kind, value in driver.log if kind == "gain"]
+    assert gains == [(0, ("leg_6_yaw",))]
+
+
+def test_limp_rejects_no_joints_and_unknown_joints() -> None:
+    robot, _ = _pose_robot()
+    with pytest.raises(ValueError, match="at least one"), robot.limp([]):
+        pass
+    with pytest.raises(ValueError, match="tail"), robot.limp(["tail"]):
+        pass
+
+
+def test_saved_keyframes_load_back_equal(tmp_path: Path) -> None:
+    track = [Keyframe(1.5, {"leg_6_pitch1": -61.264, "leg_6_yaw": 5.0}), Keyframe(3.0, {"neck_yaw": 10.0})]
+    path = tmp_path / "track.json"
+
+    save_keyframes(path, track)
+
+    assert load_keyframes(path) == [
+        Keyframe(1.5, {"leg_6_pitch1": -61.26, "leg_6_yaw": 5.0}),
+        Keyframe(3.0, {"neck_yaw": 10.0}),
+    ]
+
+
+@pytest.mark.parametrize(
+    "content",
+    ['{"time": 1}', '[{"time": "1", "joints": {}}]', '[{"time": 1, "joints": {"leg_1_yaw": "x"}}]', "[3]"],
+)
+def test_load_keyframes_rejects_a_malformed_file(tmp_path: Path, content: str) -> None:
+    path = tmp_path / "bad.json"
+    path.write_text(content)
+    with pytest.raises(ValueError, match=r"bad.json"):
+        load_keyframes(path)
+
+
+def test_limp_exit_restores_the_joints_that_answered_and_leaves_only_the_silent_one_limp() -> None:
+    """One silent leg servo must not leave the neck at zero gain against its entry goal."""
+    robot, driver = _pose_robot()
+    joints = ["leg_6_yaw", "neck_yaw"]
+
+    with pytest.raises(RuntimeError, match="leg_6_yaw"), robot.limp(joints):
+        driver.present["neck_yaw"] = degrees_to_tick(20.0)
+        driver.silent = {"leg_6_yaw"}
+
+    writes = [cast(dict[str, int], v) for kind, v in driver.log if kind == "write"]
+    gains = [v for kind, v in driver.log if kind == "gain"]
+    assert writes[-1]["neck_yaw"] == degrees_to_tick(20.0)
+    assert gains == [(0, tuple(joints)), (None, ("neck_yaw",))]
+
+
+def test_limp_after_a_wave_releases_the_arm_filter_before_holding() -> None:
+    """Holding through a still-enabled arm IIR would command a stale, filtered goal."""
+    robot, driver = _pose_robot()
+    robot.wave()
+    for _ in range(5):
+        robot.step()
+    driver.log.clear()
+
+    with robot.limp(["leg_6_pitch1"]):
+        pass
+
+    kinds = [kind for kind, _ in driver.log]
+    assert kinds.index("iir") < kinds.index("write")
+    assert ("iir", False) in driver.log
+
+
+def test_saved_angles_load_back_to_the_same_ticks(tmp_path: Path) -> None:
+    from palmimo_sdk.keyframes import tick_to_degrees
+
+    ticks = range(SAFE_MIN_TICK, 3901)
+    path = tmp_path / "all.json"
+    save_keyframes(path, [Keyframe(1.0, {f"t{t}": tick_to_degrees(t) for t in ticks})])
+
+    loaded = load_keyframes(path)[0].joints
+    assert all(degrees_to_tick(loaded[f"t{t}"]) == t for t in ticks)
+
+
+def test_load_keyframes_rejects_a_boolean_angle(tmp_path: Path) -> None:
+    path = tmp_path / "bool.json"
+    path.write_text('[{"time": 1, "joints": {"leg_6_yaw": true}}]')
+    with pytest.raises(ValueError, match=r"bool\.json"):
+        load_keyframes(path)
+
+
+def test_limp_exit_reads_the_neck_behind_a_silent_leg_servo() -> None:
+    """A sweep stops at the first silent servo; the neck (last in ID order) must still be read and held."""
+    robot, driver = _pose_robot()
+    joints = ["leg_6_yaw", "leg_6_pitch1", "neck_yaw"]
+
+    with pytest.raises(RuntimeError, match=r"\['leg_6_yaw'\]"), robot.limp(joints):
+        driver.present["neck_yaw"] = degrees_to_tick(30.0)
+        driver.silent = {"leg_6_yaw"}
+
+    writes = [cast(dict[str, int], v) for kind, v in driver.log if kind == "write"]
+    gains = [v for kind, v in driver.log if kind == "gain"]
+    assert writes[-1]["neck_yaw"] == degrees_to_tick(30.0)
+    assert gains[-1] == (None, ("leg_6_pitch1", "neck_yaw"))
+
+
+def test_neck_park_leaves_a_neck_axis_limp_left_alone() -> None:
+    """Raising a limp-left axis's gain would snap it to its stale goal."""
+    robot, driver = _pose_robot()
+    with pytest.raises(RuntimeError), robot.limp(["neck_yaw"]):
+        driver.silent = {"neck_yaw"}
+    driver.log.clear()
+
+    robot._park_neck()
+
+    parked = {cast("tuple[int | None, tuple[str, ...]]", v)[1] for kind, v in driver.log if kind == "gain"}
+    assert parked == {("neck_pitch1", "neck_pitch2")}
+
+
+def test_limp_restores_the_gain_when_dropping_it_fails_part_way() -> None:
+    robot, driver = _pose_robot()
+    real = driver.set_position_p_gain
+
+    def fail_on_zero(value: int | None, motors: list[str] | None = None) -> None:
+        real(value, motors)
+        if value == 0:
+            raise OSError("bus error part-way through the gain write")
+
+    driver.set_position_p_gain = fail_on_zero  # type: ignore[method-assign]
+
+    with pytest.raises(OSError), robot.limp(["leg_6_yaw", "leg_6_pitch1"]):
+        pytest.fail("the body must not run when the release failed")
+
+    gains = [v for kind, v in driver.log if kind == "gain"]
+    assert gains[-1] == (None, ("leg_6_yaw", "leg_6_pitch1"))
+
+
+def _parked_axes(driver: _PoseDriver) -> set[tuple[str, ...]]:
+    return {cast("tuple[int | None, tuple[str, ...]]", v)[1] for kind, v in driver.log if kind == "gain"}
+
+
+def test_a_later_successful_limp_does_not_forget_a_neck_axis_still_left_limp() -> None:
+    robot, driver = _pose_robot()
+    with pytest.raises(RuntimeError), robot.limp(["neck_yaw"]):
+        driver.silent = {"neck_yaw"}
+    with robot.limp(["leg_6_yaw"]):
+        pass
+    driver.log.clear()
+
+    robot._park_neck()
+
+    assert _parked_axes(driver) == {("neck_pitch1", "neck_pitch2")}
+
+
+def test_neck_park_holds_and_parks_a_limp_left_axis_that_answers_again() -> None:
+    """Once the axis answers (and something may have stiffened it), hold it where it is and park it."""
+    robot, driver = _pose_robot()
+    with pytest.raises(RuntimeError), robot.limp(["neck_yaw"]):
+        driver.silent = {"neck_yaw"}
+    driver.silent = set()
+    driver.present["neck_yaw"] = degrees_to_tick(25.0)
+    driver.log.clear()
+
+    robot._park_neck()
+
+    writes = [cast(dict[str, int], v) for kind, v in driver.log if kind == "write"]
+    assert writes[0]["neck_yaw"] == degrees_to_tick(25.0)
+    assert _parked_axes(driver) == {("neck_pitch1", "neck_pitch2", "neck_yaw")}
+    assert [kind for kind, _ in driver.log].index("write") < [kind for kind, _ in driver.log].index("gain")
+
+
+def test_a_read_error_on_limp_exit_still_marks_the_joints_left_limp() -> None:
+    robot, driver = _pose_robot()
+
+    def broken(motors: Sequence[str] | None = None) -> ServoPositions:
+        raise OSError("serial error")
+
+    with pytest.raises(OSError), robot.limp(["neck_yaw"]):
+        driver.read_positions_span = broken  # type: ignore[method-assign]
+    driver.log.clear()
+
+    robot._park_neck()
+
+    assert _parked_axes(driver) == {("neck_pitch1", "neck_pitch2")}
+
+
+def test_holding_a_joint_commands_every_other_joint_to_where_it_is_not_to_a_stale_engine_pose() -> None:
+    """The engine's stored pose can lag a glide cut short; writing it would move the other legs."""
+    robot, driver = _pose_robot()
+    robot.engine.set_leg_positions({"leg_3_pitch1": degrees_to_tick(-40.0)})  # stale engine pose
+    driver.present["leg_3_pitch1"] = degrees_to_tick(-10.0)  # where the leg really is
+
+    with robot.limp(["leg_6_yaw"]):
+        pass
+
+    writes = [cast(dict[str, int], v) for kind, v in driver.log if kind == "write"]
+    assert all(w["leg_3_pitch1"] == degrees_to_tick(-10.0) for w in writes)
+    assert robot.positions["leg_3_pitch1"] == degrees_to_tick(-10.0)
+
+
+def test_a_failed_profile_off_on_limp_exit_raises_and_leaves_the_joints_limp() -> None:
+    """Holding with the profile still on sweeps the joint back, so the gain must not return."""
+    robot, driver = _pose_robot()
+    leg = ["leg_6_yaw", "leg_6_pitch1"]
+    real = driver.set_profile_velocity_units
+
+    def fail_on_zero(value: int, motors: list[str] | None = None) -> None:
+        if value == 0:
+            driver.log.append(("pv", (0, ("leg_6_yaw",))))
+            raise OSError("bus error after the first motor")
+        real(value, motors)
+
+    driver.set_profile_velocity_units = fail_on_zero  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="profile off"), robot.limp(leg):
+        driver.log.clear()
+
+    assert driver.log[-1] == ("pv", (300, tuple(leg)))  # the profile still comes back
+    assert ("gain", (None, tuple(leg))) not in driver.log
+    assert robot._limp_left == frozenset(leg)
+
+
+def test_gain_writes_skip_a_joint_a_failed_limp_exit_left_behind() -> None:
+    """wake(), set_p_gain() and the wave tuning must not stiffen it toward its stale goal."""
+    robot, driver = _pose_robot()
+    with pytest.raises(RuntimeError), robot.limp(["neck_yaw"]):
+        driver.silent = {"neck_yaw"}
+    driver.log.clear()
+
+    robot.set_p_gain(1200)
+    robot.wake(duration=0.05)
+    robot.wave()
+    robot.step()
+
+    gains = [cast("tuple[int | None, tuple[str, ...]]", v) for kind, v in driver.log if kind == "gain"]
+    stiffened = [motors for value, motors in gains if value != 0]
+    assert stiffened
+    # An empty subset is the driver's "every motor" write, which includes the neck.
+    assert all(motors and "neck_yaw" not in motors for motors in stiffened)
+
+
 def test_speed_divides_every_keyframe_time_but_not_the_glide_home() -> None:
     robot = _neutral_robot()
 
@@ -487,3 +860,14 @@ def test_a_routine_with_a_keyframes_cue_fails_before_any_cue_moves() -> None:
         next(robot.play(routine))
 
     assert robot.motion == "idle"
+
+
+def test_an_interrupt_inside_limp_is_not_replaced_by_a_failed_exit() -> None:
+    """Ctrl-C while posing must reach the caller even if the exit cannot read a joint."""
+    robot, driver = _pose_robot()
+
+    with pytest.raises(KeyboardInterrupt), robot.limp(["neck_yaw"]):
+        driver.silent = {"neck_yaw"}
+        raise KeyboardInterrupt
+
+    assert "neck_yaw" in robot._limp_left
