@@ -6,15 +6,16 @@ Mirrors the servo I/O layer (:mod:`palmimo_sdk.io.dynamixel`): the SDK owns the
 hardware resource, and higher layers consume it instead of opening OpenCV
 themselves.
 
-The head camera only delivers the full field of view at its native
-mode (``capture_width`` x ``capture_height``, MJPG). Any smaller request
+The head camera only delivers the full field of view at its native 4:3
+mode (``capture_width`` x ``capture_height``, MJPG). Any smaller / 16:9 request
 is served as a top-left corner crop — a narrow, off-center "looking down" view,
 not a scaled-down full frame. So :meth:`HeadCamera.read` always grabs the full
 sensor and downscales every frame in software to fit within ``proc_width`` x
-``proc_height``, keeping the frame's own aspect ratio (a 4:3 2592x1944 frame
-becomes 1296x972, a 16:9 1920x1080 frame 1296x729). The head camera is mounted
-upside down, so frames are rotated by ``rotation`` degrees (180 by default) to
-come out upright.
+``proc_height``, keeping the frame's own aspect ratio: the head camera's
+2592x1944 becomes 1296x972, and a camera whose native mode is 16:9 1920x1080
+(configured via ``capture_width`` / ``capture_height``) becomes 1296x729. The
+head camera is mounted upside down, so frames are rotated by ``rotation``
+degrees (180 by default) to come out upright.
 
 Two independent lifecycles:
 
@@ -85,9 +86,9 @@ class HeadCameraConfig:
     """Capture settings for the head camera.
 
     ``proc_width`` x ``proc_height`` is the bounding box :meth:`HeadCamera.read`
-    downscales into; the aspect ratio of the captured frame is kept, so one
-    side may come out shorter than the box (never larger). Frames that already
-    fit are passed through unscaled.
+    downscales into, before ``rotation`` is applied; the aspect ratio of the
+    captured frame is kept, so one side may come out shorter than the box
+    (never larger). Frames that already fit are passed through unscaled.
 
     ``rotation`` is degrees clockwise applied after downscaling; it generalizes
     the upside-down head mount (180). It is mount-dependent — verify the value
