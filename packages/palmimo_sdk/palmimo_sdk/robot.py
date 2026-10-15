@@ -3107,7 +3107,18 @@ class Palmimo:
         with contextlib.suppress(Exception):
             goal.update(self._read_answered([name for name in JOINTS if name not in present]))
         goal.update(present)
-        driver.write_positions(goal)
+        # A command-side IIR would blend the hold with its pre-limp state; write
+        # it unfiltered, then resume the filter from the held pose.
+        tuner: Any = driver
+        iir_on = bool(getattr(tuner, "iir_enabled", False))
+        if iir_on:
+            alpha, motors = tuner.iir_alpha, getattr(tuner, "_iir_motors", None)
+            tuner.set_iir(False)
+        try:
+            driver.write_positions(goal)
+        finally:
+            if iir_on:
+                tuner.set_iir(True, alpha, sorted(motors) if motors else None)
         self._engine.set_leg_positions(goal)
         self._engine.set_neck_positions(goal)
 

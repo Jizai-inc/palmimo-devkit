@@ -897,3 +897,31 @@ def test_neck_park_holds_a_recovered_limp_axis_with_the_profile_off() -> None:
     kinds = [(kind, v) for kind, v in driver.log if kind in ("pv", "write")]
     assert kinds[0] == ("pv", (0, ("neck_yaw",)))
     assert kinds[1][0] == "write"
+
+
+def test_limp_exit_holds_through_a_user_enabled_iir_without_blending_the_old_pose() -> None:
+    from palmimo_sdk.io.dynamixel import DynamixelDriver
+
+    driver = DynamixelDriver.__new__(DynamixelDriver)
+    driver._iir_enabled, driver._iir_alpha, driver._iir_motors = True, 0.2, None
+    driver._iir_state = {name: float(NEUTRAL) for name in JOINTS}  # pre-limp filter state
+    filtered = driver._apply_iir
+
+    robot, fake = _pose_robot()
+    fake.iir_enabled = True  # type: ignore[attr-defined]
+    fake.iir_alpha = 0.2  # type: ignore[attr-defined]
+
+    def set_iir(enabled: bool, alpha: float | None = None, motors: list[str] | None = None) -> None:
+        driver.set_iir(enabled, alpha, motors)
+        fake.iir_enabled = enabled  # type: ignore[attr-defined]
+
+    fake.set_iir = set_iir  # type: ignore[method-assign]
+    real_write = fake._write_positions
+    fake._write_positions = lambda pos: real_write(filtered(pos) if driver._iir_enabled else pos)  # type: ignore[method-assign, assignment]
+
+    with robot.limp(["leg_6_pitch1"]):
+        fake.present["leg_6_pitch1"] = degrees_to_tick(-40.0)
+
+    hold = cast(dict[str, int], [v for kind, v in fake.log if kind == "write"][-1])
+    assert hold["leg_6_pitch1"] == degrees_to_tick(-40.0)
+    assert driver._iir_enabled  # the user's filter is back on
