@@ -441,6 +441,14 @@ multiple readers — the same shape as the servo bus, which `step()` writes to
 and `robot.driver.write_positions` also reaches directly), so consumers reach
 them through the `camera` / `mic` properties.
 
+`HeadCamera.read()` downscales each frame to fit within
+`HeadCameraConfig.proc_width` x `proc_height` (default 1296x972, applied before
+`rotation`) while keeping the captured frame's aspect ratio, so a camera whose
+native mode is 16:9 1920x1080 yields an undistorted 1296x729 frame. The output
+can therefore be smaller than the box on one side (e.g. `proc_width=640,
+proc_height=360` on the default 4:3 capture gives 480x360); a caller that needs
+a fixed input size, such as a model input, resizes the frame itself.
+
 ### Resource reservations
 
 The SDK reserves `servo_bus`, `camera`, `microphone`, `speaker`, and `display`

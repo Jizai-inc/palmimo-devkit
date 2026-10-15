@@ -96,6 +96,24 @@ def test_read_downscales_to_processing_size(fake_capture: _CapList) -> None:
     assert frame.shape == (972, 1296, 3)  # half of 1944x2592
 
 
+def test_read_keeps_aspect_ratio_when_capture_is_16_9(fake_capture: _CapList) -> None:
+    assert fake_capture.set_frame is not None
+    fake_capture.set_frame(lambda: np.zeros((1080, 1920, 3), dtype=np.uint8))
+    cam = HeadCamera(HeadCameraConfig(capture_width=1920, capture_height=1080, rotation=0))
+    ok, frame = cam.read()
+    assert ok
+    assert frame.shape == (729, 1296, 3)
+
+
+def test_read_fits_height_when_capture_is_taller_than_the_box(fake_capture: _CapList) -> None:
+    assert fake_capture.set_frame is not None
+    fake_capture.set_frame(lambda: np.zeros((1944, 1944, 3), dtype=np.uint8))
+    cam = HeadCamera(HeadCameraConfig(rotation=0))
+    ok, frame = cam.read()
+    assert ok
+    assert frame.shape == (972, 972, 3)
+
+
 def test_rotation_180_moves_marker_to_opposite_corner(fake_capture: _CapList) -> None:
     cam = HeadCamera(HeadCameraConfig(rotation=180))
     _, frame = cam.read()
