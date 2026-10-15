@@ -331,6 +331,72 @@ routine takes the wall-clock time its steps ask for.
 - fps: same fallback to the facade's own `fps` as `play()`
 - callback: `Optional[Callable[[dict[str, int]], None]]` — called with positions each frame
 
+## Keyframe Playback
+
+Author a gesture as a list of timed joint poses and play it back, without
+forking the SDK or writing an engine method.
+
+### `Keyframe(time: float, joints: Mapping[str, float] = {})`
+One timed pose for `play_keyframes()` / `iter_keyframes()`, exported from `palmimo_sdk`.
+- time: seconds from the start of playback at which the pose is reached
+- joints: servo name (`leg_{1-6}_{yaw,pitch1,pitch2}`, `neck_yaw`, `neck_pitch1`,
+  `neck_pitch2`) -> angle in degrees from the servo neutral (tick 2048). A joint
+  left out keeps the angle it had at the previous keyframe (or at the start).
+
+The angle is the servo's own: the same number turns a left and a right leg in
+mirrored directions, and `neck_pitch1`'s front is the rest-trimmed center, not 0.
+
+### `robot.play_keyframes(keyframes, *, arm_legs=(), speed=1.0, callback=None) -> Dict[str, int]`
+Play a list of `Keyframe`s in real time (blocking), starting from the current
+pose. Between keyframes every joint eases in and out with a raised cosine, so
+the robot comes to rest at each keyframe. After the last keyframe it glides to
+the neutral pose over 1.0 s and the motion is `idle`, so the next motion starts
+from neutral. Returns the final positions.
+
+The whole track is validated before anything moves, and a violation raises
+`ValueError`:
+
+| Rule | Limit |
+|------|-------|
+| Times | finite, after 0, strictly increasing |
+| Joint names | the 21 servo names above |
+| Leg angles | inside `SAFE_MIN_TICK`..`SAFE_MAX_TICK` (about -162 to +163 deg) |
+| Neck angles | inside the range the engine's own neck motions reach: servo neutral ± `MotionEngine.NECK_AMPLITUDE_TICKS` (about ±26 deg), and for `neck_pitch1` also that amplitude around its rest-trimmed front, `engine.neck_pitch_center()` (about -26 to +11 deg at the default trim) |
+| Speed | raised-cosine peak `(π/2)·Δangle/Δtime` at most `MAX_JOINT_SPEED_DEG_S` (360 deg/s), the segment from the current pose included |
+
+The ranges are servo limits, not collision limits: a pose can still drive a leg
+into the body or another leg. Play a new track with the robot lifted first.
+
+- arm_legs: legs (1-6) the track lifts off the ground as arms. The
+  [Overload Guard](#overload-guard) judges them by `arm_overload_current`, as it
+  does a wave's arm; every other leg keeps the weight-bearing threshold. Only
+  the threshold changes: the wave's servo tuning is not applied.
+- speed: playback rate. Every keyframe time is divided by it (`2.0` plays twice
+  as fast) and the track is validated at that rate, so a speed that pushes a
+  joint past the speed limit raises before anything moves, naming the fastest
+  speed the track allows. The glide home keeps its own 1.0 s.
+- callback: as for `play_realtime()`
+
+Every frame goes through `step()`, so the neck thermal guard and the leg
+overload and rail guards stay active. A guard trip ends the playback early: the
+motion drops to `idle` and the legs glide toward neutral for 0.5 s, then
+`play_keyframes()` returns normally, so check `drain_overload_trips()` /
+`drain_rail_trips()` to tell a trip from a finished track. When the thermal lock engages, the neck glides to
+center and stays out of the rest of that track; the legs keep playing.
+Cancellable from another thread like `run()`: on `cancel()` the legs glide to
+neutral and `MotionCancelled` propagates. Any other exception (a callback
+raising, for one) also leaves the motion at `idle`, never on the track.
+
+### `robot.iter_keyframes(keyframes, *, arm_legs=(), speed=1.0) -> Iterator[Dict[str, int]]`
+The unpaced counterpart of `play_keyframes()`, as `play()` is to
+`play_realtime()`: it validates on the call and returns an iterator that yields
+one frame per `step()`. On a facade with no driver this is a dry run; with a
+driver attached it moves the robot as fast as the loop pulls frames, so use
+`play_keyframes()` there. The iterator ends early if a guard trip or another
+motion command takes the engine off the track; closing it early stops the
+motion. The track starts from the pose at the call, so pull the frames right
+away rather than stepping the robot in between.
+
 ## Peripherals & Connection
 
 `Palmimo` optionally owns the face display, the speaker, the head camera, and the
@@ -864,7 +930,7 @@ current for too long.
 ```python
 robot = Palmimo(
     driver=driver,
-    arm_overload_current=700,   # raw |current|, raised arm of wave / wave_both / clap
+    arm_overload_current=700,   # raw |current|, raised arm of wave / wave_both / clap / play_keyframes(arm_legs=...)
     leg_overload_current=1200,  # raw |current|, every other leg axis
 )
 ```

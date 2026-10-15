@@ -74,6 +74,51 @@ for positions in robot.play(routine, fps=60):
 For real-time playback (paced internally with `time.sleep`), use
 [`play_realtime`](../../packages/palmimo_sdk/palmimo_sdk/robot.py).
 
+## Keyframe Playback
+
+To make a gesture of your own without writing an engine method, list the poses
+the robot should pass through, each with the time to reach it, and let the SDK
+ease between them. Angles are degrees from each servo's neutral; a joint a
+keyframe leaves out holds where it was.
+
+1. Write the track and check it in a dry run. With no driver attached nothing
+   moves, and an invalid track (a joint out of range, a move too fast) raises
+   `ValueError` on the call:
+
+   ```python
+   from palmimo_sdk import Keyframe, Palmimo
+
+   raise_front_right = [
+       Keyframe(1.0, {"leg_6_pitch1": -30.0, "neck_yaw": 10.0}), # lift the leg, glance aside
+       Keyframe(1.5, {"leg_6_yaw": 15.0}),                         # swing it sideways; the rest hold
+       Keyframe(2.5, {"leg_6_pitch1": 0.0, "leg_6_yaw": 0.0}),     # put it back
+   ]
+
+   robot = Palmimo()
+   frames = list(robot.iter_keyframes(raise_front_right, arm_legs=[6]))
+   print(len(frames), frames[60]["leg_6_pitch1"])  # 2.5 s + the 1 s glide home, at 60 fps
+   ```
+
+2. Lift the robot so every foot is in the air, then play it on the hardware:
+
+   ```python
+   from palmimo_sdk import DynamixelDriver, Palmimo
+
+   with Palmimo(driver=DynamixelDriver()) as robot:
+       robot.play_keyframes(raise_front_right, arm_legs=[6])
+   ```
+
+   Pass the legs the track lifts as arms in `arm_legs`, so the overload guard
+   watches them with the arm threshold.
+
+3. Set it down and play it on the floor only after it looks right in the air.
+   The range checks stop servo-limit and speed mistakes, not a leg swinging into
+   the body or another leg.
+
+The rules and the arguments are in
+[Keyframe Playback](../reference/api-reference.md#keyframe-playback) in the API
+reference.
+
 ## Troubleshooting
 
 - **Serial port not found**: Check the actual device name with `ls /dev/tty.usbmodem*`

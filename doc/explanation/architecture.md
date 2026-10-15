@@ -370,7 +370,7 @@ stops or an SSH session drops.
   below 55 °C. See [the API reference](../reference/api-reference.md#neck-thermal-guard)
   for the full state table. The legs keep the reported-only behavior above.
   **Scope**: the guard only reaches callers that go through `Palmimo.step()`
-  (`run()`/`play()`, the MCP server, the agent tool layer) — the LeRobot teleop
+  (`run()`/`play()`/`play_keyframes()`, the MCP server, the agent tool layer) — the LeRobot teleop
   integration drives the engine directly and is not covered. A software glide that
   writes the driver directly instead of going through `step()` (`Palmimo.wake()`,
   `_timed_return_to_neutral()`) is outside the guard's reach too, but only ever
