@@ -119,6 +119,36 @@ The rules and the arguments are in
 [Keyframe Playback](../reference/api-reference.md#keyframe-playback) in the API
 reference.
 
+### Recording Poses by Hand
+
+Instead of typing angles, move the robot into each pose and capture it.
+
+1. Lift the robot so every foot is in the air. The legs you record go limp and
+   carry no weight.
+2. Start the recorder with the legs to move (here the front-right leg, 6):
+
+   ```bash
+   uv run python scripts/record_keyframes.py --legs 6 --step 1.5 --out wave.json
+   ```
+
+3. Pose the leg by hand and press Enter for each pose (`u` undoes, `q`
+   finishes).
+4. Answer `y` to play it back while still lifted; if it is refused, edit the
+   file (a longer `--step` gives every move more time).
+5. Play the file from your own code. Playback starts from wherever the robot is
+   when you call it — neutral right after connecting — whereas the recorder's
+   preview starts from the last pose you captured, so the first move can
+   differ:
+
+   ```python
+   from palmimo_sdk import DynamixelDriver, Palmimo, load_keyframes
+
+   with Palmimo(driver=DynamixelDriver()) as robot:
+       robot.play_keyframes(load_keyframes("wave.json"), arm_legs=[6])
+   ```
+
+The recorder's options are in [scripts/README.md](../../scripts/README.md).
+
 ## Troubleshooting
 
 - **Serial port not found**: Check the actual device name with `ls /dev/tty.usbmodem*`

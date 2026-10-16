@@ -7,7 +7,7 @@ license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "dynamixel-sdk>=3.7.31",
-    "palmimo-sdk",
+    "palmimo-sdk[hardware]",
     "pyserial>=3.5",
     "tqdm>=4.66.0",
 ]

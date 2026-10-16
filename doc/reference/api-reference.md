@@ -397,6 +397,39 @@ motion command takes the engine off the track; closing it early stops the
 motion. The track starts from the pose at the call, so pull the frames right
 away rather than stepping the robot in between.
 
+### `robot.read_pose(joints=None) -> Dict[str, float]`
+Read where the joints are now, in `Keyframe` units: servo name -> degrees from
+the servo neutral, ready to pass as a keyframe's `joints`. `None` reads all 21.
+A joint that does not answer a sweep and three retries of its own raises
+`RuntimeError`; it is never reported as neutral. Needs a connected driver.
+
+### `robot.limp(joints)` (context manager)
+Inside the `with` block, *joints* have `Position_P_Gain` 0, so a hand moves them
+freely. On entry the motion stops and the joints are commanded to where they
+are; on exit they are commanded to where the hand left them before the gain is
+restored, so nothing springs back, and the engine is seeded with that pose so
+the next `play_keyframes()` starts from it. If a joint cannot be read, sits
+outside the safe tick range, or its profile cannot be switched off on exit, its
+gain stays at 0, `RuntimeError` is raised, and later gain writes (`wake()`,
+`set_p_gain()`, gestures) skip it until the next `connect()`.
+
+> ⚠️ Use `limp()` only on a lifted robot, with every foot in the air. A limp
+> joint carries no load, and entry and exit re-command every other joint to
+> where it is, which lets a loaded leg or the head sink. Do not call `step()`
+> inside the block.
+
+```python
+with robot.limp(["leg_6_yaw", "leg_6_pitch1", "leg_6_pitch2"]):
+    input("Pose the front-right leg, then press Enter")
+    pose = robot.read_pose(["leg_6_yaw", "leg_6_pitch1", "leg_6_pitch2"])
+robot.play_keyframes([Keyframe(1.5, pose)])
+```
+
+### `save_keyframes(path, keyframes)` / `load_keyframes(path) -> list[Keyframe]`
+Keep a track in a JSON file: a list of `{"time": seconds, "joints": {name: degrees}}`,
+angles rounded to 0.01 deg. `load_keyframes()` checks the file's shape and raises
+`ValueError` otherwise; ranges and speeds are checked when the track is played.
+
 ## Peripherals & Connection
 
 `Palmimo` optionally owns the face display, the speaker, the head camera, and the

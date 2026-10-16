@@ -85,7 +85,7 @@ from .io import (
     palmimo_motor_ids,
     resolve_alsa_device,
 )
-from .keyframes import MAX_JOINT_SPEED_DEG_S, Keyframe
+from .keyframes import MAX_JOINT_SPEED_DEG_S, Keyframe, load_keyframes, save_keyframes
 from .name_match import PALMIMO_NAMES, NameMatch, NameMatcher, name_skeleton
 from .overload import (
     ARM_OVERLOAD_CURRENT,
@@ -164,8 +164,10 @@ __all__ = [
     "find_face_port",
     "find_servo_port",
     "kinematics",
+    "load_keyframes",
     "name_skeleton",
     "palmimo_motor_ids",
     "resolve_alsa_device",
+    "save_keyframes",
     "shutdown",
 ]
