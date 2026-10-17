@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "translations": {
+    "ja": {
+      "description": "呼びかけの言葉に続けて指示を話すと、その指示を実行し、音声で返答します。1回の呼びかけごとに動作する音声エージェントです。",
+      "params.language": "音声認識・読み上げ・返答に使う言語です。",
+      "params.command_model": "音声の指示を解釈し、実行するチャットモデルです。",
+      "params.stt_model": "聞き取った音声を文字に変換するモデルです。",
+      "params.no_tts": "返答を音声で読み上げないようにします。",
+      "params.speaker_device": "音声の出力先の名前です（部分一致）。別のスピーカーを使う場合を除き、初期値のままにしてください。",
+      "env.OPENAI_API_KEY": "音声を文字に変換するためのOpenAI APIキーです。音声認識で常に必要になります。",
+      "env.GEMINI_API_KEY": "標準の指示実行モデルに使うGoogle Gemini APIキーです。command_modelをOpenAIのモデルに変更した場合は不要です。"
+    }
+  }
+}

@@ -46,6 +46,39 @@ example: the same directory's `palmimo.toml` is the cascaded pipeline app,
 and `palmimo.realtime.toml` is the OpenAI Realtime voice runtime, because the
 two need different env vars and devices.
 
+## Display translations
+
+A manifest may have a companion JSON file named `<manifest filename>.i18n.json`:
+`palmimo.toml.i18n.json` or `palmimo.realtime.toml.i18n.json`, for example.
+It contains display text only. The manifest itself remains schema 1 and older
+hosts ignore the companion, retaining the original descriptions.
+
+```json
+{
+  "schema": 1,
+  "translations": {
+    "ja": {
+      "description": "ブラウザからPalmimoを遠隔操作します。",
+      "params.port": "遠隔操作画面に使うポート番号です。"
+    }
+  }
+}
+```
+
+Message keys are `description`, `env.<NAME>`, or `params.<name>` and must
+refer to fields declared by that manifest. Each value is a nonblank string
+of at most 200 characters. A file is at most 64 KiB, is not a symlink, and
+contains 1–32 locale objects. Locale tags use lowercase language codes with
+optional hyphenated subtags, such as `ja`, `en`, and `ja-jp`.
+
+The Portal selects each field using its UI language: exact locale first,
+then the base language, then the manifest's original text. Switching the UI
+language changes neither launch parameters nor the robot's spoken language.
+Unknown keys and malformed optional translations are ignored by Portal;
+the reference validator rejects them when building a catalog. The catalog
+carries the same `translations` map, including through the persisted cache.
+Translations are not part of the executable-settings snapshot in the app ledger.
+
 ## App identity
 
 On the device, an app is identified by an ID of the form `<namespace>.<name>`.

@@ -68,6 +68,7 @@ def _catalog_entry(manifest_path: Path, manifest: AppManifest, tag: str, commit:
     return {
         "name": manifest.name,
         "description": manifest.description,
+        **({"translations": manifest.translations} if manifest.translations else {}),
         "env": {env_name: _env_entry(env) for env_name, env in sorted(manifest.env.items())},
         "devices": sorted(manifest.devices),
         "source": source,
