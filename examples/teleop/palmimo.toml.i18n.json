@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "translations": {
+    "ja": {
+      "description": "同じLAN内のスマートフォンやパソコンのブラウザからPalmimoを遠隔操作します。カメラ映像を見ながら操作できます。",
+      "params.port": "遠隔操作画面のHTTP・WebSocket通信に使うポート番号です。",
+      "params.fps": "ロボットを制御する処理の頻度（1秒あたりの回数）です。",
+      "params.gait_speed": "歩く速さです。値を大きくすると速くなります。",
+      "params.no_camera": "頭部カメラの映像配信を無効にします。",
+      "params.dry_run": "サーボに接続せず、計算だけを行います。"
+    }
+  }
+}

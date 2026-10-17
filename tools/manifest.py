@@ -11,8 +11,10 @@ from __future__ import annotations
 import math
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from tools.manifest_translations import load_translations
 
 
 #: Matches `palmimo.toml` (the default manifest) or `palmimo.<variant>.toml`,
@@ -163,6 +165,7 @@ class AppManifest:
     devices: tuple[str, ...]
     env: dict[str, EnvVar]
     params: dict[str, Param]
+    translations: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 def is_manifest_filename(name: str) -> bool:
@@ -221,6 +224,7 @@ def load_manifest(path: Path) -> AppManifest:
         devices=tuple(devices),
         env=env,
         params=params,
+        translations=load_translations(path, set(env), set(params)),
     )
 
 

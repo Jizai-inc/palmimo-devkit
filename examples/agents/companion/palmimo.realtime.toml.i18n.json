@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "translations": {
+    "ja": {
+      "description": "OpenAI Realtime APIを使ってコンパニオンと音声で会話します。カメラの画像も定期的にモデルへ送信します。",
+      "params.seconds": "セッションの長さ（秒）です。",
+      "params.model": "音声会話に使うOpenAI Realtimeモデルです。",
+      "params.voice": "返答の声です。セッションで話し始めた後は変更できません。",
+      "params.pitch": "再生音声の高さの倍率です。1.0で元の高さになります。",
+      "params.reply_chars": "返答の長さの目安としてモデルに伝える文字数です。0の場合はモデルに任せます。",
+      "params.frame_seconds": "カメラ画像をモデルへ送る間隔（秒）です。短くすると反応がよくなりますが、利用料金が増えます。",
+      "env.OPENAI_API_KEY": "音声入力・音声での返答・ツール呼び出しを行うRealtimeセッション用のOpenAI APIキーです。"
+    }
+  }
+}

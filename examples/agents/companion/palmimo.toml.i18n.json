@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "translations": {
+    "ja": {
+      "description": "音声やカメラの映像に反応し、動きや表情を交えて会話する常駐型のコンパニオンです。待機中も自律的に振る舞います。",
+      "params.language": "音声認識と返答に使う言語です。",
+      "params.chat_model": "会話とツールの呼び出しに使うチャットモデルです。",
+      "params.stt_model": "聞き取った音声を文字に変換するモデルです。",
+      "params.voice_backend": "音声合成の方式です。piperは機体内で動作し、openaiはクラウドを利用するためOpenAI APIキーが必要です。",
+      "params.voice_speed": "話す速さです。値を大きくすると速くなります。",
+      "params.voice_volume": "音声の出力音量です。1.0で元の音量になります。",
+      "env.OPENAI_API_KEY": "OpenAI APIキーです。LiteLLMを通じて、標準の音声認識モデルと、voice_backendをopenaiにした場合の音声合成に使います。",
+      "env.GEMINI_API_KEY": "Google Gemini APIキーです。LiteLLMを通じて、標準の会話・動作判断・画像認識モデルに使います。すべてGemini以外に変更した場合は不要です。"
+    }
+  }
+}
