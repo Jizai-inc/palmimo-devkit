@@ -3,7 +3,6 @@
   "translations": {
     "ja": {
       "description": "OpenAI Realtime APIを使ってコンパニオンと音声で会話します。カメラの画像も定期的にモデルへ送信します。",
-      "params.seconds": "セッションの長さ（秒）です。",
       "params.model": "音声会話に使うOpenAI Realtimeモデルです。",
       "params.voice": "返答の声です。セッションで話し始めた後は変更できません。",
       "params.pitch": "再生音声の高さの倍率です。1.0で元の高さになります。",

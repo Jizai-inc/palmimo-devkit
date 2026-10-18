@@ -42,7 +42,6 @@ _ENV_VARS = [
     "COMPANION_AGENT_PITCH",
     "COMPANION_AGENT_REPLY_CHARS",
     "COMPANION_AGENT_FRAME_SECONDS",
-    "COMPANION_AGENT_SESSION_SECONDS",
 ]
 
 
@@ -104,8 +103,8 @@ def test_realtime_manifest_defaults_parse_and_match_settings_defaults() -> None:
     parsed = _build_parser().parse_args(argv)
 
     defaults = RealtimeSettings.with_env_file(None)
-    assert parsed.seconds == pytest.approx(manifest["params"]["seconds"]["default"])
-    assert parsed.seconds == pytest.approx(defaults.session_seconds)
+    assert parsed.seconds is None
+    assert "seconds" not in manifest["params"]
     assert parsed.model == manifest["params"]["model"]["default"] == defaults.model
     assert parsed.voice == manifest["params"]["voice"]["default"] == defaults.voice
     assert parsed.pitch == pytest.approx(manifest["params"]["pitch"]["default"])

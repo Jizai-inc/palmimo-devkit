@@ -7,16 +7,25 @@ a bare task list itself.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import contextlib
+import signal
+import sys
 import time
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from palmimo_companion_agent.realtime import app as app_module
+from palmimo_companion_agent.realtime import settings as settings_module
 from palmimo_companion_agent.realtime.app import RealtimeSession
 from palmimo_companion_agent.realtime.bridge import ToolBridge
 from palmimo_companion_agent.realtime.log import EventLog
 from palmimo_companion_agent.realtime.services.audio import Playback
+from palmimo_companion_agent.realtime.services.base import Service
 from palmimo_companion_agent.realtime.services.frames import LiveFrame
 from palmimo_companion_agent.realtime.services.reflexes import ReflexRunner
 from palmimo_companion_agent.realtime.services.router import _SessionClosed
@@ -53,23 +62,85 @@ class _Recorder:
         self.order.append("disconnect")
 
 
-def _session(recorder: _Recorder, *, asleep: bool) -> RealtimeSession:
+def _session(recorder: _Recorder, *, asleep: bool, services: list[Service] | None = None) -> RealtimeSession:
     sleeping = Sleeping()
     sleeping.asleep = asleep
     return RealtimeSession(
         client=cast(Any, None),
-        services=[],
+        services=services or [],
         bridge=cast(ToolBridge, recorder),
         playback=cast(Playback, recorder),
         watch=cast(Any, recorder),
         palmimo=cast(Palmimo, recorder),
         sleeping=sleeping,
-        usage=cast(Any, None),
-        frame=cast(LiveFrame, None),
+        usage=app_module.Usage("gpt-realtime-2.1"),
+        frame=LiveFrame(camera=None),
     )
 
 
-async def test_a_closed_socket_ends_the_session_cleanly_and_still_parks() -> None:
+class _WaitingService:
+    name = "waiting"
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def run(self) -> None:
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            self.cancelled.set()
+
+
+@pytest.mark.parametrize("stop_signal", [signal.SIGINT, signal.SIGTERM])
+async def test_session_runs_past_two_minutes_until_signalled_when_no_limit(
+    monkeypatch: pytest.MonkeyPatch, stop_signal: signal.Signals
+) -> None:
+    recorder = _Recorder()
+    service = _WaitingService()
+    session = _session(recorder, asleep=False, services=[service])
+    callbacks: dict[signal.Signals, Callable[[], None]] = {}
+    loop = asyncio.get_running_loop()
+    clock = loop.time
+
+    def capture_handler(sig: signal.Signals, callback: Callable[[], None]) -> None:
+        callbacks[sig] = callback
+
+    monkeypatch.setattr(loop, "add_signal_handler", capture_handler)
+    monkeypatch.setattr(loop, "remove_signal_handler", lambda sig: True)
+    task = asyncio.create_task(session.run())
+    try:
+        await asyncio.wait_for(service.started.wait(), 1.0)
+        monkeypatch.setattr(loop, "time", lambda: clock() + 121.0)
+        await asyncio.sleep(0.01)
+        assert not task.done()
+        assert not recorder.order
+        callbacks[stop_signal]()
+        await asyncio.wait_for(asyncio.shield(task), 1.0)
+    finally:
+        session._stop.set()
+        await asyncio.wait_for(task, 1.0)
+
+    assert service.cancelled.is_set()
+    assert recorder.order == ["bridge.settle", "playback.close", "watch.aclose", "disconnect"]
+    assert recorder.park is True
+
+
+async def test_session_cancels_services_and_parks_when_time_limit_elapses() -> None:
+    recorder = _Recorder()
+    service = _WaitingService()
+
+    await asyncio.wait_for(_session(recorder, asleep=False, services=[service]).run(0.01), 1.0)
+
+    assert service.started.is_set()
+    assert service.cancelled.is_set()
+    assert recorder.order == ["bridge.settle", "playback.close", "watch.aclose", "disconnect"]
+    assert recorder.park is True
+
+
+@pytest.mark.parametrize("seconds", [None, 30.0])
+async def test_a_closed_socket_ends_the_session_cleanly_and_still_parks(seconds: float | None) -> None:
     """The router raising _SessionClosed (see that exception's own docstring: a TaskGroup does
     not cancel siblings just because one task returns normally) must be swallowed by run()'s own
     except* -- not propagate out -- and _shutdown must still run."""
@@ -93,9 +164,52 @@ async def test_a_closed_socket_ends_the_session_cleanly_and_still_parks() -> Non
         frame=LiveFrame(camera=None),
     )
 
-    await session.run(30.0)  # must return normally, not raise, and not wait out the 30s timeout
+    await asyncio.wait_for(session.run(seconds), 1.0)
 
     assert recorder.order == ["bridge.settle", "playback.close", "watch.aclose", "disconnect"]
+
+
+@pytest.mark.parametrize("argv, expected", [([], None), (["--seconds", "360"], 360.0), (["--seconds", "0.5"], 0.5)])
+@pytest.mark.parametrize("legacy_source", ["unset", "environment", "dotenv"])
+def test_main_uses_only_cli_for_session_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, argv: list[str], expected: float | None, legacy_source: str
+) -> None:
+    monkeypatch.setenv("COMPANION_AGENT_SESSION_SECONDS", "120")
+    if legacy_source != "environment":
+        monkeypatch.delenv("COMPANION_AGENT_SESSION_SECONDS")
+    env_file = tmp_path / ".env"
+    env_file.write_text("COMPANION_AGENT_SESSION_SECONDS=120\n" if legacy_source == "dotenv" else "", encoding="utf-8")
+    monkeypatch.setattr(settings_module, "_DEFAULT_ENV_FILE", env_file)
+    captured: list[float | None] = []
+
+    async def fake_run(args: argparse.Namespace) -> int:
+        captured.append(args.seconds)
+        return 0
+
+    monkeypatch.setattr(app_module, "_run", fake_run)
+    monkeypatch.setattr(app_module, "configure_output", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["palmimo-realtime", *argv])
+
+    assert app_module.main() == 0
+    assert captured == [expected]
+
+
+@pytest.mark.parametrize("seconds", ["0", "-1", "nan", "inf", "-inf", "1e999", "invalid"])
+def test_main_rejects_invalid_limit_before_starting(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], seconds: str
+) -> None:
+    def unexpected_settings(**kwargs: object) -> None:
+        pytest.fail("invalid seconds reached settings or runtime setup")
+
+    monkeypatch.setattr(app_module, "load_settings", unexpected_settings)
+    monkeypatch.setattr(app_module, "configure_output", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["palmimo-realtime", f"--seconds={seconds}"])
+
+    with pytest.raises(SystemExit) as exc:
+        app_module.main()
+
+    assert exc.value.code == 2
+    assert "seconds must be a finite positive number" in capsys.readouterr().err
 
 
 async def test_shutdown_settles_tool_work_before_disconnecting() -> None:
