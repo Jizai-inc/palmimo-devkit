@@ -29,6 +29,7 @@ packages/
     robot.py                   -> Palmimo facade (public API + connection lifecycle)
     _leg_safety.py             -> LegSafety (leg telemetry sweep judged by the overload and rail guards)
     engine.py                  -> MotionEngine (pure gait/IK, no I/O)
+    hardware_error.py          -> Public descriptions of latched servo hardware error bits
     kinematics.py              -> Shared leg kinematics
     io/base.py                 -> ServoDriver ABC (I/O boundary)
     io/dynamixel.py            -> DynamixelDriver (concrete, over Dynamixel bus)
