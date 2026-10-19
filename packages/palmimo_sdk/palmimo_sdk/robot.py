@@ -3195,7 +3195,7 @@ class Palmimo:
             alpha, motors = tuner.iir_alpha, getattr(tuner, "_iir_motors", None)
             tuner.set_iir(False)
         try:
-            driver.write_positions(goal)
+            self._write_goal(driver, goal)
         finally:
             if iir_on:
                 tuner.set_iir(True, alpha, sorted(motors) if motors else None)
