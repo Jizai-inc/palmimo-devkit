@@ -8,13 +8,17 @@ import base64
 import html
 import re
 import subprocess
+import sys
 import unicodedata
 import urllib.parse
 import zlib
 from collections import Counter
 from functools import cache
+from itertools import pairwise
 from pathlib import Path
 from xml.etree import ElementTree
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -52,6 +56,7 @@ DOC_ROOT = REPO_ROOT / "doc"
 # render lands in holds no tracked page at all.
 SITE_PAGE_SOURCES = REPO_ROOT / "docs-site" / "src" / "site-pages"
 SITE_SPLASH = SITE_PAGE_SOURCES / "index.mdx"
+SITE_SPLASHES = frozenset({SITE_SPLASH, SITE_PAGE_SOURCES / "ja" / "index.mdx"})
 SITE_RENDER_DIR = REPO_ROOT / "docs-site" / "src" / "content" / "docs"
 SITE_PUBLIC_DIR = REPO_ROOT / "docs-site" / "public"
 # A path segment that is already the slug Astro would generate for it.
@@ -94,6 +99,7 @@ RASPBERRY_PI_IMAGER_URL = re.compile(rf"https://www\.raspberrypi\.com/{_STALE_SU
 # place so both contracts cover the same files.
 MARKDOWN_SCAN_ROOTS = (
     REPO_ROOT / "README.md",
+    REPO_ROOT / "README.ja.md",
     REPO_ROOT / "CLAUDE.md",
     REPO_ROOT / "CONTRIBUTING.md",
     REPO_ROOT / "doc",
@@ -185,12 +191,23 @@ def test_every_command_page_exists() -> None:
     assert missing == [], f"COMMAND_PAGES names pages this tree does not have: {missing}"
 
 
+def _english_page(relative: str) -> str:
+    # Mirrored as _translation_original in test_comment_language.py -- change both together.
+    if relative == "README.ja.md":
+        return "README.md"
+    if relative.startswith("doc/ja/") and relative.endswith(".md"):
+        return "doc/" + relative.removeprefix("doc/ja/")
+    if relative == "docs-site/src/site-pages/ja/index.mdx":
+        return "docs-site/src/site-pages/index.mdx"
+    return relative
+
+
 def test_commands_live_on_their_documented_page() -> None:
     candidates = _markdown_files(*MARKDOWN_SCAN_ROOTS)
     offenders = [
         relative
         for path in candidates
-        if (relative := path.relative_to(REPO_ROOT).as_posix()) not in COMMAND_PAGES
+        if _english_page(relative := path.relative_to(REPO_ROOT).as_posix()) not in COMMAND_PAGES
         and STRAY_COMMAND.search(path.read_text(encoding="utf-8"))
     ]
 
@@ -231,8 +248,8 @@ def _doc_source_for_site_route(page: Path, target: str) -> Path | None:
     if not target.startswith("/") or not page.is_relative_to(SITE_PAGE_SOURCES):
         return None
     route = target.strip("/")
-    if not route:
-        return SITE_SPLASH
+    if route in {"", "ja"}:
+        return SITE_PAGE_SOURCES / route / "index.mdx"
     # /images/ is rendered out of doc/images/, so the tree's copy of a diagram
     # is there and not in the generated public/images/.
     if route.startswith("images/"):
@@ -322,7 +339,8 @@ def test_the_site_hosts_no_hand_written_page_beside_the_splash() -> None:
     offenders = [
         path.relative_to(REPO_ROOT).as_posix()
         for path in _git_tracked_markdown_files()
-        if (path.is_relative_to(SITE_PAGE_SOURCES) and path != SITE_SPLASH) or path.is_relative_to(SITE_RENDER_DIR)
+        if (path.is_relative_to(SITE_PAGE_SOURCES) and path not in SITE_SPLASHES)
+        or path.is_relative_to(SITE_RENDER_DIR)
     ]
 
     assert offenders == [], (
@@ -600,3 +618,125 @@ def test_markdown_and_contracts_avoid_stale_software_paths() -> None:
         "Found a reference to the pre-migration subdirectory (or a `cd` into it) -- this "
         f"repository's root is already the published tree, so point at it directly: {offenders}"
     )
+
+
+@pytest.mark.parametrize(
+    ("relative", "commands_allowed"),
+    [
+        ("README.ja.md", True),
+        ("doc/ja/guides/installation.md", True),
+        ("doc/ja/reference/api-reference.md", False),
+        ("doc/ja/explanation/architecture.md", False),
+    ],
+)
+def test_translated_commands_follow_the_original_page_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str, commands_allowed: bool
+) -> None:
+    page = tmp_path / relative
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text("# Translation\n\n```bash\nuv sync\n```\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "_markdown_files", lambda *roots: [page])
+    if commands_allowed:
+        test_commands_live_on_their_documented_page()
+    else:
+        with pytest.raises(AssertionError):
+            test_commands_live_on_their_documented_page()
+
+
+JAPANESE_CHARACTER = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\u3000-\u303f\uff01-\uff60]")
+
+
+def _prose_paragraphs(text: str) -> list[list[tuple[int, str]]]:
+    paragraphs: list[list[tuple[int, str]]] = []
+    current: list[tuple[int, str]] = []
+    fence: str | None = None
+    frontmatter = text.startswith("---\n")
+    tag = False
+    quote = ""
+    for index, line in enumerate(text.splitlines()):
+        if frontmatter:
+            if index > 0 and line == "---":
+                frontmatter = False
+            continue
+        match = re.match(r"^(\s*(?:>\s*)*)(.*)$", line)
+        assert match is not None
+        prefix, body = match.groups()
+        stripped = body.strip()
+        marker = re.match(r"(`{3,}|~{3,})", stripped)
+        if marker:
+            if fence is None:
+                fence = marker[1]
+            elif stripped.startswith(fence):
+                fence = None
+            current = []
+            continue
+        if fence is not None:
+            continue
+        if tag:
+            tag = ">" not in stripped
+            current = []
+            continue
+        if re.match(r"^</?[A-Za-z]|^<!--", stripped):
+            tag = ">" not in stripped
+            if tag or stripped.endswith(">"):
+                current = []
+                continue
+        if not stripped or re.match(r"^(?:#{1,6}\s|\||import\s|[-*_]{3,}$)", stripped):
+            current = []
+            continue
+        item = re.match(r"^([-*+]\s+|\d+[.)]\s+)(.*)$", body)
+        next_quote = ">" * prefix.count(">")
+        if item:
+            body = item[2]
+            current = []
+        if next_quote != quote:
+            current = []
+        quote = next_quote
+        if not current:
+            paragraphs.append(current)
+        current.append((index, body))
+    return paragraphs
+
+
+def test_japanese_translation_paragraphs_do_not_wrap_before_japanese_characters() -> None:
+    paths = [
+        REPO_ROOT / "README.ja.md",
+        *sorted((DOC_ROOT / "ja").rglob("*.md")),
+        SITE_PAGE_SOURCES / "ja" / "index.mdx",
+    ]
+    offenders = []
+    for path in paths:
+        for paragraph in _prose_paragraphs(path.read_text(encoding="utf-8")):
+            for previous, following in pairwise(paragraph):
+                start = following[1].lstrip()
+                if start and JAPANESE_CHARACTER.fullmatch(start[0]):
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{previous[0] + 1}")
+    assert offenders == [], (
+        f"Join Japanese paragraph continuations without a space: {offenders[:10]} (total {len(offenders)})"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "line"),
+    [
+        ("# T\n\nこれは\n日本語です。\n", 3),
+        ('# T\n\nこれは\n日本語です。\n\n<a href="x">リンク</a>です\nこれは\n日本語です。\n', 7),
+        ("# T\n\nこれは [x](y)\n日本語です。\n", 3),
+        ("# T\n\nこれは `x`\n日本語です。\n", 3),
+        ("# T\n\nこれは **x**\n日本語です。\n", 3),
+    ],
+)
+def test_japanese_translation_wrapped_paragraph_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, line: int
+) -> None:
+    page = tmp_path / "README.ja.md"
+    page.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "DOC_ROOT", tmp_path / "doc")
+    monkeypatch.setattr(sys.modules[__name__], "SITE_PAGE_SOURCES", tmp_path / "site-pages")
+    splash = tmp_path / "site-pages/ja/index.mdx"
+    splash.parent.mkdir(parents=True)
+    splash.write_text("# Splash\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match=rf"README\.ja\.md:{line}\b"):
+        test_japanese_translation_paragraphs_do_not_wrap_before_japanese_characters()

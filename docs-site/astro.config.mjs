@@ -20,6 +20,11 @@ export default defineConfig({
 	integrations: [
 		starlight({
 			title: 'Palmimo DevKit',
+			defaultLocale: 'root',
+			locales: {
+				root: { label: 'English', lang: 'en' },
+				ja: { label: '日本語', lang: 'ja' },
+			},
 			description: 'Give AI agents a body. Developer docs for Palmimo DevKit, a six-legged tabletop AI robot you drive with your own code.',
 			// The lockup spells the product's name, so it stands in for the title
 			// rather than sitting beside a second copy of it. It lives in public/
@@ -63,9 +68,9 @@ export default defineConfig({
 			// whatever sync-doc.mjs rendered -- so a page added to doc/ reaches
 			// the sidebar without being named twice.
 			sidebar: [
-				{ label: 'Guides', items: [{ autogenerate: { directory: 'guides' } }] },
-				{ label: 'Reference', items: [{ autogenerate: { directory: 'reference' } }] },
-				{ label: 'Explanation', items: [{ autogenerate: { directory: 'explanation' } }] },
+				{ label: 'Guides', translations: { ja: 'ガイド' }, items: [{ autogenerate: { directory: 'guides' } }] },
+				{ label: 'Reference', translations: { ja: 'リファレンス' }, items: [{ autogenerate: { directory: 'reference' } }] },
+				{ label: 'Explanation', translations: { ja: '解説' }, items: [{ autogenerate: { directory: 'explanation' } }] },
 			],
 		}),
 		sitemap(),

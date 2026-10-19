@@ -2,6 +2,9 @@
 // this test ships with the docs site, not the palmimo_sdk package.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -179,17 +182,105 @@ test('descriptionFor leaves snake_case identifiers alone while still stripping r
   );
 });
 
-test('descriptionFor truncates a long paragraph at a word boundary', () => {
-  const body =
+test('long descriptions truncate at language-appropriate boundaries', async (t) => {
+  const english =
     'This paragraph is deliberately long enough to exceed the one hundred and sixty character ' +
     'limit so that the truncation logic has to cut it off cleanly at a word boundary instead of mid-word.';
-  const result = descriptionFor(body);
-  assert.ok(result.length <= 158);
-  assert.ok(result.endsWith('…'));
-  assert.ok(!result.slice(0, -1).endsWith(' '));
+  for (const [name, body, expected] of [
+    ['English', english, null],
+    ['Short Japanese opening', '概要。' + '長い説明'.repeat(60), '概要。' + '長い説明'.repeat(38) + '長い…'],
+    ['English with Japanese place name', ('This is a long English sentence about 東京 with complicated terminology and detailed explanations. ').repeat(4), ('This is a long English sentence about 東京 with complicated terminology and detailed explanations. This is a long English sentence about 東京 with complicated…')],
+    ['Japanese period', 'Palmimo はロボットです。'.repeat(14), 'Palmimo はロボットです。'.repeat(9) + '…'],
+    ['Japanese comma', 'Palmimo はロボットです、'.repeat(14), 'Palmimo はロボットです、'.repeat(9) + '…'],
+    ['Japanese exclamation', 'Palmimo はロボットです！'.repeat(14), 'Palmimo はロボットです！'.repeat(9) + '…'],
+    ['Japanese question', 'Palmimo はロボットです？'.repeat(14), 'Palmimo はロボットです？'.repeat(9) + '…'],
+  ]) {
+    await t.test(name, () => {
+      const result = descriptionFor(body);
+      assert.ok(result.length <= 158);
+      assert.ok(result.endsWith('…'));
+      assert.ok(!result.slice(0, -1).endsWith(' '));
+      if (expected !== null) assert.equal(result, expected);
+    });
+  }
 });
 
 test('lastCommitDate is omitted on a shallow checkout', () => {
   const thisFile = fileURLToPath(import.meta.url);
   assert.equal(lastCommitDate(thisFile, true), undefined);
+});
+
+test('Japanese pages link to Japanese pages and share images', async (t) => {
+  for (const [link, expected] of [
+    ['mcp-server.md#認証', '/ja/guides/mcp-server/#認証'],
+    ['../../images/motor_layout.drawio.svg', '/images/motor_layout.drawio.svg'],
+    ['../../../README.md#safety', BLOB_BASE + '/README.md#safety'],
+  ]) {
+    await t.test(link, () => {
+      assert.equal(rewriteLink('ja/guides/installation.md', link), expected);
+    });
+  }
+});
+
+
+function docFixture(t) {
+  const tmp = fileURLToPath(new URL('../tmp/', import.meta.url));
+  fs.mkdirSync(tmp, { recursive: true });
+  const root = fs.mkdtempSync(path.join(tmp, 'sync-doc-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const files = {
+    'doc/guides/installation.md': '# Installation\n',
+    'doc/guides/mcp-server.md': '# MCP server\n',
+    'doc/ja/guides/installation.md': '# Installation (Japanese)\n',
+    'doc/ja/guides/mcp-server.md': '# MCP server (Japanese)\n',
+    'docs-site/src/site-pages/index.mdx': 'Splash\n',
+    'docs-site/src/site-pages/ja/index.mdx': 'Japanese splash\n',
+    'packages/palmimo_sdk/palmimo_sdk/__init__.py': '',
+  };
+  for (const name of ['pyodide.mjs', 'pyodide.asm.mjs', 'pyodide.asm.wasm', 'python_stdlib.zip', 'pyodide-lock.json']) {
+    files['docs-site/node_modules/pyodide/' + name] = '';
+  }
+  for (const [name, body] of Object.entries(files)) {
+    const target = path.join(root, name);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, body);
+  }
+  const script = path.join(root, 'docs-site/sync-doc.mjs');
+  fs.copyFileSync(fileURLToPath(new URL('./sync-doc.mjs', import.meta.url)), script);
+  return { root, script };
+}
+
+test('Japanese source links select translations or fallback routes', async (t) => {
+  for (const translated of [true, false]) {
+    await t.test(translated ? 'translation exists' : 'untranslated fallback', (t) => {
+      const { root, script } = docFixture(t);
+      if (!translated) fs.unlinkSync(path.join(root, 'doc/ja/guides/mcp-server.md'));
+      fs.writeFileSync(path.join(root, 'docs-site/src/site-pages/ja/index.mdx'), '[MCP](/ja/guides/mcp-server/)\n');
+      fs.writeFileSync(path.join(root, 'doc/ja/guides/installation.md'), '# Installation\n\n[MCP](../../guides/mcp-server.md)\n');
+      const result = spawnSync(process.execPath, [script], { cwd: root, encoding: 'utf8' });
+      if (translated) {
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Japanese version/);
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        assert.ok(fs.readFileSync(path.join(root, 'docs-site/src/content/docs/ja/guides/installation.md'), 'utf8').includes('[MCP](/ja/guides/mcp-server/)'));
+      }
+    });
+  }
+});
+
+test('documentation and splash links cannot switch to the other locale', async (t) => {
+  for (const [file, body, reason] of [
+    ['doc/guides/installation.md', '# Installation\n\n[Japanese](../ja/guides/mcp-server.md)\n', /English version/],
+    ['docs-site/src/site-pages/ja/index.mdx', '[English](/guides/mcp-server/)\n', /different locale/],
+    ['docs-site/src/site-pages/index.mdx', '[Japanese](/ja/guides/mcp-server/)\n', /different locale/],
+  ]) {
+    await t.test(file, (t) => {
+      const { root, script } = docFixture(t);
+      fs.writeFileSync(path.join(root, file), body);
+      const result = spawnSync(process.execPath, [script], { cwd: root, encoding: 'utf8' });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, reason);
+    });
+  }
 });
