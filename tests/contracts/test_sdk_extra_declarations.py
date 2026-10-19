@@ -166,6 +166,7 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:ServoTelemetry": _NO_EXTRA,
     "palmimo_sdk:HardwareErrorRead": _NO_EXTRA,
     "palmimo_sdk:HARDWARE_ERROR_BITS": _NO_EXTRA,
+    "palmimo_sdk:default_incident_dir": _NO_EXTRA,
     "palmimo_sdk:describe_hardware_error": _NO_EXTRA,
     "palmimo_sdk:kinematics": _NO_EXTRA,
     "palmimo_sdk:shutdown": _NO_EXTRA,
