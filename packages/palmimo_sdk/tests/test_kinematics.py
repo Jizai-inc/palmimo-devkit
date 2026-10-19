@@ -12,6 +12,12 @@ import pytest
 from palmimo_sdk import kinematics
 
 
+# Largest yaw change allowed between adjacent 0.25° roll steps. Real sweeps
+# stay under ~80 ticks; a branch-cut flip is a near-full-turn (~4093 ticks),
+# so the guard keeps a wide margin on both sides.
+MAX_YAW_STEP = 150
+
+
 def test_neutral_displacement_returns_neutral_ticks() -> None:
     """With zero displacement, every leg returns neutral (2048)."""
     for leg_id in range(1, 7):
@@ -97,3 +103,45 @@ def test_engine_and_kinematics_agree() -> None:
         expected = kinematics.leg_servo_ticks(leg_id, 30, 0, 40)
         for key, val in expected.items():
             assert engine._leg[key] == val
+
+
+def test_wrap_deg_maps_to_half_open_interval() -> None:
+    """Angles normalize into (-180, 180] — +180 is kept, -180 folds up to it."""
+    assert kinematics.wrap_deg(180.0) == pytest.approx(180.0)
+    assert kinematics.wrap_deg(-180.0) == pytest.approx(180.0)
+    assert kinematics.wrap_deg(540.0) == pytest.approx(180.0)
+    assert kinematics.wrap_deg(-179.9) == pytest.approx(-179.9)
+    assert kinematics.wrap_deg(0.0) == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("leg_id", range(1, 7))
+def test_leg_yaw_stays_continuous_across_body_roll_sweep(leg_id: int) -> None:
+    """Rolling the body from -60° to +60° never makes a leg's yaw jump.
+
+    The rear legs (mount angle ±147.8°) sit next to atan2's ±180° branch cut, so
+    an unnormalized yaw flips by nearly a full turn (~4093 ticks) mid-sweep.
+    """
+    previous = None
+    for step in range(-240, 241):  # -60°..+60° in 0.25° increments
+        roll = step * 0.25
+        R = kinematics.rotation_matrix(math.radians(roll), 0.0, 0.0)
+        tick = kinematics.leg_servo_ticks_body(leg_id, (0.0, 0.0, 0.0), R)[f"leg_{leg_id}_yaw"]
+        if previous is not None:
+            assert abs(tick - previous) < MAX_YAW_STEP, f"leg {leg_id} yaw jumped at roll={roll}°"
+        previous = tick
+
+
+def test_leg_2_yaw_matches_the_legacy_wrap_offset() -> None:
+    """Leg 2's retired ``+360`` special case is subsumed by the general normalization.
+
+    Exercised with lateral displacements large enough to drive leg 2's atan2
+    negative, the only regime where that branch changed the result.
+    """
+    base = kinematics.base_foot_pos(2)
+    for dx, dy in ((-10.0, -200.0), (-40.0, -250.0), (-5.0, -170.0), (-60.0, -300.0)):
+        atan_deg = math.degrees(math.atan2(base[1] + dy, base[0] + dx))
+        # Strictly inside the branch: a case landing exactly on the ±180° cut
+        # would only agree with the legacy formula via ties-to-even rounding.
+        assert atan_deg < -1e-6, f"dx={dx}, dy={dy} does not reach the legacy branch"
+        legacy_yaw = (atan_deg + 360.0) - kinematics.LEG_MOUNT_ANGLE[2]
+        assert kinematics.leg_ik(2, dx, dy, 0.0)[0] == pytest.approx(legacy_yaw, abs=1e-9)

@@ -65,6 +65,13 @@ def leg_motors(legs: Iterable[int]) -> tuple[str, ...]:
 LEG_MOTORS: tuple[str, ...] = leg_motors(ALL_LEGS)
 
 
+def wrap_deg(deg: float) -> float:
+    """Normalize an angle to the (-180, 180] half-open range."""
+    # Not the conventional (deg + 180) % 360 - 180: that form yields
+    # [-180, 180) and flips which side of the cut ±180 maps to.
+    return 180.0 - (180.0 - deg) % 360.0
+
+
 def base_foot_pos(leg_id: int) -> list[float]:
     """Neutral foot position relative to the leg yaw axis, body-aligned.
 
@@ -98,6 +105,10 @@ def calc_2link_ik(x: float, z: float) -> tuple[float, float]:
     sqrt_xz2 = math.sqrt(xz2_sum) if xz2_sum > 0 else 0.001
 
     ac1 = max(-1.0, min(1.0, (l2_2 - l3_2 + xz2_sum) / (2 * L2 * sqrt_xz2)))
+    # This atan2 sits on the same ±180° branch cut as the leg-yaw path, but x
+    # (horizontal reach minus L1) stays positive across the leg's motion
+    # envelope, so theta1 never crosses the cut. The adjacent-frame sweeps in
+    # the engine tests would flag any new motion that drove x negative.
     theta1 = math.atan2(z, x) + math.acos(ac1)
 
     ac2 = max(-1.0, min(1.0, (l2_2 + l3_2 - xz2_sum) / (2 * L2 * L3)))
@@ -119,11 +130,9 @@ def leg_ik(leg_id: int, dx: float, dy: float, dz: float) -> tuple[float, float, 
     tz = base[2] + dz
 
     n3_atan_deg = math.degrees(math.atan2(ty, tx))
-    # The middle-left leg straddles the ±180° wrap; keep its yaw continuous.
-    if leg_id == 2 and n3_atan_deg < 0:
-        n3_atan_deg += 360
-
-    yaw_diff = n3_atan_deg - LEG_MOUNT_ANGLE[leg_id]
+    # atan2 flips sign across the ±180° branch cut, which the rear legs
+    # (mount angle ±147.8°) straddle; normalize so yaw stays continuous.
+    yaw_diff = wrap_deg(n3_atan_deg - LEG_MOUNT_ANGLE[leg_id])
     target_reach = math.sqrt(tx * tx + ty * ty) - L1
     pitch1_diff, pitch2_diff = calc_2link_ik(target_reach, tz)
     return yaw_diff, pitch1_diff, pitch2_diff
