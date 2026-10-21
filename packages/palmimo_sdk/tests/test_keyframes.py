@@ -624,6 +624,27 @@ def test_limp_exit_restores_the_joints_that_answered_and_leaves_only_the_silent_
     assert gains == [(0, tuple(joints)), (None, ("neck_yaw",))]
 
 
+def test_limp_writes_nothing_when_a_joint_outside_it_does_not_answer() -> None:
+    """The hold covers every joint, so a silent one would get the engine's stored pose as its goal."""
+    robot, driver = _pose_robot()
+    driver.silent = {"leg_1_yaw"}
+
+    with pytest.raises(RuntimeError, match="leg_1_yaw"), robot.limp(["leg_6_yaw"]):
+        pass
+
+    assert [kind for kind, _ in driver.log if kind in ("write", "gain")] == []
+
+
+def test_limp_exit_stays_limp_when_a_joint_outside_it_stops_answering() -> None:
+    robot, driver = _pose_robot()
+
+    with pytest.raises(RuntimeError, match="leg_1_yaw"), robot.limp(["leg_6_yaw"]):
+        driver.silent = {"leg_1_yaw"}
+        driver.log.clear()
+
+    assert [kind for kind, _ in driver.log if kind in ("write", "gain")] == []
+
+
 def test_limp_after_a_wave_releases_the_arm_filter_before_holding() -> None:
     """Holding through a still-enabled arm IIR would command a stale, filtered goal."""
     robot, driver = _pose_robot()

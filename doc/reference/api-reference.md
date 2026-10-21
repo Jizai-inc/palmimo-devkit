@@ -422,7 +422,10 @@ restored, so nothing springs back, and the engine is seeded with that pose so
 the next `play_keyframes()` starts from it. If a joint cannot be read, sits
 outside the safe tick range, or its profile cannot be switched off on exit, its
 gain stays at 0, `RuntimeError` is raised, and later gain writes (`wake()`,
-`set_p_gain()`, gestures) skip it until the next `connect()`.
+`set_p_gain()`, gestures) skip it until the next `connect()`. Entry and exit
+also read every other joint, because the hold commands all of them; if one that
+still has gain does not answer, nothing is written and `RuntimeError` names it.
+On entry the joints then never go limp; on exit they stay limp.
 
 > ⚠️ Use `limp()` only on a lifted robot, with every foot in the air. A limp
 > joint carries no load, and entry and exit re-command every other joint to

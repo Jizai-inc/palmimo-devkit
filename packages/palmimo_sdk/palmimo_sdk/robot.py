@@ -3236,14 +3236,27 @@ class Palmimo:
     def _hold_present(self, driver: ServoDriver, present: dict[str, int]) -> None:
         """Command the joints in *present* to those ticks, and every other joint to where it is.
 
-        The write covers all joints, so the others are read too: the engine's
-        stored pose can lag the hardware (a direct-write glide cut short), and
-        writing it would move them. Only a joint that does not answer keeps
-        the engine's value.
+        The write covers all joints (the driver fills an unnamed one with
+        neutral), so the others are read too: the engine's stored pose can lag
+        the hardware (a direct-write glide cut short), and writing it would
+        move them.
+
+        Raises:
+            RuntimeError: Another joint that has gain does not answer. Nothing
+                is written, because any goal for it would be a guess.
         """
         goal = self._engine.get_positions()
-        with contextlib.suppress(Exception):
-            goal.update(self._read_answered([name for name in JOINTS if name not in present]))
+        others = self._read_pose(driver, [name for name in JOINTS if name not in present])
+        if others is not None:
+            # A joint left at zero gain does not move to whatever goal it gets.
+            silent = [name for name in others.unread if name not in self._limp_left]
+            if silent:
+                raise RuntimeError(
+                    "Could not read the present position of: "
+                    + ", ".join(silent)
+                    + ". Nothing was written; check the bus and power, then retry."
+                )
+            goal.update(others.positions)
         goal.update(present)
         # A command-side IIR would blend the hold with its pre-limp state; write
         # it unfiltered, then resume the filter from the held pose.
@@ -3253,7 +3266,7 @@ class Palmimo:
             alpha, motors = tuner.iir_alpha, getattr(tuner, "_iir_motors", None)
             tuner.set_iir(False)
         try:
-            driver.write_positions(goal)
+            self._write_goal(driver, goal)
         finally:
             if iir_on:
                 tuner.set_iir(True, alpha, sorted(motors) if motors else None)
