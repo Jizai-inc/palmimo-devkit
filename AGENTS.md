@@ -27,8 +27,11 @@ in this repository.
 packages/
   palmimo_sdk/                    -> Core SDK — the single user-facing window
     robot.py                   -> Palmimo facade (public API + connection lifecycle)
+    _flight_recorder.py        -> Servo incident rings and JSONL persistence (no bus I/O)
+    _flight_ride.py            -> Recorder integration with guard sweeps and hardware-error polling
     _leg_safety.py             -> LegSafety (leg telemetry sweep judged by the overload and rail guards)
     engine.py                  -> MotionEngine (pure gait/IK, no I/O)
+    hardware_error.py          -> Public descriptions of latched servo hardware error bits
     kinematics.py              -> Shared leg kinematics
     io/base.py                 -> ServoDriver ABC (I/O boundary)
     io/dynamixel.py            -> DynamixelDriver (concrete, over Dynamixel bus)
@@ -74,7 +77,7 @@ Data flow: `robot.forward()` -> `robot.step()` -> MotionEngine computes -> retur
 - Each gait method only modifies servo positions — no side effects
 - New motions MUST transition smoothly from/to neutral stance
 - Tests: dry-run first (`--live` flag off), verify servo range 200-3900 (safe range)
-- When changing palmimo_sdk (robot.py, engine.py, kinematics.py), update the co-located docs under `doc/` ([api-reference.md](doc/reference/api-reference.md), [architecture.md](doc/explanation/architecture.md), [motion-development-guide.md](doc/guides/motion-development-guide.md)) in the same commit
+- When changing palmimo_sdk (robot.py, engine.py, kinematics.py), update the co-located docs under `doc/` ([api-reference.md](doc/reference/api-reference.md), [architecture.md](doc/explanation/architecture.md), [motion-development-guide.md](doc/guides/motion-development-guide.md)) and their corresponding Japanese translations in the same commit
 
 ## Comments
 
@@ -84,6 +87,8 @@ Data flow: `robot.forward()` -> `robot.step()` -> MotionEngine computes -> retur
   record), `#` comments in the config files (`pyproject.toml`, YAML, shell,
   `.gitignore`, `.env` samples), Markdown prose, and the labels in
   `doc/images/*.drawio.svg`.
+- Japanese translations follow the English originals. See
+  [CONTRIBUTING.md — Language](CONTRIBUTING.md#language) for translation rules.
 - **The tree carries no translation debt.** `JAPANESE_COMMENT_DEBT`
   ([tests/contracts/test_comment_language.py](tests/contracts/test_comment_language.py))
   is empty, and a test keeps it empty — translate a file rather than parking it
@@ -147,7 +152,7 @@ in `toolset.py` saying so).
   see
   [doc/reference/api-reference.md](doc/reference/api-reference.md#rail-undervoltage-guard).
 - **The guards only cover callers that go through `Palmimo.step()`** — `run()`
-  / `play()`, the MCP server, and the agent tool layer (`palmimo_sdk/agent/`).
+  / `play()` / `play_keyframes()`, the MCP server, and the agent tool layer (`palmimo_sdk/agent/`).
   **The LeRobot teleop integration (`integrations/lerobot/`) drives the engine
   directly and is NOT covered** — see that package's `palmimo.py` module
   docstring. The overload and rail guards likewise do not watch `wake()`, `sleep()` or
@@ -169,8 +174,9 @@ to different readers.
 | `doc/guides/` | How-to — the reader has a goal | Steps in order, commands included |
 | `doc/reference/` | Reference — the reader wants a fact | Complete and lookup-shaped. No procedures |
 | `doc/explanation/` | Explanation — the reader wants to understand | Why it is built this way. No procedures |
+| `doc/ja/` | Japanese translations of the English documentation | Mirror the English structure and update with the source; English is the source of truth |
 | `examples/**/README.md` | Runnable examples | **Self-contained** — an example a reader copies out has to still make sense, so these are not split across `doc/` |
-| `docs-site/` | The documentation site | A rendering of `doc/`, built by `sync-doc.mjs`. Write the page in `doc/`; the only page written here is the splash |
+| `docs-site/` | The documentation site | A rendering of `doc/`, built by `sync-doc.mjs`. Write the page in `doc/`; only one splash per locale is written here |
 | `integrations/**` | Separate uv workspaces | Own their install and run commands; this workspace cannot state them |
 | `scripts/README.md` | The user-facing CLI surface | Reference for every subcommand, with its usage |
 | `CONTRIBUTING.md` | The contributor loop | Checks, conventions, review |
@@ -189,9 +195,14 @@ to different readers.
 - **Diagrams are `.drawio.svg` assets in `doc/images/`**, referenced from the
   page. Do not draw box-style ASCII diagrams in Markdown; plain directory trees
   are fine.
+- **Edit a diagram in draw.io, never by hand.** A `.drawio.svg` carries the
+  draw.io model and the drawing exported from it; a contract test fails when
+  their labels disagree or the model is missing. Re-export with
+  `drawio -x -f svg -e --theme light --border 10 -o <file> <file>`.
 - **When you change the SDK core**, update the pages co-located with it in the
   same commit: `doc/reference/api-reference.md`,
-  `doc/explanation/architecture.md`, `doc/guides/motion-development-guide.md`.
+  `doc/explanation/architecture.md`, `doc/guides/motion-development-guide.md`,
+  and their corresponding pages under `doc/ja/`.
 
 | Purpose | Reference |
 |---------|-----------|

@@ -10,9 +10,12 @@ The head camera only delivers the full field of view at its native 4:3
 mode (``capture_width`` x ``capture_height``, MJPG). Any smaller / 16:9 request
 is served as a top-left corner crop — a narrow, off-center "looking down" view,
 not a scaled-down full frame. So :meth:`HeadCamera.read` always grabs the full
-sensor and downscales every frame to ``proc_width`` x ``proc_height`` in
-software. The head camera is mounted upside down, so frames are rotated by
-``rotation`` degrees (180 by default) to come out upright.
+sensor and downscales every frame in software to fit within ``proc_width`` x
+``proc_height``, keeping the frame's own aspect ratio: the head camera's
+2592x1944 becomes 1296x972, and a camera whose native mode is 16:9 1920x1080
+(configured via ``capture_width`` / ``capture_height``) becomes 1296x729. The
+head camera is mounted upside down, so frames are rotated by ``rotation``
+degrees (180 by default) to come out upright.
 
 Two independent lifecycles:
 
@@ -81,6 +84,11 @@ _CLOSE_LOCK_TIMEOUT_S = 3.0
 @dataclass(frozen=True)
 class HeadCameraConfig:
     """Capture settings for the head camera.
+
+    ``proc_width`` x ``proc_height`` is the bounding box :meth:`HeadCamera.read`
+    downscales into, before ``rotation`` is applied; the aspect ratio of the
+    captured frame is kept, so one side may come out shorter than the box
+    (never larger). Frames that already fit are passed through unscaled.
 
     ``rotation`` is degrees clockwise applied after downscaling; it generalizes
     the upside-down head mount (180). It is mount-dependent — verify the value
@@ -186,7 +194,7 @@ class HeadCamera:
         self._close_pending = False
 
     def read(self) -> tuple[bool, Any]:
-        """Grab one frame, downscaled to the processing size and rotated upright.
+        """Grab one frame, downscaled to fit the processing size and rotated upright.
 
         Returns ``(ok, frame)`` so callers can skip a failed grab without
         raising; ``frame`` is ``None`` when ``ok`` is False. A failure to open
@@ -214,13 +222,10 @@ class HeadCamera:
                     self._release_capture_locked()
         if not ok or frame is None:
             return False, None
-        # Skip resize if the backend ignored our request and already returned small.
-        if frame.shape[1] > self.config.proc_width:
-            frame = cv2.resize(
-                frame,
-                (self.config.proc_width, self.config.proc_height),
-                interpolation=cv2.INTER_AREA,
-            )
+        size = _fit_within(frame.shape[1], frame.shape[0], self.config.proc_width, self.config.proc_height)
+        # None when the backend ignored our request and already returned small.
+        if size is not None:
+            frame = cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
         if self.config.rotation:
             frame = cv2.rotate(frame, _rotate_code(cv2, self.config.rotation))
         return True, frame
@@ -375,6 +380,17 @@ class HeadCamera:
                     fn(frame, ts)
                 except Exception:
                     self._log.exception("frame consumer failed")
+
+
+def _fit_within(width: int, height: int, max_width: int, max_height: int) -> tuple[int, int] | None:
+    """Return the ``(width, height)`` that fits the box keeping the aspect ratio.
+
+    ``None`` when the frame already fits — :meth:`HeadCamera.read` never upscales.
+    """
+    if width <= max_width and height <= max_height:
+        return None
+    scale = min(max_width / width, max_height / height)
+    return max(1, round(width * scale)), max(1, round(height * scale))
 
 
 def _rotate_code(cv2: Any, rotation: int) -> int:

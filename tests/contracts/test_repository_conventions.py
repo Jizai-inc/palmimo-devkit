@@ -10,7 +10,7 @@ from pathlib import Path
 SOFTWARE_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = SOFTWARE_ROOT / "scripts"
 
-USER_SCRIPT_VERBS = {"diagnose"}
+USER_SCRIPT_VERBS = {"diagnose", "record"}
 
 
 def _python_scripts(directory: Path) -> list[Path]:

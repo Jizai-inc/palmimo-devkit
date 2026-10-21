@@ -6,7 +6,9 @@
 with your own Python — open-source SDK, MCP server, and agent examples by
 [Jizai Inc.](https://jizai.ai/)
 
-[Website](https://palmimo.dev/en) · [Documentation](https://docs.palmimo.dev) · [Get a DevKit](https://palmimo.dev/en) · [Japanese](https://palmimo.dev)
+[Website](https://palmimo.dev/en) · [Documentation](https://docs.palmimo.dev) · [Get a DevKit](https://palmimo.dev/en)
+
+**English** | [Japanese](README.ja.md)
 
 ![CI](https://github.com/Jizai-inc/palmimo-devkit/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
@@ -217,7 +219,7 @@ The same pages, rendered: [docs.palmimo.dev](https://docs.palmimo.dev).
 | [Python API reference](doc/reference/api-reference.md) | Every public class, method, and tuning knob |
 | [Motions and gait parameters](doc/reference/motions.md) | The 18 motions and what you can tune |
 | [App manifest](doc/reference/app-manifest.md) | `palmimo.toml` — the fields, params, and validation rules a host reads |
-| [User diagnostics](scripts/README.md) | `diagnose_servos.py` — every subcommand and its safety notes |
+| [User scripts](scripts/README.md) | `diagnose_servos.py` — every subcommand and its safety notes; `record_keyframes.py` — pose by hand, save keyframes |
 
 **Understanding how it works**
 

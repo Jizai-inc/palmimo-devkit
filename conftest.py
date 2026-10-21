@@ -22,3 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 def isolated_reservation_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Hardware fakes must never reserve a real device's shared lock path."""
     monkeypatch.setenv("PALMIMO_LOCK_DIR", str(tmp_path / "reservations"))
+
+
+@pytest.fixture(autouse=True)
+def isolate_incident_state_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))

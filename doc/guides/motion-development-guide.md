@@ -7,6 +7,7 @@ Step-by-step guide for adding new motions to Palmimo.
 - Read [explanation/architecture.md](../explanation/architecture.md) to understand the separation of concerns
 - See [motor_layout.drawio.svg](../images/motor_layout.drawio.svg) for the servo layout and leg numbering
 - See the README's [Safety](../../README.md#-safety) section for the servo range limits
+- Read the [servo incident capture scope](../reference/api-reference.md#capture-and-flushing) when interpreting motion diagnostics.
 - Complete the setup in [installation.md](installation.md)
 - Before running hardware diagnostics, handle [resource reservation errors](../reference/api-reference.md#resource-reservations); stop the reported holder before retrying.
 
@@ -143,6 +144,13 @@ temperature cannot be decided by pytest — check those by running the motion on
 real hardware with the robot lifted off the ground.
 
 ## Building Blocks Reference
+
+A one-off gesture made of fixed poses does not need a new motion: play it as a
+keyframe track instead (see
+[Keyframe Playback](controlling-motions.md#keyframe-playback)). Add a motion when
+the gesture needs to be computed — a gait, IK, a tunable knob, a tool the LLM can
+call.
+
 
 | Tool | Usage | Notes |
 |------|-------|-------|

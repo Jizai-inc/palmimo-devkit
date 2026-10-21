@@ -24,7 +24,7 @@ from typing import NamedTuple
 from dynamixel_sdk import COMM_SUCCESS, PacketHandler, PortHandler
 from tqdm import tqdm
 
-from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, PortDetectionError, find_servo_port
+from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, PortDetectionError, describe_hardware_error, find_servo_port
 from palmimo_sdk.reservation import ReservationError, reserve
 
 
@@ -180,15 +180,6 @@ READ_ATTEMPTS = 4
 # an error (`not_alert_error = error & ~ERRBIT_ALERT`).
 ERRBIT_ALERT = 0x80
 
-# Hardware_Error_Status bit meanings, for readable output.
-_HW_BITS = {
-    0: "InputVoltage",
-    2: "Overheating",
-    3: "MotorEncoder",
-    4: "ElectricalShock",
-    5: "Overload",
-}
-
 _DEAD_BUS_MESSAGE = (
     "\n  0/21 respond -> the bus is electrically dead (no power / loose "
     "connection).\n  Reboot CANNOT help here: fix the servo supply/wiring "
@@ -233,11 +224,6 @@ def _s32(value: int) -> int:
     comes back as ~4.29e9 unless it is decoded this way.
     """
     return value - 4294967296 if value >= 2147483648 else value
-
-
-def _err_names(flags: int) -> str:
-    names = [name for bit, name in _HW_BITS.items() if flags & (1 << bit)]
-    return ",".join(names) if names else "-"
 
 
 def _drive_mode_names(flags: int) -> str:
@@ -330,7 +316,7 @@ def _print_error_report(port_name: str, found: dict[int, tuple[int | None, int |
             print(f"  id{i:2d}: NO-RESPONSE")
             continue
         hw, tq, v = found[i]
-        hw_s = f"0x{hw:02x}({_err_names(hw)})" if hw is not None else "?"
+        hw_s = f"0x{hw:02x}({describe_hardware_error(hw)})" if hw is not None else "?"
         flag = "  <== HW ERROR" if (hw is not None and hw != 0) else ""
         if hw is not None and hw != 0:
             errored.append(i)
@@ -1349,7 +1335,7 @@ def _cmd_recover(args: argparse.Namespace) -> int:
                 still_errored.append(i)
                 continue
             hw, tq, _ = after[i]
-            hw_s = f"0x{hw:02x}({_err_names(hw)})" if hw is not None else "?"
+            hw_s = f"0x{hw:02x}({describe_hardware_error(hw)})" if hw is not None else "?"
             cleared = hw == 0
             if not cleared:
                 still_errored.append(i)

@@ -39,7 +39,8 @@ at least one:
   `await` while waiting for audio. This is exactly why Ctrl-C did not stop that
   agent at all (3/3 on hardware) — `asyncio.Runner`'s own SIGINT handler calls
   `task.cancel()`, which was recorded and never delivered.
-- A flag on the realtime session would sit unread until `--seconds` elapsed: its
+- A flag on the realtime session would sit unread indefinitely (or until an
+  explicit `--seconds` limit elapsed): its
   services block on the socket, the camera queue, or a mic read rather than
   polling one — past a service manager's stop timeout, which then SIGKILLs the
   process with the park unrun.

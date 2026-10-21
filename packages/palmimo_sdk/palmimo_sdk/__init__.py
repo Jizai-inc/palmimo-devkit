@@ -52,8 +52,10 @@ USB-to-servo bridge) without hard-coding platform-specific paths;
 """
 
 from . import kinematics, shutdown
+from ._flight_recorder import default_incident_dir
 from .audio import AudioProcessor, ClipDenoiser, Denoiser, EchoCanceller
 from .engine import Motion, MotionEngine
+from .hardware_error import HARDWARE_ERROR_BITS, describe_hardware_error
 from .io import (
     SAFE_MAX_TICK,
     SAFE_MIN_TICK,
@@ -63,6 +65,7 @@ from .io import (
     FaceDisplay,
     FaceDisplayConnectTimeoutError,
     FaceDisplayError,
+    HardwareErrorRead,
     HeadCamera,
     HeadCameraConfig,
     Microphone,
@@ -85,6 +88,7 @@ from .io import (
     palmimo_motor_ids,
     resolve_alsa_device,
 )
+from .keyframes import MAX_JOINT_SPEED_DEG_S, Keyframe, load_keyframes, save_keyframes
 from .name_match import PALMIMO_NAMES, NameMatch, NameMatcher, name_skeleton
 from .overload import (
     ARM_OVERLOAD_CURRENT,
@@ -108,7 +112,9 @@ from .thermal import NeckThermalState
 
 __all__ = [
     "ARM_OVERLOAD_CURRENT",
+    "HARDWARE_ERROR_BITS",
     "LEG_OVERLOAD_CURRENT",
+    "MAX_JOINT_SPEED_DEG_S",
     "OVERLOAD_CONSECUTIVE",
     "PALMIMO_NAMES",
     "RAIL_CONSECUTIVE",
@@ -125,8 +131,10 @@ __all__ = [
     "FaceDisplay",
     "FaceDisplayConnectTimeoutError",
     "FaceDisplayError",
+    "HardwareErrorRead",
     "HeadCamera",
     "HeadCameraConfig",
+    "Keyframe",
     "MicStream",
     "Microphone",
     "MicrophoneConfig",
@@ -158,11 +166,15 @@ __all__ = [
     "Subscription",
     "TtsEngine",
     "TtsVoice",
+    "default_incident_dir",
+    "describe_hardware_error",
     "find_face_port",
     "find_servo_port",
     "kinematics",
+    "load_keyframes",
     "name_skeleton",
     "palmimo_motor_ids",
     "resolve_alsa_device",
+    "save_keyframes",
     "shutdown",
 ]

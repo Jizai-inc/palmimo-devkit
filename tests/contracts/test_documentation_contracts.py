@@ -4,11 +4,21 @@ Every contract here is scoped to the tree this test suite ships with: scan
 roots stay inside it, so the suite runs unchanged wherever the tree lives.
 """
 
+import base64
+import html
 import re
 import subprocess
+import sys
 import unicodedata
+import urllib.parse
+import zlib
+from collections import Counter
 from functools import cache
+from itertools import pairwise
 from pathlib import Path
+from xml.etree import ElementTree
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -46,6 +56,7 @@ DOC_ROOT = REPO_ROOT / "doc"
 # render lands in holds no tracked page at all.
 SITE_PAGE_SOURCES = REPO_ROOT / "docs-site" / "src" / "site-pages"
 SITE_SPLASH = SITE_PAGE_SOURCES / "index.mdx"
+SITE_SPLASHES = frozenset({SITE_SPLASH, SITE_PAGE_SOURCES / "ja" / "index.mdx"})
 SITE_RENDER_DIR = REPO_ROOT / "docs-site" / "src" / "content" / "docs"
 SITE_PUBLIC_DIR = REPO_ROOT / "docs-site" / "public"
 # A path segment that is already the slug Astro would generate for it.
@@ -88,6 +99,7 @@ RASPBERRY_PI_IMAGER_URL = re.compile(rf"https://www\.raspberrypi\.com/{_STALE_SU
 # place so both contracts cover the same files.
 MARKDOWN_SCAN_ROOTS = (
     REPO_ROOT / "README.md",
+    REPO_ROOT / "README.ja.md",
     REPO_ROOT / "CLAUDE.md",
     REPO_ROOT / "CONTRIBUTING.md",
     REPO_ROOT / "doc",
@@ -179,12 +191,23 @@ def test_every_command_page_exists() -> None:
     assert missing == [], f"COMMAND_PAGES names pages this tree does not have: {missing}"
 
 
+def _english_page(relative: str) -> str:
+    # Mirrored as _translation_original in test_comment_language.py -- change both together.
+    if relative == "README.ja.md":
+        return "README.md"
+    if relative.startswith("doc/ja/") and relative.endswith(".md"):
+        return "doc/" + relative.removeprefix("doc/ja/")
+    if relative == "docs-site/src/site-pages/ja/index.mdx":
+        return "docs-site/src/site-pages/index.mdx"
+    return relative
+
+
 def test_commands_live_on_their_documented_page() -> None:
     candidates = _markdown_files(*MARKDOWN_SCAN_ROOTS)
     offenders = [
         relative
         for path in candidates
-        if (relative := path.relative_to(REPO_ROOT).as_posix()) not in COMMAND_PAGES
+        if _english_page(relative := path.relative_to(REPO_ROOT).as_posix()) not in COMMAND_PAGES
         and STRAY_COMMAND.search(path.read_text(encoding="utf-8"))
     ]
 
@@ -225,8 +248,8 @@ def _doc_source_for_site_route(page: Path, target: str) -> Path | None:
     if not target.startswith("/") or not page.is_relative_to(SITE_PAGE_SOURCES):
         return None
     route = target.strip("/")
-    if not route:
-        return SITE_SPLASH
+    if route in {"", "ja"}:
+        return SITE_PAGE_SOURCES / route / "index.mdx"
     # /images/ is rendered out of doc/images/, so the tree's copy of a diagram
     # is there and not in the generated public/images/.
     if route.startswith("images/"):
@@ -316,7 +339,8 @@ def test_the_site_hosts_no_hand_written_page_beside_the_splash() -> None:
     offenders = [
         path.relative_to(REPO_ROOT).as_posix()
         for path in _git_tracked_markdown_files()
-        if (path.is_relative_to(SITE_PAGE_SOURCES) and path != SITE_SPLASH) or path.is_relative_to(SITE_RENDER_DIR)
+        if (path.is_relative_to(SITE_PAGE_SOURCES) and path not in SITE_SPLASHES)
+        or path.is_relative_to(SITE_RENDER_DIR)
     ]
 
     assert offenders == [], (
@@ -405,6 +429,142 @@ def test_markdown_uses_assets_instead_of_box_style_ascii_diagrams() -> None:
     assert offenders == [], f"Replace ASCII diagrams with .drawio.svg assets: {offenders}"
 
 
+def _spaced_text(element: ElementTree.Element) -> str:
+    # Every element boundary separates words: lines of a label are separate <tspan>s or <div>s.
+    inner = " ".join(_spaced_text(child) + " " + (child.tail or "") for child in element)
+    return f" {element.text or ''} {inner} "
+
+
+def _drawing_words(element: ElementTree.Element) -> Counter[str]:
+    # What a browser shows: <text>, plus the HTML draw.io puts in <foreignObject> for rich labels.
+    tag = element.tag.rpartition("}")[2]
+    if tag in ("text", "foreignObject"):
+        return Counter(_spaced_text(element).split())
+    # A <switch> renders only its first child; the rest is draw.io's fallback and export warning.
+    children = list(element)[:1] if tag == "switch" else list(element)
+    words: Counter[str] = Counter()
+    for child in children:
+        words.update(_drawing_words(child))
+    return words
+
+
+def _pages(svg_root: ElementTree.Element) -> list[ElementTree.Element] | None:
+    # None when the SVG carries no draw.io model, i.e. draw.io cannot edit it.
+    content = svg_root.get("content")
+    return None if content is None else ElementTree.fromstring(content).findall("diagram")
+
+
+def _model_words(page: ElementTree.Element) -> Counter[str]:
+    # Counts labels of visible cells. Not handled: %placeholders%, collapsed groups, cells under a hidden layer.
+    model = page.find("mxGraphModel")
+    if model is None:
+        text = "".join((page.text or "").split())
+        if not text:
+            return Counter()
+        packed = base64.b64decode(text)
+        model = ElementTree.fromstring(urllib.parse.unquote(zlib.decompressobj(-15).decompress(packed).decode()))
+    # A cell with a link or properties keeps its label on a <UserObject>/<object> wrapper, its
+    # visibility on the inner <mxCell>.
+    wrappers = [cell for cell in model.iter() if cell.tag in ("UserObject", "object")]
+    wrapped = {id(inner) for wrapper in wrappers for inner in wrapper.findall("mxCell")}
+    words: Counter[str] = Counter()
+    for cell in model.iter():
+        if id(cell) in wrapped:
+            continue
+        if cell.tag == "mxCell":
+            label, hidden = cell.get("value"), cell.get("visible") == "0"
+        elif cell in wrappers:
+            inner = cell.find("mxCell")
+            label = cell.get("label")
+            hidden = cell.get("visible") == "0" or (inner is not None and inner.get("visible") == "0")
+        else:
+            continue
+        if label and not hidden:
+            words.update(html.unescape(re.sub(r"<[^>]+>", " ", label)).split())
+    return words
+
+
+def _layer_label_difference(svg_text: str) -> str | None:
+    # Compared as words, not lines: draw.io wraps a long label only when it draws it.
+    root = ElementTree.fromstring(svg_text)
+    pages = _pages(root)
+    if pages is None:
+        return "no embedded draw.io model"
+    if len(pages) > 1:
+        return f"the embedded draw.io model has {len(pages)} pages; keep one figure per .drawio.svg"
+    model = _model_words(pages[0]) if pages else Counter()
+    if not model:
+        return "the embedded draw.io model has no labels"
+    drawing = _drawing_words(root)
+    only_model = sorted((model - drawing).elements())
+    only_drawing = sorted((drawing - model).elements())
+    if not only_model and not only_drawing:
+        return None
+    return f"only in the model: {only_model}; only in the drawing: {only_drawing}"
+
+
+def test_drawio_svg_files_carry_a_model_whose_labels_match_the_drawing() -> None:
+    """A .drawio.svg is two copies of one diagram: the model draw.io edits and the drawing a browser shows.
+
+    Editing one by hand leaves the other stale, and the next save from draw.io
+    regenerates the drawing from the stale model. Labels are compared rather
+    than shapes because they are what a reader takes from the figure, and they
+    map one to one between the layers where shapes do not.
+    """
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "*.drawio.svg"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    diagrams = sorted(REPO_ROOT / name for name in result.stdout.split("\0") if name)
+    assert diagrams, "git enumerated no .drawio.svg under this repository — the scan root moved."
+
+    offenders = [
+        f"{path.relative_to(REPO_ROOT).as_posix()}: {difference}"
+        for path in diagrams
+        if (difference := _layer_label_difference(path.read_text(encoding="utf-8"))) is not None
+    ]
+
+    assert offenders == [], f"Edit these diagrams in draw.io so both layers come from one save: {offenders}"
+
+
+def test_drawio_svg_label_check_rejects_a_label_edited_in_one_layer_and_a_missing_model() -> None:
+    model = '<mxGraphModel><root><mxCell id="1" value="Servo"/></root></mxGraphModel>'
+    packer = zlib.compressobj(wbits=-15)
+    packed = base64.b64encode(packer.compress(urllib.parse.quote(model).encode()) + packer.flush()).decode()
+    content = html.escape(f"<mxfile><diagram>{packed}</diagram></mxfile>", quote=True)
+
+    def svg(label: str, attributes: str = f'content="{content}"') -> str:
+        return f'<svg xmlns="http://www.w3.org/2000/svg" {attributes}><text>{label}</text></svg>'
+
+    def plain(cells: str, pages: int = 1) -> str:
+        page = f"<diagram><mxGraphModel><root>{cells}</root></mxGraphModel></diagram>" * pages
+        return svg("Servo", f'content="{html.escape(f"<mxfile>{page}</mxfile>", quote=True)}"')
+
+    assert _layer_label_difference(svg("Servo")) is None
+    assert _layer_label_difference(svg("<tspan>Servo</tspan>")) is None
+    html_label = f'<svg xmlns="http://www.w3.org/2000/svg" content="{content}"><switch><foreignObject><div>Servo</div></foreignObject><text>Ser...</text></switch></svg>'
+    assert _layer_label_difference(html_label) is None
+    assert _layer_label_difference(svg("Motor")) is not None
+    assert _layer_label_difference(svg("Servo", attributes="")) == "no embedded draw.io model"
+
+    shown = '<mxCell id="1" value="Servo"/>'
+    assert _layer_label_difference(plain('<UserObject label="Servo" id="2"><mxCell/></UserObject>')) is None
+    wrapped_hidden = '<UserObject label="Gone" id="2"><mxCell visible="0"/></UserObject>'
+    assert _layer_label_difference(plain(shown + wrapped_hidden)) is None
+    assert _layer_label_difference(plain(shown + '<mxCell id="3" value="Gone" visible="0"/>')) is None
+    assert _layer_label_difference(plain(shown, pages=2)) == (
+        "the embedded draw.io model has 2 pages; keep one figure per .drawio.svg"
+    )
+    blank = html.escape("<mxfile><diagram>  </diagram></mxfile>", quote=True)
+    assert _layer_label_difference(svg("Servo", f'content="{blank}"')) == "the embedded draw.io model has no labels"
+    assert _layer_label_difference(svg("Servo", 'content="&lt;mxfile/&gt;"')) == (
+        "the embedded draw.io model has no labels"
+    )
+
+
 def test_every_user_script_is_documented_in_both_readmes() -> None:
     # A script that ships without a mention in either README is undiscoverable.
     # Direct children of scripts/ are the user-facing CLI surface (nested
@@ -458,3 +618,125 @@ def test_markdown_and_contracts_avoid_stale_software_paths() -> None:
         "Found a reference to the pre-migration subdirectory (or a `cd` into it) -- this "
         f"repository's root is already the published tree, so point at it directly: {offenders}"
     )
+
+
+@pytest.mark.parametrize(
+    ("relative", "commands_allowed"),
+    [
+        ("README.ja.md", True),
+        ("doc/ja/guides/installation.md", True),
+        ("doc/ja/reference/api-reference.md", False),
+        ("doc/ja/explanation/architecture.md", False),
+    ],
+)
+def test_translated_commands_follow_the_original_page_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str, commands_allowed: bool
+) -> None:
+    page = tmp_path / relative
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text("# Translation\n\n```bash\nuv sync\n```\n", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "_markdown_files", lambda *roots: [page])
+    if commands_allowed:
+        test_commands_live_on_their_documented_page()
+    else:
+        with pytest.raises(AssertionError):
+            test_commands_live_on_their_documented_page()
+
+
+JAPANESE_CHARACTER = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\u3000-\u303f\uff01-\uff60]")
+
+
+def _prose_paragraphs(text: str) -> list[list[tuple[int, str]]]:
+    paragraphs: list[list[tuple[int, str]]] = []
+    current: list[tuple[int, str]] = []
+    fence: str | None = None
+    frontmatter = text.startswith("---\n")
+    tag = False
+    quote = ""
+    for index, line in enumerate(text.splitlines()):
+        if frontmatter:
+            if index > 0 and line == "---":
+                frontmatter = False
+            continue
+        match = re.match(r"^(\s*(?:>\s*)*)(.*)$", line)
+        assert match is not None
+        prefix, body = match.groups()
+        stripped = body.strip()
+        marker = re.match(r"(`{3,}|~{3,})", stripped)
+        if marker:
+            if fence is None:
+                fence = marker[1]
+            elif stripped.startswith(fence):
+                fence = None
+            current = []
+            continue
+        if fence is not None:
+            continue
+        if tag:
+            tag = ">" not in stripped
+            current = []
+            continue
+        if re.match(r"^</?[A-Za-z]|^<!--", stripped):
+            tag = ">" not in stripped
+            if tag or stripped.endswith(">"):
+                current = []
+                continue
+        if not stripped or re.match(r"^(?:#{1,6}\s|\||import\s|[-*_]{3,}$)", stripped):
+            current = []
+            continue
+        item = re.match(r"^([-*+]\s+|\d+[.)]\s+)(.*)$", body)
+        next_quote = ">" * prefix.count(">")
+        if item:
+            body = item[2]
+            current = []
+        if next_quote != quote:
+            current = []
+        quote = next_quote
+        if not current:
+            paragraphs.append(current)
+        current.append((index, body))
+    return paragraphs
+
+
+def test_japanese_translation_paragraphs_do_not_wrap_before_japanese_characters() -> None:
+    paths = [
+        REPO_ROOT / "README.ja.md",
+        *sorted((DOC_ROOT / "ja").rglob("*.md")),
+        SITE_PAGE_SOURCES / "ja" / "index.mdx",
+    ]
+    offenders = []
+    for path in paths:
+        for paragraph in _prose_paragraphs(path.read_text(encoding="utf-8")):
+            for previous, following in pairwise(paragraph):
+                start = following[1].lstrip()
+                if start and JAPANESE_CHARACTER.fullmatch(start[0]):
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{previous[0] + 1}")
+    assert offenders == [], (
+        f"Join Japanese paragraph continuations without a space: {offenders[:10]} (total {len(offenders)})"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "line"),
+    [
+        ("# T\n\nこれは\n日本語です。\n", 3),
+        ('# T\n\nこれは\n日本語です。\n\n<a href="x">リンク</a>です\nこれは\n日本語です。\n', 7),
+        ("# T\n\nこれは [x](y)\n日本語です。\n", 3),
+        ("# T\n\nこれは `x`\n日本語です。\n", 3),
+        ("# T\n\nこれは **x**\n日本語です。\n", 3),
+    ],
+)
+def test_japanese_translation_wrapped_paragraph_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, line: int
+) -> None:
+    page = tmp_path / "README.ja.md"
+    page.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(sys.modules[__name__], "DOC_ROOT", tmp_path / "doc")
+    monkeypatch.setattr(sys.modules[__name__], "SITE_PAGE_SOURCES", tmp_path / "site-pages")
+    splash = tmp_path / "site-pages/ja/index.mdx"
+    splash.parent.mkdir(parents=True)
+    splash.write_text("# Splash\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match=rf"README\.ja\.md:{line}\b"):
+        test_japanese_translation_paragraphs_do_not_wrap_before_japanese_characters()

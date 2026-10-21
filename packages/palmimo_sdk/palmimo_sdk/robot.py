@@ -61,18 +61,24 @@ from __future__ import annotations
 import contextlib
 import logging
 import math
+import os
 import signal
 import threading
 import time
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from ._flight_recorder import ServoFlightRecorder, default_incident_dir
+from ._flight_ride import FlightRide
 from ._leg_safety import LegSafety
 from ._signals import signals_ignored
 from .engine import NECK_GESTURES, Motion, MotionEngine
 from .io import FaceDisplay, HeadCamera, Microphone, MicStream, ServoDriver, Speaker, SpeechHandle
-from .kinematics import leg_motors
+from .io.base import SAFE_MAX_TICK, SAFE_MIN_TICK
+from .keyframes import JOINTS, Keyframe, KeyframeTrack, tick_to_degrees
+from .kinematics import ALL_LEGS, leg_motors
 from .overload import (
     ARM_OVERLOAD_CURRENT,
     LEG_OVERLOAD_CURRENT,
@@ -177,6 +183,13 @@ _CANCEL_POLL_INTERVAL_S = 0.05
 # loaded) while the caller decides its next move. Matches the agent tool
 # layer's post-motion stance settle duration.
 _CANCEL_SETTLE_S = 0.5
+# Glide from a keyframe track's end pose back to neutral. Even the widest leg
+# swing the safe tick range allows stays under MAX_JOINT_SPEED_DEG_S over it.
+_KEYFRAME_RETURN_S = 1.0
+# Position_P_Gain limp() leaves a joint at: zero lets a hand move it freely.
+_LIMP_GAIN = 0
+# Sweeps a pose read retries before a joint that did not answer counts as lost.
+_POSE_READ_ATTEMPTS = 3
 
 
 @contextlib.contextmanager
@@ -362,6 +375,7 @@ class Palmimo:
             :meth:`drain_overload_trips`) in place of :func:`time.monotonic`. A
             public escape hatch for tests that need to advance the guards'
             poll/staleness timers deterministically without real sleeps.
+            Also supplies the flight recorder's monotonic clock.
         arm_overload_current (int, optional): Raw |current| at or above which a waving arm axis counts as
             strained (3 samples in a row stop the motion and soften the arm).
             ``None`` disables the arm channel. Must be positive.
@@ -372,6 +386,14 @@ class Palmimo:
             sweeps in a row below it drop the motion to IDLE without cutting
             torque (see :meth:`drain_rail_trips`). ``None`` disables the guard.
             Must be positive.
+        flight_recorder (bool): Capture servo hardware-error incidents. Defaults to ``True``.
+            Reuses guard telemetry in memory and writes only when an incident
+            window closes or is flushed. ``False`` disables capture and its
+            hardware-error polling without disabling the safety guards.
+        incident_dir (str or os.PathLike, optional): Incident destination. ``None`` resolves
+            :func:`default_incident_dir` on the first driver connection and
+            retains that path across reconnects. Directories are created only
+            when writing an incident; ignored when ``flight_recorder=False``.
         display (FaceDisplay, optional): Face display resource. When attached, the connection lifecycle bundles
             it alongside the driver — :meth:`connect` opens it and plays the
             boot-wake animation, :meth:`disconnect` returns it to IDLE and closes
@@ -471,7 +493,9 @@ class Palmimo:
         arm_overload_current: int | None = ARM_OVERLOAD_CURRENT,
         leg_overload_current: int | None = LEG_OVERLOAD_CURRENT,
         rail_undervoltage_v: float | None = RAIL_UNDERVOLTAGE_V,
-    ):
+        flight_recorder: bool = True,
+        incident_dir: str | os.PathLike[str] | None = None,
+    ) -> None:
         if fps <= 0:
             raise ValueError("fps must be positive.")
         self._leg_safety = LegSafety(
@@ -495,6 +519,15 @@ class Palmimo:
         self._on_step = on_step
         self._fps = fps
         self._auto_wake = auto_wake
+        self._flight_enabled = flight_recorder
+        self._incident_dir = Path(incident_dir) if flight_recorder and incident_dir is not None else None
+        self._flight_clock = thermal_clock or time.monotonic
+        self._recorder: ServoFlightRecorder | None = None
+        self._flight_ride: FlightRide | None = None
+        self._last_goal: dict[str, int] = {}
+        self._leg_guards_off = all(
+            value is None for value in (arm_overload_current, leg_overload_current, rail_undervoltage_v)
+        )
         # Which gesture's servo tuning is currently applied:
         #   ("wave", legs_tuple, arm_iir_alpha) | ("stretch",) | None.
         # One shared state so gesture-to-gesture switches release the old
@@ -506,6 +539,12 @@ class Palmimo:
         # Whether the neck-gesture Profile_Velocity tuning is currently applied
         # (same enter/exit tracking as the gesture tuning, for nod / head-shake).
         self._neck_gesture_tuned: bool = False
+        # Legs the running keyframe track raises as arms, judged by the arm
+        # overload threshold (see play_keyframes).
+        self._keyframe_arm_legs: tuple[int, ...] = ()
+        # Joints a failed limp() exit left at zero gain against a goal that is
+        # no longer where they are; the neck park must not stiffen them.
+        self._limp_left: frozenset[str] = frozenset()
         # Cross-thread cancel signal for run() (see cancel() / MotionCancelled).
         # A monotonically increasing counter guarded by a small lock, NOT a
         # threading.Event that gets clear()ed: each paced public method
@@ -721,6 +760,21 @@ class Palmimo:
                 # give the thermal guard a fresh chance to read it.
                 self._thermal.reset()
                 self._leg_safety.reset()
+                self._limp_left = frozenset()
+                self._last_goal = {}
+                if self._flight_enabled and self._driver is not None:
+                    if self._recorder is None:
+                        if self._incident_dir is None:
+                            self._incident_dir = default_incident_dir()
+                        self._recorder = ServoFlightRecorder(self._incident_dir, clock=self._flight_clock)
+                        self._flight_ride = FlightRide(
+                            self._recorder, clock=self._flight_clock, logger=logger, frame_s=self.dt
+                        )
+                    if self._leg_guards_off:
+                        logger.info("Flight recorder: leg guards are off, so incident dumps carry no leg telemetry")
+                    assert self._flight_ride is not None
+                    self._flush_recorder()
+                    self._flight_ride.on_connect(self._driver)
                 # Inside the try block so a wake failure rolls back every resource
                 # already opened (same as any other connect failure) instead of
                 # leaving the robot half-connected.
@@ -850,8 +904,11 @@ class Palmimo:
                 if self._display is not None:
                     _step(self._display.idle)
                     _step(self._display.disconnect)
-                if self._driver is not None:
-                    self._driver.disconnect()
+                try:
+                    if self._driver is not None:
+                        self._driver.disconnect()
+                finally:
+                    _step(self._flush_recorder)
                 # Per-axis tuning tracking is connection-scoped (see connect()).
                 self._gesture_tuned = None
                 self._neck_gesture_tuned = False
@@ -959,7 +1016,7 @@ class Palmimo:
         except NotImplementedError:
             current = {}  # driver can't sense position — fall back to a single neutral command
         if not current:
-            driver.write_positions(targets)
+            self._write_goal(driver, targets)
             self._seed_engine_pose(targets)
             return
         has_gain = hasattr(driver, "set_position_p_gain")
@@ -972,21 +1029,21 @@ class Palmimo:
         neck = [n for n in current if n in _NECK_MOTORS]
         if has_gain and neck:
             with contextlib.suppress(Exception):
-                driver.set_position_p_gain(_WAKE_FULL_GAIN, motors=neck)
+                self._write_gain(driver, _WAKE_FULL_GAIN, motors=neck)
         steps = max(1, round(duration * self._fps))
         for s in range(1, steps + 1):
             f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
             if has_gain:
                 try:
-                    driver.set_position_p_gain(int(start_gain + (_WAKE_FULL_GAIN - start_gain) * f), motors=legs)
+                    self._write_gain(driver, int(start_gain + (_WAKE_FULL_GAIN - start_gain) * f), motors=legs)
                 except Exception:
                     has_gain = False  # driver can't ramp gain — keep gliding
             frame = {n: round(p + (targets.get(n, MotionEngine.NEUTRAL) - p) * f) for n, p in current.items()}
-            driver.write_positions(frame)
+            self._write_goal(driver, frame)
             time.sleep(1.0 / self._fps)
         if has_gain:
             with contextlib.suppress(Exception):
-                driver.set_position_p_gain(None)  # land exactly on the default gain
+                self._write_gain(driver, None)  # land exactly on the default gain
         self._seed_engine_pose(targets)
 
     def _sleep_thermal_locked(self, driver: ServoDriver) -> None:
@@ -1084,10 +1141,10 @@ class Palmimo:
                 f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
                 if has_gain:
                     try:
-                        driver.set_position_p_gain(int(start_gain + (end_gain - start_gain) * f), motors=firm)
+                        self._write_gain(driver, int(start_gain + (end_gain - start_gain) * f), motors=firm)
                         if soft_arm:
-                            driver.set_position_p_gain(
-                                int(SOFT_RETURN_GAIN + (end_gain - SOFT_RETURN_GAIN) * f), motors=soft_arm
+                            self._write_gain(
+                                driver, int(SOFT_RETURN_GAIN + (end_gain - SOFT_RETURN_GAIN) * f), motors=soft_arm
                             )
                     except Exception:
                         has_gain = False  # driver can't ramp gain — keep gliding
@@ -1097,7 +1154,7 @@ class Palmimo:
                     n: (round(p + (targets.get(n, MotionEngine.NEUTRAL) - p) * f) if n in legs else p)
                     for n, p in current.items()
                 }
-                driver.write_positions(frame)
+                self._write_goal(driver, frame)
                 # Only after the write returns: sync_write raises with nothing
                 # applied, so a frame that failed is not a pose the robot reached.
                 landed = frame
@@ -1156,7 +1213,7 @@ class Palmimo:
         # Carries *base* -- the last frame the glide landed -- alongside the
         # neck, because write_positions backfills an unnamed motor with NEUTRAL:
         # writing the neck alone would re-command every leg.
-        driver.write_positions({**base, **neck})
+        self._write_goal(driver, {**base, **neck})
         self._engine.set_neck_positions(neck)
 
     def _timed_return_to_neutral(self, duration: float, cancel_snapshot: int | None = None) -> None:
@@ -1174,7 +1231,7 @@ class Palmimo:
             # No position feedback (read failed) — can't interpolate a glide, so
             # just command the neutral pose once rather than risk a
             # profile-velocity snap.
-            self._driver.write_positions(targets)
+            self._write_goal(self._driver, targets)
             self._seed_engine_pose(targets)
             return
         # Software glide: interpolate every joint from its current tick to its
@@ -1188,7 +1245,7 @@ class Palmimo:
                 self._check_cancelled(cancel_snapshot)
             f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
             frame = {n: round(p + (targets.get(n, MotionEngine.NEUTRAL) - p) * f) for n, p in current.items()}
-            self._driver.write_positions(frame)
+            self._write_goal(self._driver, frame)
             time.sleep(1.0 / self._fps)
         # Seed the engine from the real pose so the first motion interpolates
         # from it instead of stale internal state.
@@ -1227,11 +1284,23 @@ class Palmimo:
         driver = self._driver
         if driver is None or not driver.is_connected or not hasattr(driver, "set_position_p_gain"):
             return
-        neck = list(_NECK_MOTORS)
+        # A neck axis limp() left at zero gain holds a stale goal, and the ramp's
+        # first step would snap it there. Re-read it now: if it answers, hold it
+        # where it is and park it; if not, it is skipped (it is already limp).
         with _deferred_interrupts():
+            stale = [motor for motor in _NECK_MOTORS if motor in self._limp_left]
+            if stale:
+                with contextlib.suppress(Exception):
+                    found = self._holdable(self._read_answered(stale))
+                    if found:
+                        self._restore_from_limp(driver, found, restore_gain=False)
+                        self._limp_left -= found.keys()
+            neck = [motor for motor in _NECK_MOTORS if motor not in self._limp_left]
+            if not neck:
+                return
             for gain in _NECK_RELEASE_GAINS:
                 try:
-                    driver.set_position_p_gain(gain, motors=neck)
+                    self._write_gain(driver, gain, motors=neck)
                     time.sleep(_NECK_RELEASE_STEP_S)
                 except (NotImplementedError, TypeError):
                     return  # driver can't set per-motor gains (no capability or no motors=) — skip
@@ -1886,7 +1955,7 @@ class Palmimo:
         support it. Raising the gain tightens tracking of the quick wave strokes.
         """
         if self._driver is not None and hasattr(self._driver, "set_position_p_gain"):
-            self._driver.set_position_p_gain(value)
+            self._write_gain(self._driver, value)
 
     def set_iir(self, enabled: bool, alpha: float | None = None) -> None:
         """Enable/disable the command-side IIR low-pass (smooths goal stream).
@@ -2158,16 +2227,55 @@ class Palmimo:
         overloaded = self._leg_safety.poll(connected_driver, motion, self._wave_arm_legs(motion))
         if overloaded:
             self._engine.motion = Motion.IDLE
+        leg_sweep = self._leg_safety.take_sweep()
+        neck_sweep = self._thermal.take_sweep()
+        due = False
+        if self._flight_ride is not None:
+            due = self._flight_ride.poll(connected_driver, self._engine.motion, leg_sweep, neck_sweep, self._last_goal)
         pos = self._engine.step()
         self._log_thermal_lockout()
         if connected_driver is not None:
             self._sync_gesture_tuning()
             self._sync_neck_gesture_tuning()
             if not overloaded:
-                connected_driver.write_positions(pos)
+                self._write_goal(connected_driver, pos)
+        if due and not self._disconnecting:
+            self._flush_recorder()
         if self._on_step is not None:
             self._on_step(pos)
         return pos
+
+    def _write_goal(self, driver: ServoDriver, positions: dict[str, int]) -> None:
+        driver.write_positions(positions)
+        if self._flight_enabled:
+            self._last_goal = {
+                name: max(SAFE_MIN_TICK, min(SAFE_MAX_TICK, positions.get(name, MotionEngine.NEUTRAL)))
+                for name in self._engine.get_positions()
+            }
+
+    @property
+    def incident_dir(self) -> Path | None:
+        """Incident destination; the default is resolved on driver connection."""
+        return self._incident_dir
+
+    @property
+    def last_incident_path(self) -> Path | None:
+        """Last completed incident, retained across disconnect and reconnect."""
+        return None if self._recorder is None else self._recorder.last_incident_path
+
+    def flush_incident(self) -> Path | None:
+        """Write an open incident now, returning its path only when written."""
+        return self._flush_recorder()
+
+    def _flush_recorder(self) -> Path | None:
+        if self._recorder is None:
+            return None
+        try:
+            with _deferred_interrupts():
+                return self._recorder.flush()
+        except Exception as exc:
+            logger.warning("Could not flush servo incident: %s", exc)
+            return None
 
     def _take_soft_return(self) -> list[str]:
         """End the soft return without restoring the arm's gain, for a caller that ramps it itself.
@@ -2253,6 +2361,8 @@ class Palmimo:
             return (self._engine.wave_leg,)
         if motion in (Motion.WAVE_BOTH, Motion.CLAP):
             return self._engine._WAVE_BOTH_LEGS
+        if motion == Motion.KEYFRAMES:
+            return self._keyframe_arm_legs
         return ()
 
     def _sync_gesture_tuning(self) -> None:
@@ -2294,7 +2404,9 @@ class Palmimo:
         # wave_left -> wave_right or wave -> clap switch re-applies. STRETCH
         # only tweaks leg Profile_Velocity, so it tunes even on a PV-only
         # driver.
-        if arm_legs and has_pv and has_gain and has_iir:
+        # A keyframe track's arm legs share only the arm overload channel: the
+        # wave's crisp profile and IIR would make them lag the validated curve.
+        if arm_legs and motion != Motion.KEYFRAMES and has_pv and has_gain and has_iir:
             # CLAP gets lighter smoothing: the wave's IIR would low-pass the
             # fast open/close away (see _CLAP_ARM_IIR).
             want: tuple | None = ("wave", arm_legs, _CLAP_ARM_IIR if motion == Motion.CLAP else _WAVE_ARM_IIR)
@@ -2316,12 +2428,12 @@ class Palmimo:
             with contextlib.suppress(Exception):
                 kind = self._gesture_tuned[0]
                 if kind == "soft_return":
-                    tuner.set_position_p_gain(None, motors=list(self._gesture_tuned[1]))
+                    self._write_gain(tuner, None, motors=list(self._gesture_tuned[1]))
                 else:
                     if kind == "wave":
                         if has_iir:
                             tuner.set_iir(False)
-                        tuner.set_position_p_gain(None)  # restore captured defaults
+                        self._write_gain(tuner, None)  # restore captured defaults
                     tuner.set_profile_velocity_units(default_pv)
 
         # Apply the new gesture's tuning.
@@ -2331,12 +2443,12 @@ class Palmimo:
             with contextlib.suppress(Exception):
                 tuner.set_profile_velocity_units(default_pv)  # legs smooth
                 tuner.set_profile_velocity_units(_WAVE_ARM_PV, motors=arm)  # arm crisp
-                tuner.set_position_p_gain(_WAVE_GAIN)
+                self._write_gain(tuner, _WAVE_GAIN)
                 if has_iir:
                     tuner.set_iir(True, arm_iir, motors=arm)
         elif want is not None and want[0] == "soft_return":
             try:
-                tuner.set_position_p_gain(SOFT_RETURN_GAIN, motors=list(want[1]))
+                self._write_gain(tuner, SOFT_RETURN_GAIN, motors=list(want[1]))
             except Exception as exc:
                 self._cut_arm_torque(driver, want[1], f"setting Position_P_Gain failed ({exc})")
                 want = None
@@ -2599,13 +2711,13 @@ class Palmimo:
             present = driver.read_positions()
             if present:
                 leg_present = {n: p for n, p in present.items() if n in legs}
-                driver.set_position_p_gain(_DANCE_HOLD_GAIN, legs)
-                driver.write_positions(leg_present)  # neck backfilled to NEUTRAL (head up)
+                self._write_gain(driver, _DANCE_HOLD_GAIN, legs)
+                self._write_goal(driver, leg_present)  # neck backfilled to NEUTRAL (head up)
         try:
             self._sleep_cancellable(seconds, cancel_snapshot)
         finally:
             with contextlib.suppress(Exception):
-                driver.set_position_p_gain(None)  # restore default gain before the glide home
+                self._write_gain(driver, None)  # restore default gain before the glide home
 
     @property
     def positions(self) -> dict[str, int]:
@@ -2679,8 +2791,12 @@ class Palmimo:
         # lands on the facade's rate instead of a stale value captured from
         # another, possibly abandoned, generator.
         try:
-            for entry in routine:
-                cue = self._coerce_step(entry)
+            # Check every cue before the first frame, so a bad one later in the
+            # routine cannot fail after the robot has started moving.
+            cues = [self._coerce_step(entry) for entry in routine]
+            if any(cue.motion == Motion.KEYFRAMES for cue in cues):
+                raise ValueError("A routine cannot play Motion.KEYFRAMES: use play_keyframes().")
+            for cue in cues:
                 steps = self._duration_to_steps(cue.seconds, fps)
                 if cue.wave_leg is not None:
                     self._engine.wave_leg = cue.wave_leg
@@ -2727,6 +2843,364 @@ class Palmimo:
         snapshot = self._take_cancel_snapshot()
         fps = fps if fps is not None else self._fps
         self._pace(self.play(routine, fps=fps), fps, snapshot, callback=callback)
+
+    def iter_keyframes(
+        self,
+        keyframes: Sequence[Keyframe],
+        *,
+        arm_legs: Iterable[int] = (),
+        speed: float = 1.0,
+    ) -> Iterator[dict[str, int]]:
+        """Play a keyframe track, yielding positions for each frame.
+
+        Unpaced counterpart of :meth:`play_keyframes` (as :meth:`play` is to
+        :meth:`play_realtime`): a dry run with no driver; with a driver it moves
+        the robot as fast as frames are pulled. Validates on the call; arguments
+        as for :meth:`play_keyframes`. Closing the iterator early stops the
+        motion, so an abandoned track does not resume on the next :meth:`step`.
+
+        Returns:
+            Iterator[dict[str, int]]: Servo positions for each frame.
+
+        Raises:
+            ValueError: The track or *arm_legs* is invalid; nothing has moved.
+        """
+        if not (math.isfinite(speed) and speed > 0):
+            raise ValueError(f"speed must be a positive number, got {speed!r}.")
+        legs = self._keyframe_arm_legs_from(arm_legs)
+        try:
+            track = self._keyframe_track(self._scaled(keyframes, speed))
+        except ValueError as exc:
+            fastest = self._fastest_speed(keyframes, below=speed) if speed != 1.0 else None
+            if fastest is None:
+                raise
+            raise ValueError(f"Too fast at x{speed:g}: this track plays at up to x{fastest:.2f}. ({exc})") from None
+        return self._keyframe_frames(track, legs)
+
+    @staticmethod
+    def _scaled(keyframes: Sequence[Keyframe], speed: float) -> list[Keyframe]:
+        return [Keyframe(key.time / speed, key.joints) for key in keyframes]
+
+    def _fastest_speed(self, keyframes: Sequence[Keyframe], below: float) -> float | None:
+        """Highest speed under *below*, to 0.01, at which the track validates; ``None`` if speed is not the problem."""
+
+        def fits(speed: float) -> bool:
+            try:
+                self._keyframe_track(self._scaled(keyframes, speed))
+            except ValueError:
+                return False
+            return True
+
+        low, high = 0.01, below
+        if not fits(low):
+            return None  # fails however slowly it plays: a range error, not speed
+        while high - low > 0.005:
+            mid = (low + high) / 2
+            low, high = (mid, high) if fits(mid) else (low, mid)
+        return math.floor(low * 100) / 100
+
+    def play_keyframes(
+        self,
+        keyframes: Sequence[Keyframe],
+        *,
+        arm_legs: Iterable[int] = (),
+        speed: float = 1.0,
+        callback: Callable[[dict[str, int]], None] | None = None,
+    ) -> dict[str, int]:
+        """Play a keyframe track in real time (blocking), starting from the current pose.
+
+        After the last keyframe the robot glides back to the neutral pose over
+        ``1.0`` s, so the next motion starts from neutral.
+
+        The whole track is validated before anything moves (see
+        :class:`~palmimo_sdk.keyframes.KeyframeTrack`). Frames go through
+        :meth:`step`, so the guards stay active; a guard trip ends playback
+        early and returns normally -- check :meth:`drain_overload_trips` /
+        :meth:`drain_rail_trips`. Cancellable like :meth:`run`.
+
+        Args:
+            keyframes (Sequence[Keyframe]): The poses to reach, in time order.
+            arm_legs (Iterable[int]): Legs (1-6) lifted as arms; judged by the
+                arm overload threshold (no wave servo tuning).
+            speed (float): Playback rate (``2.0`` = twice as fast); validated
+                at that rate; the glide home keeps its own pace.
+            callback (Callable, optional): Extra per-frame callback, as for
+                :meth:`play_realtime`.
+
+        Returns:
+            dict[str, int]: The final servo positions.
+
+        Raises:
+            ValueError: The track, *arm_legs* or *speed* is invalid; nothing has moved.
+            MotionCancelled: If :meth:`cancel` is called during playback.
+        """
+        snapshot = self._take_cancel_snapshot()
+        frames = self.iter_keyframes(keyframes, arm_legs=arm_legs, speed=speed)
+        try:
+            self._pace(frames, self._fps, snapshot, callback=callback)
+        except MotionCancelled:
+            self.stop()
+            with contextlib.suppress(MotionCancelled):
+                self.run(seconds=_CANCEL_SETTLE_S)
+            raise
+        finally:
+            frames.close()  # type: ignore[attr-defined]
+        return self.positions
+
+    @staticmethod
+    def _keyframe_arm_legs_from(arm_legs: Iterable[int]) -> tuple[int, ...]:
+        """Validate *arm_legs* and return them as a sorted tuple of leg IDs."""
+        legs = tuple(sorted(set(arm_legs)))
+        unknown = [leg for leg in legs if leg not in ALL_LEGS]
+        if unknown:
+            raise ValueError(f"arm_legs must be leg IDs 1-6; got {unknown}.")
+        return legs
+
+    def _keyframe_track(self, keyframes: Sequence[Keyframe]) -> KeyframeTrack:
+        """Build the track from the current pose, with the glide home appended."""
+        start = self._engine.get_positions()
+        center = self._engine.neck_pitch_center()
+        track = KeyframeTrack(start, keyframes, neck_pitch_center=center)
+        neutral = {joint: tick_to_degrees(tick) for joint, tick in self._neutral_targets().items()}
+        return KeyframeTrack(
+            start, [*keyframes, Keyframe(track.duration + _KEYFRAME_RETURN_S, neutral)], neck_pitch_center=center
+        )
+
+    def _keyframe_frames(
+        self, track: KeyframeTrack, arm_legs: tuple[int, ...]
+    ) -> Generator[dict[str, int], None, None]:
+        """Step through *track*, stopping early if anything takes the engine off it.
+
+        When a guard trip (or :meth:`stop`) drops the motion to IDLE mid-track,
+        the IDLE glide keeps stepping for ``_CANCEL_SETTLE_S``, as :meth:`run`
+        would, so the legs are not left frozen in the pose that strained them.
+        """
+        self._keyframe_arm_legs = arm_legs
+        self._engine.load_keyframes(track)
+        try:
+            for _ in range(self._duration_to_steps(track.duration, self._fps) + 1):
+                if self._engine.motion != Motion.KEYFRAMES:
+                    break
+                # The track was validated at this rate; play() can leave dt elsewhere.
+                self._engine.dt = 1.0 / self._fps
+                yield self.step()
+            # Checked after the loop, so a trip on the track's last frame settles too.
+            if self._engine.motion == Motion.IDLE:
+                for _ in range(self._duration_to_steps(_CANCEL_SETTLE_S, self._fps)):
+                    self._engine.dt = 1.0 / self._fps
+                    yield self.step()
+        finally:
+            # However playback ends -- finished, tripped, closed early, or an
+            # exception -- the track must not stay selected for the next step().
+            if self._engine.motion == Motion.KEYFRAMES:
+                self.stop()
+            self._keyframe_arm_legs = ()
+
+    def read_pose(self, joints: Iterable[str] | None = None) -> dict[str, float]:
+        """Read where the joints are now, in :class:`Keyframe` units.
+
+        Args:
+            joints (Iterable[str], optional): Servo names to read; ``None`` reads
+                all 21.
+
+        Returns:
+            dict[str, float]: Joint -> degrees from the servo neutral, ready to
+                pass as a keyframe's ``joints``.
+
+        Raises:
+            ValueError: A joint name is unknown.
+            RuntimeError: No connected driver, or a joint did not answer after
+                retries (never reported as neutral).
+        """
+        names = self._pose_joints_from(joints)
+        present = self._read_present(names)
+        return {name: tick_to_degrees(present[name]) for name in names}
+
+    @contextlib.contextmanager
+    def limp(self, joints: Iterable[str]) -> Iterator[None]:
+        """Let a hand move *joints* freely inside the ``with`` block.
+
+        On entry the motion stops and *joints* are commanded to where they are,
+        then their ``Position_P_Gain`` drops to zero. On exit they are commanded
+        to where the hand left them before the gain is restored, so nothing
+        springs back, and the engine is seeded with that pose so the next
+        motion or :meth:`play_keyframes` starts from it.
+
+        Use it only on a lifted robot. A limp joint carries no load, and entry
+        and exit re-command every other joint to where it is, which lets a
+        loaded joint sink. Do not call :meth:`step` inside the block.
+
+        Args:
+            joints (Iterable[str]): Servo names to release; at least one.
+
+        Raises:
+            ValueError: *joints* is empty or names an unknown joint.
+            RuntimeError: No connected driver, or a joint's position cannot be
+                read; on exit an unread joint stays at zero gain.
+        """
+        names = self._pose_joints_from(joints)
+        if not names:
+            raise ValueError("limp() needs at least one joint.")
+        driver = self._connected_driver()
+        self.stop()
+        # A wave's arm IIR would filter the hold goal through state that goes
+        # stale while the joint is limp, so release gesture tuning first.
+        self._sync_gesture_tuning()
+        self._sync_neck_gesture_tuning()
+        self._hold_present(driver, self._read_present(names))
+        try:
+            # Inside the try: the gain is written motor by motor, so a bus error
+            # part-way leaves some joints limp, and those must be restored too.
+            driver.set_position_p_gain(_LIMP_GAIN, list(names))  # raw: limp owns it
+            yield
+        except BaseException:
+            # The caller's exception (Ctrl-C included) wins: a failed exit is
+            # logged, not raised over it.
+            try:
+                self._exit_limp(driver, names)
+            except Exception:
+                logger.exception(
+                    "limp(): exit failed while another error propagated; %s left limp.", sorted(self._limp_left)
+                )
+            raise
+        else:
+            self._exit_limp(driver, names)
+
+    def _exit_limp(self, driver: ServoDriver, names: Sequence[str]) -> None:
+        """Restore the joints that answer; raise if any is left limp."""
+        # Any failure to read counts every joint as left limp, so the neck
+        # park knows not to stiffen it blindly.
+        self._limp_left |= frozenset(names)
+        answered = self._holdable(self._read_answered(names))
+        if answered:
+            self._restore_from_limp(driver, answered)
+        self._limp_left -= answered.keys()
+        lost = [name for name in names if name not in answered]
+        if lost:
+            raise RuntimeError(f"{lost} could not be read, or sit outside the safe tick range; left limp at zero gain.")
+
+    @staticmethod
+    def _holdable(present: dict[str, int]) -> dict[str, int]:
+        """The joints whose position the driver can command as is (it clamps the rest)."""
+        return {name: tick for name, tick in present.items() if SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK}
+
+    @staticmethod
+    def _pose_joints_from(joints: Iterable[str] | None) -> tuple[str, ...]:
+        """Validate servo names, keeping the caller's order without repeats."""
+        if joints is None:
+            return JOINTS
+        names = tuple(dict.fromkeys(joints))
+        unknown = [name for name in names if name not in JOINTS]
+        if unknown:
+            raise ValueError(f"Unknown joint(s) {unknown}. Choose from: {', '.join(JOINTS)}")
+        return names
+
+    def _connected_driver(self) -> ServoDriver:
+        driver = self._driver
+        if driver is None or not driver.is_connected:
+            raise RuntimeError("Reading or releasing joints needs a connected driver.")
+        return driver
+
+    def _read_answered(self, names: Sequence[str]) -> dict[str, int]:
+        """Read *names* without masking a failed read; a joint still silent after retries is left out.
+
+        One sweep first, then each joint it missed on its own: a sweep stops at
+        the first servo that does not answer, so re-sweeping would leave every
+        joint behind that servo unread on every attempt.
+        """
+        driver = self._connected_driver()
+        present = dict(driver.read_positions_span(list(names)).positions)
+        for name in names:
+            for _ in range(_POSE_READ_ATTEMPTS):
+                if name in present:
+                    break
+                present.update(driver.read_positions_span([name]).positions)
+        return {name: int(present[name]) for name in names if name in present}
+
+    def _read_present(self, names: Sequence[str]) -> dict[str, int]:
+        """Read every one of *names*, raising if any stays silent after retries."""
+        present = self._read_answered(names)
+        lost = [name for name in names if name not in present]
+        if lost:
+            raise RuntimeError(f"No position read from {lost} after a sweep and {_POSE_READ_ATTEMPTS} retries.")
+        return present
+
+    def _write_gain(self, driver: Any, value: int | None, motors: Sequence[str] | None = None) -> None:
+        """Write Position_P_Gain, skipping joints a failed :meth:`limp` exit left at zero gain.
+
+        Stiffening such a joint would drive it to the goal written before it
+        went limp. With none left, this is exactly ``set_position_p_gain``.
+        """
+        if not self._limp_left:
+            if motors is None:
+                driver.set_position_p_gain(value)
+            else:
+                driver.set_position_p_gain(value, motors=list(motors))
+            return
+        keep = [motor for motor in (JOINTS if motors is None else motors) if motor not in self._limp_left]
+        if keep:
+            driver.set_position_p_gain(value, motors=keep)
+
+    def _restore_from_limp(self, driver: ServoDriver, present: dict[str, int], *, restore_gain: bool = True) -> None:
+        """Hold the limp joints where they are, then (unless told not to) restore their gain.
+
+        A time-based profile starts each move from the servo's own trajectory
+        position, which stays where the joint went limp while a hand moves it.
+        Holding with the profile in place would sweep the joint back from that
+        stale point once the gain returns. With Profile_Velocity at 0 the
+        trajectory jumps to the hold goal, so the gain returns onto the present
+        position; the driver's own profile is restored afterwards.
+        """
+        motors = list(present)
+        default_pv = getattr(driver, "profile_velocity", None)
+        # The profile write is an optional capability probed with hasattr.
+        tuner: Any = driver
+        # Set before the write: it goes motor by motor, so a bus error part-way
+        # leaves some at 0, and those must get the profile back too.
+        profile_off = default_pv is not None and hasattr(tuner, "set_profile_velocity_units")
+        try:
+            if profile_off:
+                try:
+                    tuner.set_profile_velocity_units(0, motors)
+                except Exception as exc:
+                    # Holding with the profile still on sweeps the joint back.
+                    raise RuntimeError(f"Could not turn the profile off on {motors}; left limp at zero gain.") from exc
+            self._hold_present(driver, present)
+            if restore_gain:
+                driver.set_position_p_gain(None, motors)  # raw: limp owns it
+        finally:
+            if profile_off:
+                try:
+                    tuner.set_profile_velocity_units(default_pv, motors)
+                except Exception:
+                    logger.warning("limp(): could not restore Profile_Velocity on %s; they move unprofiled.", motors)
+
+    def _hold_present(self, driver: ServoDriver, present: dict[str, int]) -> None:
+        """Command the joints in *present* to those ticks, and every other joint to where it is.
+
+        The write covers all joints, so the others are read too: the engine's
+        stored pose can lag the hardware (a direct-write glide cut short), and
+        writing it would move them. Only a joint that does not answer keeps
+        the engine's value.
+        """
+        goal = self._engine.get_positions()
+        with contextlib.suppress(Exception):
+            goal.update(self._read_answered([name for name in JOINTS if name not in present]))
+        goal.update(present)
+        # A command-side IIR would blend the hold with its pre-limp state; write
+        # it unfiltered, then resume the filter from the held pose.
+        tuner: Any = driver
+        iir_on = bool(getattr(tuner, "iir_enabled", False))
+        if iir_on:
+            alpha, motors = tuner.iir_alpha, getattr(tuner, "_iir_motors", None)
+            tuner.set_iir(False)
+        try:
+            self._write_goal(driver, goal)
+        finally:
+            if iir_on:
+                tuner.set_iir(True, alpha, sorted(motors) if motors else None)
+        self._engine.set_leg_positions(goal)
+        self._engine.set_neck_positions(goal)
 
     # ================================================================
     # ENGINE ACCESS (advanced)

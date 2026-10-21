@@ -68,6 +68,8 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     # urllib + hashlib model fetching; no third-party package involved.
     "palmimo_sdk.download": _NO_EXTRA,
     "palmimo_sdk.engine": _NO_EXTRA,
+    "palmimo_sdk.hardware_error": _NO_EXTRA,
+    "palmimo_sdk.keyframes": _NO_EXTRA,
     "palmimo_sdk.kinematics": _NO_EXTRA,
     "palmimo_sdk.mcp": frozenset({"mcp"}),
     "palmimo_sdk.mcp.server": frozenset({"mcp"}),
@@ -134,6 +136,10 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     # -- The facade, the gait/IK core, and the I/O abstraction: pure
     # computation and stdlib, which is what makes compute-only use possible
     # with no extra at all.
+    "palmimo_sdk:Keyframe": _NO_EXTRA,
+    "palmimo_sdk:load_keyframes": _NO_EXTRA,
+    "palmimo_sdk:save_keyframes": _NO_EXTRA,
+    "palmimo_sdk:MAX_JOINT_SPEED_DEG_S": _NO_EXTRA,
     "palmimo_sdk:Motion": _NO_EXTRA,
     "palmimo_sdk:MotionCancelled": _NO_EXTRA,
     "palmimo_sdk:MotionEngine": _NO_EXTRA,
@@ -158,6 +164,10 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:ServoDriver": _NO_EXTRA,
     "palmimo_sdk:ServoPositions": _NO_EXTRA,
     "palmimo_sdk:ServoTelemetry": _NO_EXTRA,
+    "palmimo_sdk:HardwareErrorRead": _NO_EXTRA,
+    "palmimo_sdk:HARDWARE_ERROR_BITS": _NO_EXTRA,
+    "palmimo_sdk:default_incident_dir": _NO_EXTRA,
+    "palmimo_sdk:describe_hardware_error": _NO_EXTRA,
     "palmimo_sdk:kinematics": _NO_EXTRA,
     "palmimo_sdk:shutdown": _NO_EXTRA,
     # -- Name matching and ALSA card resolution: stdlib only (difflib,

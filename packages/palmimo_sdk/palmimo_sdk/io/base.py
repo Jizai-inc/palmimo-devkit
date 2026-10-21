@@ -53,6 +53,39 @@ class ServoTelemetry:
 
 
 @dataclass(frozen=True)
+class HardwareErrorRead:
+    """One sweep of the servos' latched hardware error status.
+
+    A motor missing from ``errors`` is unknown, not healthy. Responding motors
+    remain in the mapping even when their raw bits are zero. The mapping is
+    typed read-only, like :class:`ServoTelemetry`.
+
+    An empty ``latched`` mapping does not establish that all motors are healthy
+    if ``silent`` or ``unreached`` is nonempty. Judge each motor using ``errors``.
+
+    Attributes:
+        errors (Mapping[str, int]): Responding motor name -> raw unsigned bits;
+            zero means the motor answered with no latched hardware error.
+        silent (tuple[str, ...]): Motors that were asked and did not answer.
+        unreached (tuple[str, ...]): Motors the sweep stopped short of; a send
+            failure leaves every requested motor here.
+    """
+
+    errors: Mapping[str, int] = field(default_factory=dict)
+    silent: tuple[str, ...] = ()
+    unreached: tuple[str, ...] = ()
+
+    @property
+    def latched(self) -> dict[str, int]:
+        """Return only responding motors with nonzero hardware error bits.
+
+        An empty result does not establish that all motors are healthy if
+        ``silent`` or ``unreached`` is nonempty. Judge each motor using ``errors``.
+        """
+        return {motor: bits for motor, bits in self.errors.items() if bits != 0}
+
+
+@dataclass(frozen=True)
 class ServoPositions:
     """One sweep of present servo positions, as read from the bus.
 
@@ -201,6 +234,31 @@ class ServoDriver(ABC):
         as "nothing wrong".
         """
         raise NotImplementedError(f"{type(self).__name__} does not support read_telemetry().")
+
+    def read_hardware_errors(self, motors: Sequence[str] | None = None) -> HardwareErrorRead:
+        """Read latched hardware error bits in one sweep, without changing them.
+
+        The servo itself detects and latches these bits until a reboot or power
+        cycle. Reading does not clear them or change torque. Missing motors are
+        unknown, not healthy; see :class:`HardwareErrorRead`.
+
+        Optional capability; the default raises :class:`NotImplementedError`.
+
+        Args:
+            motors (Sequence[str], optional): Motors to sweep; ``None`` sweeps
+                every motor.
+
+        Returns:
+            HardwareErrorRead: Responding raw bits and silent/unreached motors.
+
+        Raises:
+            RuntimeError: The driver is not connected.
+            KeyError: An unknown motor name was requested.
+
+        Transport failures may also raise exceptions. Callers can log the
+        failure and discard that sweep rather than infer healthy readings.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support read_hardware_errors().")
 
     def set_profile_velocity(self, ticks_per_second: int | dict[str, int]) -> None:
         """Set the goal-approach speed, in **ticks per second**.

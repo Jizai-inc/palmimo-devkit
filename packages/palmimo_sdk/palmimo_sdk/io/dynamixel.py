@@ -27,7 +27,7 @@ from typing import Any
 
 from ..kinematics import LEG_MOTORS, NEUTRAL
 from ._timeout import ProbeTimeoutError, run_with_timeout
-from .base import ServoDriver, ServoPositions, ServoTelemetry
+from .base import HardwareErrorRead, ServoDriver, ServoPositions, ServoTelemetry
 
 
 logger = logging.getLogger(__name__)
@@ -502,6 +502,16 @@ class DynamixelDriver(ServoDriver):
             voltage={n: v["Present_Input_Voltage"] / _VOLTAGE_UNITS_PER_VOLT for n, v in sweep.values.items()},
             temperature={n: v["Present_Temperature"] for n, v in sweep.values.items()},
             position={n: v["Present_Position"] for n, v in sweep.values.items()},
+            silent=sweep.silent,
+            unreached=sweep.unreached,
+        )
+
+    def read_hardware_errors(self, motors: Sequence[str] | None = None) -> HardwareErrorRead:
+        if self._bus is None:
+            raise RuntimeError("Driver is not connected. Call connect() before read_hardware_errors().")
+        sweep = self._bus.sync_read_span(["Hardware_Error_Status"], motors=motors)
+        return HardwareErrorRead(
+            errors={n: v["Hardware_Error_Status"] for n, v in sweep.values.items()},
             silent=sweep.silent,
             unreached=sweep.unreached,
         )
