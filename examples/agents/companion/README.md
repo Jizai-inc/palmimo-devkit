@@ -268,13 +268,20 @@ attached.
 A second runtime, alongside the `tui` / `cli` pipeline ones:
 
 ```bash
-uv run palmimo-realtime --seconds 360
+uv run palmimo-realtime
 ```
+
+The session has no application time limit by default. To end it automatically
+after a fixed duration, pass a positive number of seconds, for example
+`uv run palmimo-realtime --seconds 360`. Only this flag enables the timer;
+`COMPANION_AGENT_SESSION_SECONDS` in the environment or `.env` is ignored.
+The session still ends if the server closes the connection or a service fails.
 
 To the Portal, this runtime is a separate app from `palmimo-companion-agent`
 because it needs different env vars and devices — it ships as its own
 manifest, `palmimo.realtime.toml` (see
 [doc/reference/app-manifest.md](../../../doc/reference/app-manifest.md)).
+Portal launches it without a time limit; use its Stop action to end the session.
 
 Requires `OPENAI_API_KEY`, from the environment or from the same `.env` the
 chat front ends read — this front end ships inside the companion project and
@@ -305,7 +312,7 @@ prints a token and dollar summary when it exits.
 | `--pitch` | `COMPANION_AGENT_PITCH` | `1.15` | Playback pitch multiplier (resamples the reply, raising pitch and tempo together at no latency cost); `1.0` is off |
 | `--reply-chars` | `COMPANION_AGENT_REPLY_CHARS` | `60` | Reply-length hint folded into the prompt; `0` leaves it to the model's judgement |
 | `--frame-seconds` | `COMPANION_AGENT_FRAME_SECONDS` | `10.0` | How often a camera frame is offered to the model; each one replaces the last |
-| `--seconds` | `COMPANION_AGENT_SESSION_SECONDS` | `120.0` | Session length |
+| `--seconds` | none | no time limit | Optional session limit in seconds; must be finite and greater than zero |
 | `--port` | `COMPANION_AGENT_PORT` | none (auto-detected) | Servo bus serial port |
 | `--log-path` | `COMPANION_AGENT_LOG_PATH` | none (disabled) | JSONL event log path (this runtime's own log -- see `realtime/log.py`, a different shape from the pipeline's `History` events) |
 
