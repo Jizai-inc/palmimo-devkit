@@ -6,7 +6,10 @@ authors = [{ name = "Jizai Inc.", email = "noreply@jizai.ai" }]
 license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
-    "lerobot",
+    # The pynput-dep extra is what carries pynput, which lerobot's own
+    # KeyboardTeleop imports at construction time. Plain "lerobot" resolves
+    # without it and connect() dies on the first keyboard object.
+    "lerobot[pynput-dep]",
     "palmimo-sdk",
 ]
 
