@@ -1196,7 +1196,7 @@ class MotionEngine:
         if ph >= outro_start + lead + off or ph < intro_end + lead:
             rate = max(self._MIN_RATE, float(self.wave_both_intro_speed))
         elif ph < raise_end + lead:
-            rate = self.wave_raise_speed
+            rate = max(self._MIN_RATE, float(self.wave_raise_speed))
         else:
             rate = max(self._MIN_RATE, float(self.wave_both_speed))
         self._wave_phase += self._WAVE_DT * rate
