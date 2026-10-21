@@ -10,7 +10,7 @@ robot = Palmimo()
 
 ## Constructor
 
-`Palmimo(gait_speed=0.012, step_length=30.0, step_height=30.0, on_step=None, *, fps=60, driver=None, display=None, speaker=None, camera=None, mic=None, auto_wake=True, thermal_clock=None, arm_overload_current=ARM_OVERLOAD_CURRENT, leg_overload_current=LEG_OVERLOAD_CURRENT, rail_undervoltage_v=RAIL_UNDERVOLTAGE_V)`
+`Palmimo(gait_speed=0.012, step_length=30.0, step_height=30.0, on_step=None, *, fps=60, driver=None, display=None, speaker=None, camera=None, mic=None, auto_wake=True, thermal_clock=None, arm_overload_current=ARM_OVERLOAD_CURRENT, leg_overload_current=LEG_OVERLOAD_CURRENT, rail_undervoltage_v=RAIL_UNDERVOLTAGE_V, flight_recorder=True, incident_dir=None)`
 
 The first four arguments are positional-or-keyword; everything after the `*` is keyword-only.
 
@@ -27,6 +27,7 @@ The first four arguments are positional-or-keyword; everything after the `*` is 
 | `thermal_clock` | `None` | Clock injected into the neck thermal and overload guards in place of `time.monotonic`; for tests |
 | `arm_overload_current` / `leg_overload_current` | `ARM_OVERLOAD_CURRENT` / `LEG_OVERLOAD_CURRENT` | See [Overload Guard](#overload-guard) |
 | `rail_undervoltage_v` | `RAIL_UNDERVOLTAGE_V` | See [Rail Undervoltage Guard](#rail-undervoltage-guard) |
+| `flight_recorder` / `incident_dir` | `True` / `None` | See [Servo Flight Recorder](#servo-flight-recorder) |
 
 ## Motion Commands
 
