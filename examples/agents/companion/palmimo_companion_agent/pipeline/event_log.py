@@ -38,9 +38,11 @@ def emit_event(event: Event, *, out: TextIO) -> None:
     payload = dataclasses.asdict(event)
     arguments = payload.get("arguments")
     if isinstance(arguments, str):
-        with contextlib.suppress(ValueError):
+        # RecursionError: deeply nested input; the UTF-8 encode catches lone surrogates.
+        with contextlib.suppress(ValueError, RecursionError):
             parsed = json.loads(arguments, parse_constant=_reject_constant)
             if isinstance(parsed, dict):
+                json.dumps(parsed, ensure_ascii=False).encode("utf-8")
                 payload["arguments"] = parsed
     payload["ts"] = datetime.now().astimezone().isoformat(timespec="milliseconds")
     out.write(json.dumps(payload, ensure_ascii=False) + "\n")

@@ -67,3 +67,11 @@ def test_emit_event_keeps_tool_arguments_as_a_string_when_they_are_not_a_json_ob
     out = io.StringIO()
     emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="bad"), out=out)
     assert json.loads(out.getvalue(), parse_constant=pytest.fail)["arguments"] == arguments
+
+
+@pytest.mark.parametrize("arguments", ["[" * 100_000, '{"a": "\\ud800"}'])
+def test_emit_event_keeps_tool_arguments_as_a_string_when_the_parsed_object_cannot_be_written(arguments: str) -> None:
+    raw = io.BytesIO()
+    out = io.TextIOWrapper(raw, encoding="utf-8")
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="bad"), out=out)
+    assert json.loads(raw.getvalue())["arguments"] == arguments
