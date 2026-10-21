@@ -117,6 +117,10 @@ class FakeBus:
         self.writes.append((address, motor, value))
         self.events.append(("write", address, motor))
 
+    def disable_torque(self, num_retry: int = 0, motors: list[str] | None = None) -> None:
+        for motor in self.motors if motors is None else motors:
+            self.write("Torque_Enable", motor, 0)
+
     def sync_read(self, address: str, normalize: bool = False, num_retry: int = 0) -> dict[str, int | None] | None:
         self.read_calls += 1
         if self.read_none:

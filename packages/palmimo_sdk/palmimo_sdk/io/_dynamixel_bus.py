@@ -317,10 +317,27 @@ class DynamixelBus:
         for motor in self.motors:
             self.write("Torque_Enable", motor, _TORQUE_ENABLE, num_retry=num_retry)
 
-    def disable_torque(self, num_retry: int = 0) -> None:
-        """Disable torque on every motor."""
-        for motor in self.motors:
-            self.write("Torque_Enable", motor, _TORQUE_DISABLE, num_retry=num_retry)
+    def disable_torque(self, num_retry: int = 0, motors: Sequence[str] | None = None) -> None:
+        """Disable torque on *motors* (every motor when ``None``), trying each one.
+
+        A motor that does not answer must not leave the motors after it armed,
+        so every write is attempted before any failure is raised.
+
+        Raises:
+            ConnectionError / RuntimeError: A write failed on one or more motors,
+                after all retries. The type is the first failure's; the message
+                names every motor that failed.
+        """
+        failures: list[tuple[str, Exception]] = []
+        for motor in self.motors if motors is None else motors:
+            try:
+                self.write("Torque_Enable", motor, _TORQUE_DISABLE, num_retry=num_retry)
+            except (ConnectionError, RuntimeError) as exc:
+                failures.append((motor, exc))
+        if failures:
+            first = failures[0][1]
+            detail = "; ".join(f"{motor}: {exc}" for motor, exc in failures)
+            raise type(first)(f"Could not disable torque on {len(failures)} motor(s): {detail}") from first
 
     def write(self, data_name: str, motor: str, value: int, *, normalize: bool = False, num_retry: int = 0) -> None:
         """Write one register on a single motor, waiting for a status packet.

@@ -5,6 +5,7 @@ The bus itself needs a serial port, but the two decisions a span read makes
 functions here, so they are pinned without one.
 """
 
+import dynamixel_sdk
 import pytest
 
 from palmimo_sdk.io._dynamixel_bus import (
@@ -262,3 +263,32 @@ def test_sync_read_span_reports_nothing_for_an_empty_motor_set() -> None:
 
     assert sweep == SpanRead()
     assert reader.tx_calls == 0
+
+
+class FakePacketHandler:
+    """Stands in for ``dynamixel_sdk.PacketHandler`` acknowledged writes; *silent* ids never answer."""
+
+    def __init__(self, silent: set[int]) -> None:
+        self.silent = silent
+        self.writes: list[int] = []
+
+    def writeTxRx(self, port: object, motor_id: int, address: int, length: int, data: list[int]) -> tuple[int, int]:  # noqa: N802 - mirrors the vendored SDK's name
+        self.writes.append(motor_id)
+        return (COMM_RX_FAIL if motor_id in self.silent else COMM_SUCCESS), 0
+
+    def getTxRxResult(self, comm: int) -> str:  # noqa: N802 - mirrors the vendored SDK's name
+        return "[TxRxResult] There is no status packet!"
+
+
+def test_disable_torque_still_reaches_the_motors_after_a_silent_one() -> None:
+    """One unplugged servo must not leave every servo behind it armed."""
+    handler = FakePacketHandler(silent={2})
+    bus = make_bus(FakeSyncReader({}), MOTORS)
+    bus.packet_handler = handler
+    bus.port_handler = object()
+    bus._dxl = dynamixel_sdk
+
+    with pytest.raises(ConnectionError, match=r"1 motor\(s\): leg_1_pitch1"):
+        bus.disable_torque()
+
+    assert handler.writes == [1, 2, 3]
