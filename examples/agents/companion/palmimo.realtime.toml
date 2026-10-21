@@ -3,8 +3,6 @@ name = "companion-realtime"
 description = "Voice conversation with the companion over the OpenAI Realtime API, with camera frames pushed to the model periodically."
 command = [
   "palmimo-realtime",
-  "--seconds",
-  "{seconds}",
   "--model",
   "{model}",
   "--voice",
@@ -17,13 +15,6 @@ command = [
   "{frame_seconds}",
 ]
 devices = ["camera", "audio", "motor_display"]
-
-[params.seconds]
-type = "float"
-default = 120
-min = 10
-max = 3600
-description = "Session length in seconds."
 
 [params.model]
 type = "string"

@@ -35,7 +35,17 @@ need and the maintainers implement it internally.
 Issue and pull request conversations are welcome in English or Japanese.
 Please keep the recorded outcome in English — the pull request description
 and the concluding summary of a discussion — since the tree itself (code,
-comments, docs) is English only.
+comments, original docs) is English only. `README.ja.md`, `doc/ja/`,
+and the Japanese site splash are translations; English is the source of truth.
+
+A PR changing an English page must also update its corresponding Japanese
+page in `doc/ja/` (or `README.ja.md` for the README) in the same PR.
+If you cannot write Japanese, say so in the PR description and a maintainer
+will take over the translation.
+A PR adding an English documentation page must also add its counterpart
+under `doc/ja/`.
+Build behavior and link language rules are documented in
+[the docs site README](docs-site/README.md#how-the-render-works).
 
 ## License of contributions
 
@@ -136,7 +146,8 @@ this tree that is not Python.
 
 When you change the SDK core (`palmimo_sdk`), update the co-located docs under
 [doc/](doc/) — `reference/api-reference.md`, `explanation/architecture.md`, and
-`guides/motion-development-guide.md` — in the **same commit** as the code.
+`guides/motion-development-guide.md`, along with their corresponding Japanese
+pages under `doc/ja/` — in the **same commit** as the code.
 [AGENTS.md](AGENTS.md#documentation) says which of those a given page is, and
 where a new page belongs.
 

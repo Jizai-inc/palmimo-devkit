@@ -5,7 +5,8 @@ the documentation the repository already carries.
 
 **The site does not hold a copy of the documentation — it renders `doc/`.**
 Edit the page in `doc/`; never edit `src/content/docs/`, which is build output.
-The one page written by hand here is the splash, `src/site-pages/index.mdx`.
+Each locale has one hand-written splash: `src/site-pages/index.mdx` for
+English and `src/site-pages/ja/index.mdx` for Japanese.
 
 Built with [Astro](https://astro.build) and [Starlight](https://starlight.astro.build).
 
@@ -34,6 +35,21 @@ taken from the page's `# H1`, a sidebar `order`, and an `editUrl` pointing back
 at the page in `doc/`. Images come across from `doc/images/` into
 `public/images/`.
 
+English pages keep their routes at `/`. Japanese translations in `doc/ja/`
+render into `src/content/docs/ja/` and are served at `/ja/` (for example,
+`doc/ja/guides/installation.md` becomes `/ja/guides/installation/`).
+`SIDEBAR_ORDER` holds only English paths: Japanese pages look up their order
+with the `ja/` prefix removed, and a translation without its English original
+fails the build. The reverse is allowed: a missing Japanese translation does
+not itself fail the build, and Starlight serves the English body at its
+`/ja/...` route with an untranslated-content notice. As an accepted tradeoff,
+links inside that fallback body retain their English routes. The Japanese
+splash home is `/ja/`; linking it to `/` is rejected as a locale violation. Links to missing source
+files still fail sync, so removing a translation that other pages link to
+is not equivalent to adding a new English page without a translation.
+Each translation's `editUrl` points to its own `doc/ja/` source.
+The splash tree is copied recursively, preserving each locale's `index.mdx`.
+
 Two more fields ride along: `description`, the page's first prose paragraph
 with its Markdown stripped (used as the meta description search engines and
 link previews show), and `lastUpdated`, the source page's last commit date
@@ -44,12 +60,20 @@ Links are rewritten as they pass through:
 | Link in `doc/` | Becomes |
 | :--- | :--- |
 | Another `doc/` page | A site route, e.g. `/reference/api-reference/` |
-| `doc/images/…` | `/images/…` |
+| Another `doc/ja/` page from a Japanese page | A Japanese route, e.g. `/ja/reference/api-reference/` |
+| `doc/images/…` (from either locale) | `/images/…` |
 | Anything outside `doc/` | A GitHub URL under `REPO_BLOB_BASE` |
 
 `REPO_BLOB_BASE` points at this repository on GitHub. Set
 `PALMIMO_DOC_BLOB_BASE` to build those links against a fork or a mirror
 instead.
+
+A link from a Japanese page to an English `doc/` page fails the build when
+its `doc/ja/` counterpart exists; link to that translation instead. When the
+translation does not exist, the English source link becomes the `/ja/...`
+Starlight fallback route. English doc pages cannot link into `doc/ja/`, and
+each splash must link to page routes in its own locale. Shared images and links outside
+`doc/` keep the mappings above.
 
 A link that resolves to nothing fails the build rather than shipping broken.
 That is the point of doing this at build time: the site cannot drift from
@@ -69,8 +93,10 @@ get right is the checkout, because `doc/` sits above this directory:
 
 Leaving the root directory at the repository root is the whole trick: a host
 that prunes the checkout to `docs-site` hides `doc/`, and the build fails
-rather than shipping an empty site. Verified from a clean clone — the 10 pages
-of `doc/` plus the splash, images included. On Vercel, setting a Root Directory of `docs-site` also needs
+rather than shipping an empty site. Verified from a clean clone: 12 English
+documentation pages, 12 Japanese documentation pages, and two splashes, with
+shared images (plus the generated 404 page). On Vercel, setting a Root
+Directory of `docs-site` also needs
 "Include files outside the root directory" enabled; the settings above avoid
 the question entirely.
 
@@ -95,7 +121,7 @@ at the site root.
 docs-site/
 ├── public/                 -> Static assets (icons, the logo, models/; images/, python/, pyodide/ are synced)
 ├── src/
-│   ├── site-pages/         -> Hand-written pages (the splash, and nothing else)
+│   ├── site-pages/         -> Hand-written pages (one splash per locale)
 │   ├── components/         -> Astro components the splash reaches for
 │   ├── scripts/            -> Browser modules those components run
 │   ├── python/             -> Python those modules run in the browser

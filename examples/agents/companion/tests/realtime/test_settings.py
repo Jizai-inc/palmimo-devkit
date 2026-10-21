@@ -15,7 +15,6 @@ def test_defaults_match_the_design() -> None:
     assert settings.pitch == 1.15
     assert settings.reply_chars == 60
     assert settings.frame_seconds == 10.0
-    assert settings.session_seconds == 120.0
 
 
 def test_env_prefix_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -10,7 +10,7 @@ from dataclasses import replace
 
 from ._guard import RestingReport, TripLog
 from .engine import NECK_GESTURES, Motion, MotionEngine
-from .io import ServoDriver
+from .io import ServoDriver, ServoTelemetry
 from .kinematics import LEG_MOTORS, leg_motors
 from .overload import (
     OVERLOAD_POLL_INTERVAL_S,
@@ -66,6 +66,7 @@ class LegSafety:
         self._scope: tuple[Motion, tuple[int, ...]] | None = None
         # When leg telemetry was last read successfully, or None before the first read.
         self._last_sample: float | None = None
+        self._sweep: tuple[float, ServoTelemetry] | None = None
         self.overload_trips: TripLog[OverloadTrip] = TripLog(_TRIP_HISTORY)
         self.rail_trips: TripLog[RailTrip] = TripLog(_TRIP_HISTORY)
         # A leg trip with no leg motion running has been recorded and the
@@ -100,6 +101,8 @@ class LegSafety:
         Returns:
             bool: ``True`` if a guard tripped and the motion must stop.
         """
+        if driver is None:
+            self._sweep = None
         if driver is None or self._poller.disabled:
             return False
         if self._arm_overload is None and self._leg_overload is None and self._rail is None:
@@ -118,6 +121,7 @@ class LegSafety:
         telemetry = self._poller.read(driver, now, "leg telemetry read failed, keeping the current streaks")
         if telemetry is None:
             return False
+        self._sweep = (now, telemetry)
         if self._last_sample is not None and now - self._last_sample >= STREAK_MAX_GAP_S:
             for stale in (self._arm_overload, self._leg_overload, self._rail):
                 if stale is not None:
@@ -171,6 +175,11 @@ class LegSafety:
             self._soft_return_monitor.reset()
         return True
 
+    def take_sweep(self) -> tuple[float, ServoTelemetry] | None:
+        """Consume the latest successful telemetry sweep."""
+        sweep, self._sweep = self._sweep, None
+        return sweep
+
     def reset(self) -> None:
         """Forget all per-connection guard state (streaks, latch, poll timers, soft return).
 
@@ -181,6 +190,7 @@ class LegSafety:
                 guard.reset()
         self._scope = None
         self._last_sample = None
+        self._sweep = None
         self._poller.reset()
         if self._rail is not None:
             self._rail.reset()

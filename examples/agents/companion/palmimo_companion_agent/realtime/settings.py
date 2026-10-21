@@ -1,7 +1,7 @@
 """Settings for the Realtime voice runtime.
 
 Adds this runtime's own knobs -- the Realtime model/voice, pitch, reply
-length hint, camera-frame cadence, and session length -- on top of
+length hint and camera-frame cadence -- on top of
 :class:`~palmimo_companion_agent.settings.CompanionSettings`'s shared base
 (hardware attach, servo port, hearing knobs, language, log path). See that
 module's docstring for the "one character, two runtimes" split this mirrors;
@@ -47,9 +47,6 @@ class RealtimeSettings(CompanionSettings):
     #: input tokens and Realtime re-bills the whole context every turn, so
     #: this is the main cost dial after the model choice.
     frame_seconds: float = Field(default=10.0, gt=0)
-
-    #: How long a session runs before ending on its own (``--seconds`` on the CLI).
-    session_seconds: float = Field(default=120.0, gt=0)
 
     @field_validator("voice")
     @classmethod

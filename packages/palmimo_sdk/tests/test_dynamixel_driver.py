@@ -92,6 +92,7 @@ class FakeBus:
         # caller) can share this same answered/silent/unreached machinery.
         self.telemetry: dict[str, dict[str, int]] = {
             name: {
+                "Hardware_Error_Status": 0,
                 "Present_Current": 100,
                 "Present_Input_Voltage": 47,
                 "Present_Temperature": 30,
@@ -1232,3 +1233,47 @@ def test_read_positions_span_requires_a_connection() -> None:
     driver, _bus, _ = make_driver()
     with pytest.raises(RuntimeError, match="not connected"):
         driver.read_positions_span()
+
+
+@pytest.mark.parametrize("bits", [0, 0x20, 0x80])
+def test_read_hardware_errors_preserves_answered_raw_bits(bits: int) -> None:
+    driver, bus, _ = make_driver()
+    driver.connect()
+    bus.telemetry["leg_1_yaw"]["Hardware_Error_Status"] = bits
+    result = driver.read_hardware_errors()
+    assert result.errors == {name: bits if name == "leg_1_yaw" else 0 for name in MOTOR_NAMES}
+
+
+def test_read_hardware_errors_separates_silent_and_unreached_motors() -> None:
+    driver, bus, _ = make_driver()
+    driver.connect()
+    del bus.telemetry["leg_1_pitch1"]
+    result = driver.read_hardware_errors()
+    assert result.errors == {"leg_1_yaw": 0}
+    assert result.silent == ("leg_1_pitch1",)
+    assert result.unreached == tuple(MOTOR_NAMES[2:])
+
+
+def test_read_hardware_errors_reports_send_failure_as_unreached() -> None:
+    driver, bus, _ = make_driver(span_send_fails=True)
+    driver.connect()
+    result = driver.read_hardware_errors()
+    assert result.errors == {}
+    assert result.silent == ()
+    assert result.unreached == tuple(MOTOR_NAMES)
+    assert bus.span_num_retries == [0]
+
+
+def test_read_hardware_errors_reads_requested_motors_in_one_sweep() -> None:
+    driver, bus, _ = make_driver()
+    driver.connect()
+    result = driver.read_hardware_errors(["leg_2_yaw"])
+    assert result.errors == {"leg_2_yaw": 0}
+    assert bus.span_reads == [(("Hardware_Error_Status",), ("leg_2_yaw",))]
+    assert bus.span_num_retries == [0]
+
+
+def test_read_hardware_errors_requires_a_connection() -> None:
+    driver, _, _ = make_driver()
+    with pytest.raises(RuntimeError):
+        driver.read_hardware_errors()

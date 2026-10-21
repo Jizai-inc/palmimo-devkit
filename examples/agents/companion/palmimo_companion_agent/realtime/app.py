@@ -10,7 +10,7 @@ the chat agent uses.
 Servos, camera, face display and echo cancellation are the real ones. There
 is no Speaker: the model's audio is the voice.
 
-    uv run palmimo-realtime --seconds 120
+    uv run palmimo-realtime
 
 Reads the project's ``.env`` for ``OPENAI_API_KEY``, and takes the servo port
 and canceller channels from the same settings the chat agent uses.
@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import math
 import os
 import signal
 import sys
@@ -173,8 +174,8 @@ def _signal_stop(stop: asyncio.Event) -> Iterator[None]:
 
     Setting a flag is not enough: services block on the socket, the camera
     queue, or a mic read rather than polling one, so a flag alone would sit
-    unread until ``--seconds`` elapses -- past a service manager's stop
-    timeout, which then SIGKILLs the process with the cleanup unrun: no
+    unread indefinitely (or until ``--seconds`` elapses) -- past a service
+    manager's stop timeout, which then SIGKILLs the process with the cleanup unrun: no
     return_to_neutral, no neck release, torque left on. So the handler both
     sets *stop* (for anything that does poll it) and cancels the running
     ``asyncio.timeout``/``TaskGroup`` via the event.
@@ -265,8 +266,10 @@ class RealtimeSession:
         await self._stop.wait()
         raise _Stop
 
-    async def run(self, seconds: float) -> None:
-        """Run every service until *seconds* elapse, a service raises, or a signal arrives.
+    async def run(self, seconds: float | None = None) -> None:
+        """Run until a service raises, a signal arrives, or an optional time limit elapses.
+
+        ``None`` leaves the session without an application time limit.
 
         ``_shutdown`` runs OUTSIDE ``_signal_stop``'s ``with`` block, after
         the signal handlers are removed -- not inside it. ``_signal_stop``'s
@@ -378,9 +381,10 @@ async def _run(args: argparse.Namespace) -> int:
             mic_feed = MicrophoneFeed(_mic, client)
             reflexes = build_reflex_runner(toolset, watch, client, sleeping, log)
 
+            duration = f"{args.seconds:g}s limit" if args.seconds is not None else "no time limit"
             print(
                 f"{args.model}, voice {args.voice}, pitch x{args.pitch:.2f}, {len(tools)} tools, "
-                f"a frame every {args.frame_seconds:.0f}s, {args.seconds:.0f}s\n",
+                f"a frame every {args.frame_seconds:.0f}s, {duration}\n",
                 flush=True,
             )
             session = RealtimeSession(
@@ -401,6 +405,17 @@ async def _run(args: argparse.Namespace) -> int:
             await _wake_and_disconnect(palmimo, sleeping)
         log.close()
     return 0
+
+
+def _positive_seconds(value: str) -> float:
+    """Parse a finite positive session limit before any hardware is opened."""
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("seconds must be a finite positive number") from None
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise argparse.ArgumentTypeError("seconds must be a finite positive number")
+    return seconds
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -431,7 +446,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Seconds between camera frames sent to the model (env: COMPANION_AGENT_FRAME_SECONDS)",
     )
     parser.add_argument(
-        "--seconds", type=float, default=None, help="Session length in seconds (env: COMPANION_AGENT_SESSION_SECONDS)"
+        "--seconds",
+        type=_positive_seconds,
+        default=None,
+        help="Stop after this many seconds (positive number; default: no time limit)",
     )
     parser.add_argument("--port", default=None, help="Servo bus serial port (env: COMPANION_AGENT_PORT)")
     parser.add_argument("--log-path", default=None, help="JSONL event log file path (env: COMPANION_AGENT_LOG_PATH)")
@@ -458,7 +476,7 @@ def main() -> int:
         pitch=parsed.pitch if parsed.pitch is not None else defaults.pitch,
         reply_chars=parsed.reply_chars if parsed.reply_chars is not None else defaults.reply_chars,
         frame_seconds=parsed.frame_seconds if parsed.frame_seconds is not None else defaults.frame_seconds,
-        seconds=parsed.seconds if parsed.seconds is not None else defaults.session_seconds,
+        seconds=parsed.seconds,
         port=parsed.port,
         log_path=parsed.log_path,
     )
