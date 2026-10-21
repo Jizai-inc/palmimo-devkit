@@ -317,22 +317,23 @@ class DynamixelBus:
         for motor in self.motors:
             self.write("Torque_Enable", motor, _TORQUE_ENABLE, num_retry=num_retry)
 
-    def disable_torque(self, num_retry: int = 0, motors: Sequence[str] | None = None) -> None:
+    def disable_torque(self, num_retry: int = 0, *, motors: Sequence[str] | None = None) -> None:
         """Disable torque on *motors* (every motor when ``None``), trying each one.
 
         A motor that does not answer must not leave the motors after it armed,
         so every write is attempted before any failure is raised.
 
         Raises:
-            ConnectionError / RuntimeError: A write failed on one or more motors,
-                after all retries. The type is the first failure's; the message
-                names every motor that failed.
+            ConnectionError / RuntimeError / KeyError: A write failed (or a name
+                is not on this bus) for one or more motors, after all retries.
+                The type is the first failure's; the message names every motor
+                that failed.
         """
         failures: list[tuple[str, Exception]] = []
         for motor in self.motors if motors is None else motors:
             try:
                 self.write("Torque_Enable", motor, _TORQUE_DISABLE, num_retry=num_retry)
-            except (ConnectionError, RuntimeError) as exc:
+            except (ConnectionError, RuntimeError, KeyError) as exc:
                 failures.append((motor, exc))
         if failures:
             first = failures[0][1]
