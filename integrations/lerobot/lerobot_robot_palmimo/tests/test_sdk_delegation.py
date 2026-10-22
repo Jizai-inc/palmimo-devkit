@@ -158,6 +158,21 @@ def test_connect_rolls_back_when_a_camera_fails_to_open() -> None:
     assert not driver.is_connected
 
 
+def test_connect_rollback_moves_no_leg_when_wake_cannot_read_the_pose() -> None:
+    """A wake refused over an unmeasured pose must not be followed by a leg return from a guessed one."""
+    driver = _StandInDriver()
+    driver.short_read = {motor: NEUTRAL for motor in palmimo_motor_ids() if motor != "leg_1_yaw"}
+    robot = _robot(driver)
+
+    with pytest.raises(RuntimeError, match="leg_1_yaw"):
+        robot.connect()
+
+    leg_goals = [goal for goal in driver.goals if any(motor.startswith("leg_") for motor in goal)]
+    assert leg_goals == []
+    assert driver.disconnects == 1
+    assert not driver.is_connected
+
+
 def test_disconnect_parks_through_the_sdk_and_releases_the_neck() -> None:
     """Torque-off is preceded by the neck gain ramp-down, or the head drops."""
     driver = _StandInDriver()
