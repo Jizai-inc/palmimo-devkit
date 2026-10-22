@@ -106,9 +106,10 @@ class Palmimo(Robot):
         except BaseException:
             # A camera failure (or a Ctrl+C during the ~1.5s glide) must not leave
             # the robot armed with nobody holding it. Best-effort so the rollback
-            # never replaces the error that caused it.
+            # never replaces the error that caused it. No leg return: the pose may
+            # be unmeasured (wake refuses exactly that), as in the SDK's own rollback.
             with contextlib.suppress(Exception):
-                self.disconnect()
+                self._close(park=False)
             raise
 
     def disconnect(self) -> None:
@@ -121,10 +122,14 @@ class Palmimo(Robot):
         exists to make a torque-off safe, and with torque left on it would only
         let the head sag.
         """
+        self._close(park=True)
+
+    def _close(self, *, park: bool) -> None:
+        """Release the bus and the cameras; *park* false skips only the leg return."""
         if self.config.keep_torque_on_disconnect:
             self._driver.disconnect()
         else:
-            self._robot.disconnect(park=True)
+            self._robot.disconnect(park=park)
         for cam in self.cameras.values():
             with contextlib.suppress(Exception):
                 cam.disconnect()
