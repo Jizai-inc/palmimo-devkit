@@ -20,7 +20,7 @@ from rich.markup import escape
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, Input, RichLog
 
-from palmimo_sdk.shutdown import StopRequest, interrupt_on_signals, park, signals_ignored
+from palmimo_sdk.shutdown import TERMINATING_SIGNALS, StopRequest, interrupt_on_signals, park, signals_ignored
 
 from ..wiring import Runtime, build_runtime
 
@@ -146,12 +146,14 @@ def run_tui(settings: PipelineSettings) -> None:
     # Textual handles Ctrl+C as a key but not SIGTERM/SIGHUP, which would kill
     # the process unparked; convert them to KeyboardInterrupt and park after.
     # The connect is inside too: its wake glide takes seconds with torque on.
-    try:
-        with contextlib.suppress(KeyboardInterrupt), interrupt_on_signals(StopRequest()):
-            asyncio.run(runtime.connect())
-            CompanionAgentApp(runtime).run()
-    finally:
-        park(runtime.palmimo, out=_BestEffortStderr())
+    # The outer ignore makes the inner context restore SIG_IGN, not SIG_DFL, before the park.
+    with signals_ignored(*TERMINATING_SIGNALS):
+        try:
+            with contextlib.suppress(KeyboardInterrupt), interrupt_on_signals(StopRequest()):
+                asyncio.run(runtime.connect())
+                CompanionAgentApp(runtime).run()
+        finally:
+            park(runtime.palmimo, out=_BestEffortStderr())
 
 
 __all__ = ["CompanionAgentApp", "run_tui"]

@@ -58,6 +58,7 @@ asyncio.run(run_cli(None, read_stdin=False))
 
 _TUI_CHILD = """
 import asyncio
+import os
 import sys
 import time
 import types
@@ -65,7 +66,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 workdir = Path(sys.argv[1])
-stop_during_connect = len(sys.argv) > 2
+mode = sys.argv[2] if len(sys.argv) > 2 else ""
+stop_during_connect = mode == "stop-during-connect"
 sys.stderr.close()  # a hung-up terminal: the park report must not stand in the park's way
 
 
@@ -107,6 +109,14 @@ class _App:
 
 
 tui.CompanionAgentApp = _App
+if mode == "signal-at-park-entry":
+    _park = tui.park
+
+    def _park_after_signal(robot, **kwargs):
+        os.kill(os.getpid(), int(sys.argv[3]))  # lands after the delivery context has exited
+        _park(robot, **kwargs)
+
+    tui.park = _park_after_signal
 tui.run_tui(None)
 """
 
@@ -158,3 +168,11 @@ def test_run_tui_parks_and_exits_zero_when_stop_signal_arrives(
 
 def test_run_tui_parks_and_exits_zero_when_stop_signal_arrives_during_connect(tmp_path: Path) -> None:
     _stop_and_check(_TUI_CHILD, tmp_path, signal.SIGTERM, False, "stop-during-connect")
+
+
+# The second signal is raised by the child itself at park entry: a fresh delivery, never coalesced with the first.
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP], ids=lambda s: s.name)
+def test_run_tui_parks_and_exits_zero_when_stop_signal_repeats_between_signal_context_and_park(
+    tmp_path: Path, signum: signal.Signals
+) -> None:
+    _stop_and_check(_TUI_CHILD, tmp_path, signum, False, "signal-at-park-entry", str(int(signum)))
