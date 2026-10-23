@@ -876,7 +876,7 @@ class MotionEngine:
     # Same idea as _CLAP_GAP_FLOOR, but as a yaw clamp because the wave's knob
     # is angular. Sits ABOVE the plate-contact boundary.
     _WAVE_BOTH_SEP_FLOOR: ClassVar[float] = 25.0
-    # Floor for the playback-rate knobs (intro/stroke). Rate 0 would freeze the
+    # Floor for the playback-rate knobs (intro/raise/stroke). Rate 0 would freeze the
     # gesture mid-prep forever (with the arm PV=0/gain/IIR tuning left applied);
     # negative rates would run the clock backwards. 0.2 keeps even an abusive
     # setting finishing within ~30s.
@@ -1196,7 +1196,7 @@ class MotionEngine:
         if ph >= outro_start + lead + off or ph < intro_end + lead:
             rate = max(self._MIN_RATE, float(self.wave_both_intro_speed))
         elif ph < raise_end + lead:
-            rate = self.wave_raise_speed
+            rate = max(self._MIN_RATE, float(self.wave_raise_speed))
         else:
             rate = max(self._MIN_RATE, float(self.wave_both_speed))
         self._wave_phase += self._WAVE_DT * rate

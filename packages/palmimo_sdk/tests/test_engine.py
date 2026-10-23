@@ -1269,6 +1269,7 @@ def test_clap_height_floor_keeps_the_sweep_off_the_ground(height: float) -> None
     "knob,motion",
     [
         ("wave_both_intro_speed", Motion.WAVE_BOTH),
+        ("wave_raise_speed", Motion.WAVE_BOTH),
         ("wave_both_speed", Motion.WAVE_BOTH),
         ("clap_intro_speed", Motion.CLAP),
     ],
@@ -1279,9 +1280,10 @@ def test_rate_knob_zero_or_negative_cannot_freeze_the_gesture(knob: str, motion:
     engine = MotionEngine()
     setattr(engine, knob, value)
     engine.motion = motion
-    for _ in range(200):
+    for _ in range(400):
+        before = engine._wave_phase
         engine.step()
-    assert engine._wave_phase > 0.3
+        assert engine._wave_phase > before, f"clock stalled at {before:.3f}s"
 
 
 def test_wave_both_phase_half_alternates_the_arms() -> None:
