@@ -432,9 +432,16 @@ class DynamixelDriver(ServoDriver):
                 self._bus.write("Position_P_Gain", motor, v, normalize=False)
 
     def set_torque_enabled(self, enabled: bool, motors: Sequence[str] | None = None) -> None:
-        """Write Torque_Enable on *motors* (every motor when ``None``), one acknowledged write each."""
+        """Write Torque_Enable on *motors* (every motor when ``None``), one acknowledged write each.
+
+        Turning torque off tries every motor even when one does not answer;
+        turning it on stops at the first failure.
+        """
         if self._bus is None:
             raise RuntimeError("Driver is not connected. Call connect() before set_torque_enabled().")
+        if not enabled:
+            self._bus.disable_torque(motors=motors)
+            return
         for motor in self._bus.motors if motors is None else motors:
             self._bus.write("Torque_Enable", motor, int(enabled))
 
