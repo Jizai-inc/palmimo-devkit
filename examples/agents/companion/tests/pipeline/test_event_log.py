@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import json
 
+import pytest
+
 from palmimo_companion_agent.pipeline.event_log import emit_event
 from palmimo_companion_agent.pipeline.history import KeyboardEvent, ToolExecEvent
 
@@ -50,3 +52,26 @@ def test_emit_event_keeps_non_ascii_text_readable() -> None:
     out = io.StringIO()
     emit_event(KeyboardEvent("こんにちは"), out=out)
     assert "こんにちは" in out.getvalue()
+
+
+def test_emit_event_writes_tool_arguments_as_json_when_they_parse() -> None:
+    out = io.StringIO()
+    arguments = json.dumps({"name": "BLOSSOM", "reason": "壁の花柄"})
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="ok"), out=out)
+    assert json.loads(out.getvalue())["arguments"] == {"name": "BLOSSOM", "reason": "壁の花柄"}
+    assert "壁の花柄" in out.getvalue()
+
+
+@pytest.mark.parametrize("arguments", ['{"name": ', '"BLOSSOM"', "[1]", '{"x": NaN}'])
+def test_emit_event_keeps_tool_arguments_as_a_string_when_they_are_not_a_json_object(arguments: str) -> None:
+    out = io.StringIO()
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="bad"), out=out)
+    assert json.loads(out.getvalue(), parse_constant=pytest.fail)["arguments"] == arguments
+
+
+@pytest.mark.parametrize("arguments", ["[" * 100_000, '{"a": "\\ud800"}'])
+def test_emit_event_keeps_tool_arguments_as_a_string_when_the_parsed_object_cannot_be_written(arguments: str) -> None:
+    raw = io.BytesIO()
+    out = io.TextIOWrapper(raw, encoding="utf-8")
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="bad"), out=out)
+    assert json.loads(raw.getvalue())["arguments"] == arguments
