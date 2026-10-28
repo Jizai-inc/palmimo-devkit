@@ -268,16 +268,20 @@ def test_sync_read_span_reports_nothing_for_an_empty_motor_set() -> None:
 class FakePacketHandler:
     """Stands in for ``dynamixel_sdk.PacketHandler`` acknowledged writes; *silent* ids never answer."""
 
-    def __init__(self, silent: set[int]) -> None:
+    def __init__(self, silent: set[int], error: int = 0) -> None:
         self.silent = silent
+        self.error = error
         self.writes: list[int] = []
 
     def writeTxRx(self, port: object, motor_id: int, address: int, length: int, data: list[int]) -> tuple[int, int]:  # noqa: N802 - mirrors the vendored SDK's name
         self.writes.append(motor_id)
-        return (COMM_RX_FAIL if motor_id in self.silent else COMM_SUCCESS), 0
+        return (COMM_RX_FAIL if motor_id in self.silent else COMM_SUCCESS), self.error
 
     def getTxRxResult(self, comm: int) -> str:  # noqa: N802 - mirrors the vendored SDK's name
         return "[TxRxResult] There is no status packet!"
+
+    def getRxPacketError(self, error: int) -> str:  # noqa: N802 - mirrors the vendored SDK's name
+        return f"[RxPacketError] {error:#04x}"
 
 
 def test_disable_torque_still_reaches_the_motors_after_a_silent_one() -> None:
@@ -292,3 +296,22 @@ def test_disable_torque_still_reaches_the_motors_after_a_silent_one() -> None:
         bus.disable_torque()
 
     assert handler.writes == [1, 2, 3]
+
+
+@pytest.mark.parametrize(
+    ("error", "raises"),
+    [(0x80, False), (0x80 | 0x04, True), (0x04, True)],
+    ids=["alert_only", "alert_and_other", "other_only"],
+)
+def test_write_fails_only_on_a_status_error_beyond_the_alert_bit(error: int, raises: bool) -> None:
+    """The Alert bit flags a latched hardware error; the write itself was processed."""
+    bus = make_bus(FakeSyncReader({}), MOTORS)
+    bus.packet_handler = FakePacketHandler(silent=set(), error=error)
+    bus.port_handler = object()
+    bus._dxl = dynamixel_sdk
+
+    if raises:
+        with pytest.raises(RuntimeError, match=r"Failed to write 'Torque_Enable' on id 1"):
+            bus.write("Torque_Enable", "leg_1_yaw", 0)
+    else:
+        bus.write("Torque_Enable", "leg_1_yaw", 0)
