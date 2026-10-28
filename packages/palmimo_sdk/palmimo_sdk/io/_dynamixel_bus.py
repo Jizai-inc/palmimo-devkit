@@ -40,9 +40,6 @@ OPERATING_MODE_POSITION = 3
 _TORQUE_ENABLE = 1
 _TORQUE_DISABLE = 0
 
-_ALERT_BIT = 0x80
-"""Protocol 2.0 status-packet Alert flag: the servo has a hardware error latched; the instruction itself ran."""
-
 # The servo's control table — {register: (address, size_bytes)}. Only the
 # registers this codebase touches (SDK driver + maintainer reach-ins) are listed;
 # an unlisted register raises KeyError loudly rather than misaddressing silently.
@@ -350,7 +347,9 @@ class DynamixelBus:
 
         Raises:
             NotImplementedError: *normalize* is True (this bus is raw-ticks only).
-            ConnectionError / RuntimeError: The write failed after all retries.
+            ConnectionError: No status packet came back after all retries.
+            RuntimeError: The servo rejected the write. A bare Alert bit is
+                not a rejection.
         """
         _reject_normalize(normalize)
         addr, length = CONTROL_TABLE[data_name]
@@ -528,11 +527,12 @@ class DynamixelBus:
     def _check(self, comm: int, error: int, what: str) -> None:
         """Raise if a single-motor comm result or packet error indicates failure.
 
-        A bare Alert bit is not a failure: the instruction was processed.
+        A bare Alert bit (``ERRBIT_ALERT``) is not a failure: it flags a latched
+        hardware error, and the instruction itself was processed.
         """
         if comm != self._comm_success:
             raise ConnectionError(f"Failed to {what}: {self.packet_handler.getTxRxResult(comm)}")
-        rejection = error & ~_ALERT_BIT
+        rejection = error & ~self._dxl.ERRBIT_ALERT
         if rejection != 0:
             raise RuntimeError(f"Failed to {what}: {self.packet_handler.getRxPacketError(rejection)}")
 

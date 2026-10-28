@@ -284,13 +284,19 @@ class FakePacketHandler:
         return f"[RxPacketError] {error:#04x}"
 
 
-def test_disable_torque_still_reaches_the_motors_after_a_silent_one() -> None:
-    """One unplugged servo must not leave every servo behind it armed."""
-    handler = FakePacketHandler(silent={2})
+def make_write_bus(handler: FakePacketHandler) -> DynamixelBus:
+    """A bus whose acknowledged writes go to *handler*."""
     bus = make_bus(FakeSyncReader({}), MOTORS)
     bus.packet_handler = handler
     bus.port_handler = object()
     bus._dxl = dynamixel_sdk
+    return bus
+
+
+def test_disable_torque_still_reaches_the_motors_after_a_silent_one() -> None:
+    """One unplugged servo must not leave every servo behind it armed."""
+    handler = FakePacketHandler(silent={2})
+    bus = make_write_bus(handler)
 
     with pytest.raises(ConnectionError, match=r"1 motor\(s\): leg_1_pitch1"):
         bus.disable_torque()
@@ -305,13 +311,11 @@ def test_disable_torque_still_reaches_the_motors_after_a_silent_one() -> None:
 )
 def test_write_fails_only_on_a_status_error_beyond_the_alert_bit(error: int, raises: bool) -> None:
     """The Alert bit flags a latched hardware error; the write itself was processed."""
-    bus = make_bus(FakeSyncReader({}), MOTORS)
-    bus.packet_handler = FakePacketHandler(silent=set(), error=error)
-    bus.port_handler = object()
-    bus._dxl = dynamixel_sdk
+    bus = make_write_bus(FakePacketHandler(silent=set(), error=error))
 
     if raises:
-        with pytest.raises(RuntimeError, match=r"Failed to write 'Torque_Enable' on id 1"):
+        # The message names the rejection code alone, not the masked-off alert.
+        with pytest.raises(RuntimeError, match=r"Failed to write 'Torque_Enable' on id 1: \[RxPacketError\] 0x04$"):
             bus.write("Torque_Enable", "leg_1_yaw", 0)
     else:
         bus.write("Torque_Enable", "leg_1_yaw", 0)
