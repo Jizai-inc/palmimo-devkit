@@ -476,9 +476,11 @@ def _model_words(page: ElementTree.Element) -> Counter[str]:
     by_id = {cell_id: cell for cell_id, _, cell in cells if cell_id is not None}
 
     def shown(cell: ElementTree.Element | None) -> bool:
-        while cell is not None:
+        visited: set[int] = set()
+        while cell is not None and id(cell) not in visited:
             if cell.get("visible") == "0":
                 return False
+            visited.add(id(cell))
             cell = by_id.get(cell.get("parent", ""))
         return True
 
@@ -571,6 +573,8 @@ def test_drawio_svg_label_check_rejects_a_label_edited_in_one_layer_and_a_missin
     assert _layer_label_difference(plain(shown + hidden_layer + hidden_group)) is None
     literal = '<mxCell id="1" value="A &amp;amp; B"/>'
     assert _layer_label_difference(plain(literal, drawn="A &amp;amp; B")) is None
+    cycle = '<mxCell id="1" value="Servo" parent="2"/><mxCell id="2" parent="1"/>'
+    assert _layer_label_difference(plain(cycle)) is None
     markup = '<mxCell id="1" value="&lt;b&gt;Servo&lt;/b&gt;" style="html=1;"/>'
     assert _layer_label_difference(plain(markup)) is None
     assert _layer_label_difference(plain(shown, pages=2)) == (
