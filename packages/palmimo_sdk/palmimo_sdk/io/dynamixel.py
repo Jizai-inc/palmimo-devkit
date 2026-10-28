@@ -59,8 +59,8 @@ _VOLTAGE_UNITS_PER_VOLT = 10.0
 # robot is attached or the matched port is some other device (see _timeout.py).
 _BUS_CONNECT_TIMEOUT_S = 10.0
 
-# Extra attempts for a torque-off write: one dropped status packet is survivable,
-# while a silent servo stalls the caller for about 2 x the packet timeout.
+# Extra attempts for each torque-off write: one dropped status packet is survivable,
+# while every silent servo stalls the caller for about 2 x the packet timeout.
 _TORQUE_OFF_RETRY = 1
 
 
