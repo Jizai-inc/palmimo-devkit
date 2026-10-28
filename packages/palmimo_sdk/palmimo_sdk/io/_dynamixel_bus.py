@@ -318,9 +318,9 @@ class DynamixelBus:
         """Enable torque on *motors* (every motor when ``None``).
 
         A communication failure or rejection stops at the first motor. A reply
-        carrying the Alert bit does not stop the sweep, but torque does not
-        take on a servo that has shut down, so it is raised once every motor
-        has been written.
+        carrying the Alert bit does not stop the sweep, but a servo that shut
+        down on its error will not take torque, so it is raised once every
+        motor has been written.
 
         Raises:
             ConnectionError / RuntimeError: A write failed (stops at the first such
@@ -332,7 +332,7 @@ class DynamixelBus:
         alerted = [motor for motor in names if self.write("Torque_Enable", motor, _TORQUE_ENABLE, num_retry=num_retry)]
         if alerted:
             raise RuntimeError(
-                f"Torque is not holding: hardware error latched on {self._describe_latched(alerted)}; "
+                f"Torque may not hold: hardware error latched on {self._describe_latched(alerted)}; "
                 "reboot the servo to clear it."
             )
 
