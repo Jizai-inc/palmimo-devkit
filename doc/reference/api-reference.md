@@ -8,6 +8,27 @@ from palmimo_sdk import Palmimo
 robot = Palmimo()
 ```
 
+## Constructor
+
+`Palmimo(gait_speed=0.012, step_length=30.0, step_height=30.0, on_step=None, *, fps=60, driver=None, display=None, speaker=None, camera=None, mic=None, auto_wake=True, thermal_clock=None, arm_overload_current=ARM_OVERLOAD_CURRENT, leg_overload_current=LEG_OVERLOAD_CURRENT, rail_undervoltage_v=RAIL_UNDERVOLTAGE_V, flight_recorder=True, incident_dir=None)`
+
+The first four arguments are positional-or-keyword; everything after the `*` is keyword-only.
+
+| Argument | Default | Description |
+|---|---|---|
+| `gait_speed` | `0.012` | Gait phase increment per `step()` call |
+| `step_length` | `30.0` | Walking stride length in mm |
+| `step_height` | `30.0` | Swing-leg lift height in mm for the walk and rotate gaits |
+| `on_step` | `None` | Callback invoked with the position dict after every `step()`, after any driver write |
+| `fps` | `60` | Control rate in cycles per second; must be positive (`ValueError` otherwise). Converts between seconds and steps in `run()` and `play()` |
+| `driver` | `None` | `ServoDriver`; `None` makes the facade compute-only |
+| `display` / `speaker` / `camera` / `mic` | `None` | Peripherals — see [Peripherals & Connection](#peripherals--connection) |
+| `auto_wake` | `True` | Whether `connect()` runs the `wake()` glide once a driver is attached |
+| `thermal_clock` | `None` | Clock injected into the neck thermal and overload guards in place of `time.monotonic`; for tests |
+| `arm_overload_current` / `leg_overload_current` | `ARM_OVERLOAD_CURRENT` / `LEG_OVERLOAD_CURRENT` | See [Overload Guard](#overload-guard) |
+| `rail_undervoltage_v` | `RAIL_UNDERVOLTAGE_V` | See [Rail Undervoltage Guard](#rail-undervoltage-guard) |
+| `flight_recorder` / `incident_dir` | `True` / `None` | See [Servo Flight Recorder](#servo-flight-recorder) |
+
 ## Motion Commands
 
 | Method | Motion Enum | String Aliases |
@@ -1505,6 +1526,29 @@ comma-separated names in ascending bit order (e.g. `0x21` becomes
 `ElectricalShock` (4), and `Overload` (5). Bit 3 is reserved in the XC330-M288
 e-Manual and is described as `"bit3"`.
 
+### `DynamixelDriver`
+
+The bundled hardware backend (Dynamixel serial bus; needs the `palmimo-sdk[hardware]` extra).
+
+`DynamixelDriver(port=None, *, baudrate=1_000_000, motor_model="xc330-m288", profile_velocity=300, keep_torque_on_disconnect=False, calibration=None, bus_factory=..., connect_timeout=10.0)`
+
+- `port=None` auto-detects the bus at `connect()` (see [Port Auto-Detection](#port-auto-detection)).
+- `motor_model` must be one of `SUPPORTED_MOTOR_MODELS`; any other value raises `ValueError`. `"xc330-m288"` is the real hardware; `"xl330-m288"` fails the connect handshake on actual units.
+- `profile_velocity` is the time-based Profile_Velocity applied to every motor at connect, in milliseconds per move (lower is faster).
+- `keep_torque_on_disconnect=False` cuts torque on `disconnect()`.
+- `calibration` is accepted for API parity but not applied: the bus exchanges raw ticks.
+- `bus_factory` opens the serial bus; replace it to run the driver against a fake bus in tests.
+- `connect_timeout` bounds the whole connect sequence (see `DynamixelConnectTimeoutError` below).
+
+```python
+from palmimo_sdk import SUPPORTED_MOTOR_MODELS, palmimo_motor_ids
+
+SUPPORTED_MOTOR_MODELS   # ("xl330-m288", "xc330-m288")
+palmimo_motor_ids()      # {"leg_1_yaw": 1, ..., "neck_pitch1": 19, "neck_pitch2": 20, "neck_yaw": 21}
+```
+
+`palmimo_motor_ids() -> dict[str, int]` returns the 21-motor name to Dynamixel ID map: IDs 1-18 are the six legs (`leg_{1-6}_{yaw,pitch1,pitch2}`, body to tip), IDs 19-21 the neck. The names match the keys `step()` emits.
+
 ## Port Auto-Detection
 
 ### `find_servo_port() -> str`
@@ -1529,6 +1573,11 @@ Raises `PortDetectionError` when zero or multiple candidates are found.
 Calling it yourself is only needed to print or log the resolved path —
 `DynamixelDriver(port=None)` (the default) runs the same detection at
 `connect()` time, mirroring `FaceDisplay(port=None)`.
+
+### `find_face_port() -> str | None`
+Return the serial device path of the attached face display, or `None` when none is found. It matches the face display's USB vendor ID (`0x2E8A`), so on a Pi, where the face and the servo bus both appear as `/dev/ttyACM*`, it picks the face and not the bus. With several face displays attached it logs a warning and returns the first.
+
+Unlike `find_servo_port()`, it does not raise on a miss. `FaceDisplay(port=None)` (the default) calls it at `connect()` and raises `FaceDisplayError` when it returns `None`.
 
 ### `PortDetectionError`
 Raised by `find_servo_port()` when detection fails. The message always
