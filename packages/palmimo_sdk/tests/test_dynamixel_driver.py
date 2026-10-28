@@ -73,6 +73,7 @@ class FakeBus:
         # sync_write appends an (address, data) 2-tuple; write appends an
         # (address, motor, value) 3-tuple — a variable-length list that allows both.
         self.writes: list[tuple[Any, ...]] = []
+        self.disable_torque_retries: list[int] = []
         self.disconnect_calls: list[bool] = []
         # One ordered log of every bus call. `writes` and `disconnect_calls` are
         # separate lists, so a test reading them cannot tell which happened
@@ -118,6 +119,7 @@ class FakeBus:
         self.events.append(("write", address, motor))
 
     def disable_torque(self, num_retry: int = 0, *, motors: Sequence[str] | None = None) -> None:
+        self.disable_torque_retries.append(num_retry)
         for motor in self.motors if motors is None else motors:
             self.write("Torque_Enable", motor, 0)
 
@@ -1160,6 +1162,15 @@ def test_set_torque_enabled_without_motors_writes_every_motor() -> None:
     driver.set_torque_enabled(False)
 
     assert [w[1] for w in bus.writes] == list(MOTOR_NAMES)
+
+
+def test_set_torque_off_asks_the_bus_to_retry_once() -> None:
+    driver, bus, _ = make_driver()
+    driver.connect()
+
+    driver.set_torque_enabled(False, ["leg_3_yaw"])
+
+    assert bus.disable_torque_retries == [1]
 
 
 def test_set_torque_enabled_requires_a_connection() -> None:

@@ -59,6 +59,10 @@ _VOLTAGE_UNITS_PER_VOLT = 10.0
 # robot is attached or the matched port is some other device (see _timeout.py).
 _BUS_CONNECT_TIMEOUT_S = 10.0
 
+# Extra attempts for a torque-off write: one dropped status packet is survivable,
+# while a silent servo stalls the caller for about 2 x the packet timeout.
+_TORQUE_OFF_RETRY = 1
+
 
 class DynamixelConnectTimeoutError(RuntimeError):
     """Raised when connecting to the servo bus exceeds :data:`_BUS_CONNECT_TIMEOUT_S`.
@@ -434,13 +438,13 @@ class DynamixelDriver(ServoDriver):
     def set_torque_enabled(self, enabled: bool, motors: Sequence[str] | None = None) -> None:
         """Write Torque_Enable on *motors* (every motor when ``None``), one acknowledged write each.
 
-        Turning torque off tries every motor even when one does not answer;
-        turning it on stops at the first failure.
+        Turning torque off tries every motor even when one does not answer and
+        resends each write once; turning it on stops at the first failure.
         """
         if self._bus is None:
             raise RuntimeError("Driver is not connected. Call connect() before set_torque_enabled().")
         if not enabled:
-            self._bus.disable_torque(motors=motors)
+            self._bus.disable_torque(num_retry=_TORQUE_OFF_RETRY, motors=motors)
             return
         for motor in self._bus.motors if motors is None else motors:
             self._bus.write("Torque_Enable", motor, int(enabled))
