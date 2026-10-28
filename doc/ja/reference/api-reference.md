@@ -236,7 +236,7 @@ LeRobot プラグインのスクリプトは LeRobot の `DynamixelMotorsBus` �
 
 後続のリソースや、起動時の滑らかな移動自体が失敗すると、すでに開いたリソースを閉じてからエラーを再送出します。そのため、部分的な失敗でも、ハンドルを閉じるときに予約が解放されます。このロールバックは `Exception` だけでなく、起動時の移動中の `KeyboardInterrupt`（Ctrl+C）にも対応します。ほかのロールバックと同様、ドライバーを閉じる前に首を柔らかく解放するため、起動が中断されても、トルクを切る直前まで頭をフルゲインで保持したままにはなりません。
 
-`DynamixelDriver.connect()` と `FaceDisplay.connect()` は、ロボットが接続されていないマシンで待ち続けず、早期に失敗します。接続処理全体（ポート検出、ポート / バスのオープン、Dynamixel バスではモーターとのハンドシェイクとトルク有効化も含む）に、ドライバーごとの `connect_timeout` で上限を設けています。デフォルトは 10 秒 / 5 秒で、 1 秒未満の実機の場合に対し十分な余裕があります。超過すると、 `DynamixelConnectTimeoutError` / `FaceDisplayConnectTimeoutError` を送出します。これらはほかの接続失敗と同様、`robot.connect()` のロールバックを通じて伝播します（詳細は後述および `palmimo_sdk.io._timeout` を参照）。 また `DynamixelDriver.connect()` は、トルクを有効にする前に各モーターの現在位置を Goal_Position に書き込みます。4 回試しても読み取れないモーターがあれば、そのモーター名を示す `ConnectionError` を送出し、トルクは OFF のままです。
+`DynamixelDriver.connect()` と `FaceDisplay.connect()` は、ロボットが接続されていないマシンで待ち続けず、早期に失敗します。接続処理全体（ポート検出、ポート / バスのオープン、Dynamixel バスではモーターとのハンドシェイクとトルク有効化も含む）に、ドライバーごとの `connect_timeout` で上限を設けています。デフォルトは 10 秒 / 5 秒で、 1 秒未満の実機の場合に対し十分な余裕があります。超過すると、 `DynamixelConnectTimeoutError` / `FaceDisplayConnectTimeoutError` を送出します。これらはほかの接続失敗と同様、`robot.connect()` のロールバックを通じて伝播します（詳細は後述および `palmimo_sdk.io._timeout` を参照）。また `DynamixelDriver.connect()` は、トルクを有効にする前に各モーターの現在位置を Goal_Position に書き込みます。4 回試しても読み取れないモーターがあれば、そのモーター名を示す `ConnectionError` を送出し、トルクは OFF のままです。
 
 ### `robot.disconnect(*, park=True) -> None`
 ロボットをパークし、マイク、カメラ、スピーカーを順に閉じます。その後、ディスプレイをニュートラルの IDLE の顔へ戻して閉じ、最後にドライバーを閉じます。冪等で、アイドル時も安全です。周辺機器の終了処理はベストエフォートです。

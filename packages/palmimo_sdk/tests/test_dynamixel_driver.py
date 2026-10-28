@@ -5,11 +5,10 @@ int casting, and torque-on-disconnect behavior. A fake bus is injected via
 ``bus_factory`` so none of it touches hardware.
 """
 
-import contextlib
 import signal
 import threading
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import pytest
@@ -1307,15 +1306,6 @@ class _SeedBus(FakeBus):
     def configure_motors(self) -> None:
         pass
 
-    @contextlib.contextmanager
-    def torque_disabled(self) -> Iterator[None]:
-        # Same contract as the real bus: torque comes back on when the body exits, even on error.
-        self.disable_torque()
-        try:
-            yield
-        finally:
-            self.enable_torque()
-
     def set_baudrate(self, baudrate: int) -> None:
         pass
 
@@ -1334,10 +1324,12 @@ def test_open_bus_retries_seed_read_then_enables_torque_after_profile_velocity(m
     goals = [w for w in bus.writes if w[0] == "Goal_Position"]
     assert len(goals) == len(MOTOR_NAMES)
     assert all(w[2] == 2000 for w in goals)
-    assert bus.events.index(("sync_write", "Profile_Velocity")) < bus.events.index(("enable_torque",))
+    torque_on = bus.events.index(("enable_torque",))
+    assert all(bus.events.index(("write", "Goal_Position", m)) < torque_on for m in MOTOR_NAMES)
+    assert bus.events.index(("sync_write", "Profile_Velocity")) < torque_on
 
 
-@pytest.mark.parametrize("failure", [None, RuntimeError("bus down")])
+@pytest.mark.parametrize("failure", [None, ConnectionError("bus down")])
 def test_open_bus_keeps_torque_off_when_a_motor_stays_unread(
     monkeypatch: pytest.MonkeyPatch, failure: Exception | None
 ) -> None:

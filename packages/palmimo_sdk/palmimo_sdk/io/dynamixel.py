@@ -177,7 +177,7 @@ def _seed_hold_pose(bus: Any) -> None:
     for _ in range(_SEED_READ_ATTEMPTS):
         try:
             pres = bus.sync_read("Present_Position", normalize=False)
-        except Exception as exc:
+        except OSError as exc:
             last_error = exc
             continue
         if pres is not None:
