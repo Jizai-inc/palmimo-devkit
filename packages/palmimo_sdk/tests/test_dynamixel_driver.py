@@ -8,7 +8,7 @@ int casting, and torque-on-disconnect behavior. A fake bus is injected via
 import signal
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import pytest
@@ -116,6 +116,10 @@ class FakeBus:
             raise RuntimeError(f"simulated bus failure on {address}")
         self.writes.append((address, motor, value))
         self.events.append(("write", address, motor))
+
+    def disable_torque(self, num_retry: int = 0, *, motors: Sequence[str] | None = None) -> None:
+        for motor in self.motors if motors is None else motors:
+            self.write("Torque_Enable", motor, 0)
 
     def sync_read(self, address: str, normalize: bool = False, num_retry: int = 0) -> dict[str, int | None] | None:
         self.read_calls += 1
