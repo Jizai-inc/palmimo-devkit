@@ -455,7 +455,8 @@ def _pages(svg_root: ElementTree.Element) -> list[ElementTree.Element] | None:
 
 
 def _model_words(page: ElementTree.Element) -> Counter[str]:
-    # Counts labels of cells whose own layer and groups are all visible. Not handled: %placeholders%, collapsed groups.
+    # Counts labels of cells whose own layer and groups are all visible. Not handled: %placeholders%,
+    # collapsed groups, noLabel=1, and edges whose source or target is hidden.
     model = page.find("mxGraphModel")
     if model is None:
         text = "".join((page.text or "").split())
