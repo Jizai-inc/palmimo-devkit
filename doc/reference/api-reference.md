@@ -1499,7 +1499,9 @@ tick) in one sweep, with the same `silent` / `unreached` bookkeeping. The
 [Rail Undervoltage Guard](#rail-undervoltage-guard) reads `voltage`.
 `ServoDriver.set_torque_enabled(enabled, motors=None)` switches torque on the
 named motors (every motor when `None`). Both are optional capabilities; the
-defaults raise `NotImplementedError`.
+defaults raise `NotImplementedError`. On `DynamixelDriver`, switching torque on
+(which `connect()` also does) raises `RuntimeError` naming any servo that has a
+hardware error latched, because torque does not take on a servo that has shut down.
 
 `ServoDriver.read_hardware_errors(motors=None)` returns a `HardwareErrorRead`
 (`palmimo_sdk.io.base.HardwareErrorRead`) in one sweep; `None` selects all motors.

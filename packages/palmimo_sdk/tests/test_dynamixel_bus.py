@@ -268,14 +268,18 @@ def test_sync_read_span_reports_nothing_for_an_empty_motor_set() -> None:
 class FakePacketHandler:
     """Stands in for ``dynamixel_sdk.PacketHandler`` acknowledged writes; *silent* ids never answer."""
 
-    def __init__(self, silent: set[int], error: int = 0) -> None:
+    def __init__(self, silent: set[int], error: int = 0, errors: dict[int, int] | None = None) -> None:
         self.silent = silent
         self.error = error
+        self.errors = errors or {}
         self.writes: list[int] = []
 
     def writeTxRx(self, port: object, motor_id: int, address: int, length: int, data: list[int]) -> tuple[int, int]:  # noqa: N802 - mirrors the vendored SDK's name
         self.writes.append(motor_id)
-        return (COMM_RX_FAIL if motor_id in self.silent else COMM_SUCCESS), self.error
+        return (COMM_RX_FAIL if motor_id in self.silent else COMM_SUCCESS), self.errors.get(motor_id, self.error)
+
+    def ping(self, port: object, motor_id: int) -> tuple[int, int, int]:
+        return 1200, COMM_SUCCESS, self.errors.get(motor_id, self.error)
 
     def getTxRxResult(self, comm: int) -> str:  # noqa: N802 - mirrors the vendored SDK's name
         return "[TxRxResult] There is no status packet!"
@@ -319,3 +323,29 @@ def test_write_fails_only_on_a_status_error_beyond_the_alert_bit(error: int, rai
             bus.write("Torque_Enable", "leg_1_yaw", 0)
     else:
         bus.write("Torque_Enable", "leg_1_yaw", 0)
+
+
+@pytest.mark.parametrize("alerted", [False, True], ids=["clean", "alert_on_one"])
+def test_enable_torque_raises_after_writing_every_motor_when_one_reports_an_alert(alerted: bool) -> None:
+    """A servo that shut down answers the torque write with Alert; torque is not holding."""
+    handler = FakePacketHandler(silent=set(), errors={2: 0x80} if alerted else {})
+    bus = make_write_bus(handler)
+
+    if alerted:
+        with pytest.raises(RuntimeError, match=r"hardware error latched on leg_1_pitch1"):
+            bus.enable_torque()
+    else:
+        bus.enable_torque()
+
+    assert handler.writes == [1, 2, 3]
+
+
+@pytest.mark.parametrize(
+    ("error", "found"),
+    [(0x80, True), (0x80 | 0x04, False), (0x04, False)],
+    ids=["alert_only", "alert_and_other", "other_only"],
+)
+def test_ping_counts_a_servo_with_only_the_alert_bit_as_present(error: int, found: bool) -> None:
+    bus = make_write_bus(FakePacketHandler(silent=set(), error=error))
+
+    assert (bus._ping(1) == 1200) is found
