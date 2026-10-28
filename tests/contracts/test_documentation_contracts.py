@@ -468,9 +468,11 @@ def _model_words(page: ElementTree.Element) -> Counter[str]:
     cells: list[tuple[str | None, str | None, ElementTree.Element]] = []
     wrapped: set[int] = set()
     for element in model.iter():
-        if element.tag in ("UserObject", "object") and (inner := element.find("mxCell")) is not None:
-            cells.append((element.get("id"), element.get("label"), inner))
-            wrapped.add(id(inner))
+        if element.tag in ("UserObject", "object"):
+            inner = element.find("mxCell")
+            cells.append((element.get("id"), element.get("label"), element if inner is None else inner))
+            if inner is not None:
+                wrapped.add(id(inner))
         elif element.tag == "mxCell" and id(element) not in wrapped:
             cells.append((element.get("id"), element.get("value"), element))
     by_id = {cell_id: cell for cell_id, _, cell in cells if cell_id is not None}
@@ -563,6 +565,7 @@ def test_drawio_svg_label_check_rejects_a_label_edited_in_one_layer_and_a_missin
 
     shown = '<mxCell id="1" value="Servo"/>'
     assert _layer_label_difference(plain('<UserObject label="Servo" id="2"><mxCell/></UserObject>')) is None
+    assert _layer_label_difference(plain('<UserObject label="Servo" id="2"/>')) is None
     wrapped_hidden = '<UserObject label="Gone" id="2"><mxCell visible="0"/></UserObject>'
     assert _layer_label_difference(plain(shown + wrapped_hidden)) is None
     assert _layer_label_difference(plain(shown + '<mxCell id="3" value="Gone" visible="0"/>')) is None
