@@ -455,7 +455,7 @@ def _pages(svg_root: ElementTree.Element) -> list[ElementTree.Element] | None:
 
 
 def _model_words(page: ElementTree.Element) -> Counter[str]:
-    # Counts labels of visible cells. Not handled: %placeholders%, collapsed groups, cells under a hidden layer.
+    # Counts labels of cells whose own layer and groups are all visible. Not handled: %placeholders%, collapsed groups.
     model = page.find("mxGraphModel")
     if model is None:
         text = "".join((page.text or "").split())
@@ -463,24 +463,33 @@ def _model_words(page: ElementTree.Element) -> Counter[str]:
             return Counter()
         packed = base64.b64decode(text)
         model = ElementTree.fromstring(urllib.parse.unquote(zlib.decompressobj(-15).decompress(packed).decode()))
-    # A cell with a link or properties keeps its label on a <UserObject>/<object> wrapper, its
-    # visibility on the inner <mxCell>.
-    wrappers = [cell for cell in model.iter() if cell.tag in ("UserObject", "object")]
-    wrapped = {id(inner) for wrapper in wrappers for inner in wrapper.findall("mxCell")}
+    # A cell with a link or properties keeps its id and label on a <UserObject>/<object> wrapper,
+    # and its parent, visibility and style on the inner <mxCell>.
+    cells: list[tuple[str | None, str | None, ElementTree.Element]] = []
+    wrapped: set[int] = set()
+    for element in model.iter():
+        if element.tag in ("UserObject", "object") and (inner := element.find("mxCell")) is not None:
+            cells.append((element.get("id"), element.get("label"), inner))
+            wrapped.add(id(inner))
+        elif element.tag == "mxCell" and id(element) not in wrapped:
+            cells.append((element.get("id"), element.get("value"), element))
+    by_id = {cell_id: cell for cell_id, _, cell in cells if cell_id is not None}
+
+    def shown(cell: ElementTree.Element | None) -> bool:
+        while cell is not None:
+            if cell.get("visible") == "0":
+                return False
+            cell = by_id.get(cell.get("parent", ""))
+        return True
+
     words: Counter[str] = Counter()
-    for cell in model.iter():
-        if id(cell) in wrapped:
+    for _, label, cell in cells:
+        if not label or not shown(cell):
             continue
-        if cell.tag == "mxCell":
-            label, hidden = cell.get("value"), cell.get("visible") == "0"
-        elif cell in wrappers:
-            inner = cell.find("mxCell")
-            label = cell.get("label")
-            hidden = cell.get("visible") == "0" or (inner is not None and inner.get("visible") == "0")
-        else:
-            continue
-        if label and not hidden:
-            words.update(html.unescape(re.sub(r"<[^>]+>", " ", label)).split())
+        # Only an html=1 label is markup; draw.io shows any other label as the literal string.
+        if "html=1" in (cell.get("style") or "").split(";"):
+            label = html.unescape(re.sub(r"<[^>]+>", " ", label))
+        words.update(label.split())
     return words
 
 
@@ -539,9 +548,9 @@ def test_drawio_svg_label_check_rejects_a_label_edited_in_one_layer_and_a_missin
     def svg(label: str, attributes: str = f'content="{content}"') -> str:
         return f'<svg xmlns="http://www.w3.org/2000/svg" {attributes}><text>{label}</text></svg>'
 
-    def plain(cells: str, pages: int = 1) -> str:
+    def plain(cells: str, pages: int = 1, drawn: str = "Servo") -> str:
         page = f"<diagram><mxGraphModel><root>{cells}</root></mxGraphModel></diagram>" * pages
-        return svg("Servo", f'content="{html.escape(f"<mxfile>{page}</mxfile>", quote=True)}"')
+        return svg(drawn, f'content="{html.escape(f"<mxfile>{page}</mxfile>", quote=True)}"')
 
     assert _layer_label_difference(svg("Servo")) is None
     assert _layer_label_difference(svg("<tspan>Servo</tspan>")) is None
@@ -555,6 +564,15 @@ def test_drawio_svg_label_check_rejects_a_label_edited_in_one_layer_and_a_missin
     wrapped_hidden = '<UserObject label="Gone" id="2"><mxCell visible="0"/></UserObject>'
     assert _layer_label_difference(plain(shown + wrapped_hidden)) is None
     assert _layer_label_difference(plain(shown + '<mxCell id="3" value="Gone" visible="0"/>')) is None
+    hidden_layer = '<mxCell id="4" visible="0"/><mxCell id="5" value="Gone" parent="4"/>'
+    hidden_group = (
+        '<mxCell id="6" visible="0" parent="1"/><UserObject label="Gone" id="7"><mxCell parent="6"/></UserObject>'
+    )
+    assert _layer_label_difference(plain(shown + hidden_layer + hidden_group)) is None
+    literal = '<mxCell id="1" value="A &amp;amp; B"/>'
+    assert _layer_label_difference(plain(literal, drawn="A &amp;amp; B")) is None
+    markup = '<mxCell id="1" value="&lt;b&gt;Servo&lt;/b&gt;" style="html=1;"/>'
+    assert _layer_label_difference(plain(markup)) is None
     assert _layer_label_difference(plain(shown, pages=2)) == (
         "the embedded draw.io model has 2 pages; keep one figure per .drawio.svg"
     )
