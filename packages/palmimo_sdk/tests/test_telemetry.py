@@ -7,6 +7,7 @@ import pytest
 
 from palmimo_sdk.io.base import ServoDriver, ServoTelemetry
 from palmimo_sdk.telemetry import (
+    EMPTY_READS_TO_BLIND,
     RECHECK_INTERVAL_S,
     SILENT_SWEEPS_TO_SET_ASIDE,
     TelemetryPoller,
@@ -173,3 +174,44 @@ def test_blind_error_is_logged_once_and_never_raises(caplog: pytest.LogCaptureFi
 
     assert len(poller.unwatched) == 3
     assert len([r for r in caplog.records if r.levelno == logging.ERROR]) == 1
+
+
+class _NoAnswerDriver(BusDriver):
+    """Every sweep yields no motor, the way *failure* says, until ``answering`` is set."""
+
+    def __init__(self, failure: str) -> None:
+        super().__init__()
+        self.failure = failure
+        self.answering = False
+
+    def read_telemetry(self, motors: Sequence[str] | None = None) -> ServoTelemetry:
+        if self.answering:
+            return super().read_telemetry(motors)
+        if self.failure == "raises":
+            raise OSError("port read failed")
+        return ServoTelemetry(unreached=tuple(motors or BUS))
+
+
+@pytest.mark.parametrize("failure", ["unreached", "raises"])
+def test_blind_error_is_logged_once_when_no_read_carries_a_motor(
+    failure: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    poller, driver = _poller(), _NoAnswerDriver(failure)
+
+    def errors() -> int:
+        return len([r for r in caplog.records if r.levelno == logging.ERROR])
+
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        for i in range(EMPTY_READS_TO_BLIND - 1):
+            poller.read(driver, i * 0.1, "read failed")
+        assert errors() == 0
+        for i in range(EMPTY_READS_TO_BLIND - 1, EMPTY_READS_TO_BLIND * 3):
+            poller.read(driver, i * 0.1, "read failed")
+        assert errors() == 1
+
+        driver.answering = True
+        caplog.clear()
+        poller.read(driver, 10.0, "read failed")
+
+    assert [r.levelno for r in caplog.records] == [logging.WARNING]
+    assert "watch the bus" in caplog.records[0].getMessage()
