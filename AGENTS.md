@@ -157,8 +157,7 @@ in `toolset.py` saying so).
   directly and is NOT covered** — see that package's `palmimo.py` module
   docstring. The overload and rail guards also watch the glides of `wake()`,
   `return_to_neutral(duration=...)` and `sleep()`, which write the driver
-  directly, but they never stop them (an arm trip softens that arm, except in
-  `sleep()`, which only records).
+  directly; there they only record a trip and never stop the glide.
 - Always smooth transitions — abrupt jumps damage gears
 - `stop()` returns to neutral gradually; NEVER skip it
 - Safe servo range: 200-3900 (avoid mechanical limits at 0 and 4095)

@@ -977,9 +977,8 @@ class Palmimo:
         than a fixed step count — keeps this robust to changes in the engine's
         idle-smoothing rate. This path works compute-only (no driver needed).
 
-        The timed glide is watched by the overload and rail guards without
-        being stopped by them: trips are recorded under ``"return_to_neutral"``
-        and an arm trip holds that arm at ``SOFT_RETURN_GAIN``.
+        The timed glide is watched by the overload and rail guards, which only
+        record a trip, under ``"return_to_neutral"`` (see :meth:`_watch_glide`).
 
         "Neutral" here is per-joint: raw servo neutral everywhere except the
         neck pitch, whose front is the engine's rest-trimmed center (see
@@ -994,7 +993,6 @@ class Palmimo:
         # Validate before stop() so a bad duration can't leave the engine idled.
         if duration is not None and duration <= 0:
             raise ValueError("duration must be positive.")
-        arm_legs = self._wave_arm_legs(self._engine.motion)
         self.stop()
         # Motion is now IDLE — release any gesture / neck-gesture tuning before
         # the glide (the timed path drives the driver directly and never calls
@@ -1002,7 +1000,7 @@ class Palmimo:
         self._sync_gesture_tuning()
         self._sync_neck_gesture_tuning()
         if duration is not None:
-            self._timed_return_to_neutral(duration, _cancel_snapshot, arm_legs)
+            self._timed_return_to_neutral(duration, _cancel_snapshot)
             return
         targets = self._neutral_targets()
         for _ in range(max_steps):
@@ -1043,17 +1041,14 @@ class Palmimo:
         to a held-out pose while hot, and this glide only ever moves the neck
         toward center.
 
-        The leg overload and rail guards do watch the glide: a trip is
-        recorded under ``"wake"`` (see :meth:`drain_overload_trips`) and never
-        stops it. An arm trip also holds that arm at ``SOFT_RETURN_GAIN``
-        instead of the ramp, as :meth:`step` would.
+        The leg overload and rail guards watch the glide and only record a
+        trip, under ``"wake"`` (see :meth:`_watch_glide`).
         """
         driver = self._driver
         if driver is None or not driver.is_connected:
             return
         if duration <= 0:
             raise ValueError("duration must be positive.")
-        arm_legs = self._wave_arm_legs(self._engine.motion)
         self.stop()
         # The ramp takes over a soft-returning arm; a release here would snap it to full gain first.
         self._take_soft_return()
@@ -1084,16 +1079,10 @@ class Palmimo:
         steps = max(1, round(duration * self._fps))
         for s in range(1, steps + 1):
             f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
-            self._watch_glide(driver, "wake", arm_legs)
-            # A softened arm stays out of the ramp, or the next frame would stiffen it again.
-            soft_arm = self._leg_safety.soft_return_under(Motion.IDLE) or ()
+            self._watch_glide(driver, "wake")
             if has_gain:
                 try:
-                    self._write_gain(
-                        driver,
-                        int(start_gain + (_WAKE_FULL_GAIN - start_gain) * f),
-                        motors=[n for n in legs if n not in soft_arm],
-                    )
+                    self._write_gain(driver, int(start_gain + (_WAKE_FULL_GAIN - start_gain) * f), motors=legs)
                 except Exception:
                     has_gain = False  # driver can't ramp gain — keep gliding
             frame = {n: round(p + (targets.get(n, MotionEngine.NEUTRAL) - p) * f) for n, p in current.items()}
@@ -1101,22 +1090,22 @@ class Palmimo:
             time.sleep(1.0 / self._fps)
         if has_gain:
             with contextlib.suppress(Exception):
-                # Land exactly on the default gain, except on a still-softened arm.
-                soft_arm = self._leg_safety.soft_return_under(Motion.IDLE) or ()
-                self._write_gain(driver, None, motors=[n for n in current if n not in soft_arm] if soft_arm else None)
+                self._write_gain(driver, None)  # land exactly on the default gain
         self._seed_engine_pose(targets)
 
-    def _watch_glide(self, driver: ServoDriver, name: str, arm_legs: tuple[int, ...]) -> None:
-        """Judge the guards once during a glide that writes the driver directly.
+    def _watch_glide(self, driver: ServoDriver, name: str) -> None:
+        """Judge the leg guards once during a glide that writes the driver directly.
 
-        The glide itself never stops. Trips are recorded under *name*; an arm
-        trip softens that arm exactly as :meth:`step` does, through the gesture
-        tuning sync, which also lets go of the soft gain once the arm is home.
+        Trips are recorded under *name* and nothing reacts: the glide is already
+        heading for neutral, and a leg that was the raised arm lands and takes
+        weight on the way, so every leg is judged on the leg channel, as
+        :meth:`step` judges it once the gesture has ended. A soft-returning arm
+        from an earlier trip is still let go once it is home.
         """
-        tripped = self._leg_safety.poll(driver, Motion.IDLE, arm_legs, glide=name)
+        self._leg_safety.poll(driver, Motion.IDLE, (), glide=name)
         self._leg_safety.take_sweep()
         tuned = self._gesture_tuned
-        if tripped or (tuned is not None and tuned[0] == "soft_return"):
+        if tuned is not None and tuned[0] == "soft_return":
             self._sync_gesture_tuning()
 
     def _sleep_thermal_locked(self, driver: ServoDriver) -> None:
@@ -1219,9 +1208,7 @@ class Palmimo:
         try:
             for s in range(1, steps + 1):
                 f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
-                # No arm legs: this ramp is already taking every leg limp, and an arm
-                # softened here would be restored to full gain once it settled.
-                self._watch_glide(driver, "sleep", ())
+                self._watch_glide(driver, "sleep")
                 if has_gain:
                     try:
                         self._write_gain(driver, int(start_gain + (end_gain - start_gain) * f), motors=firm)
@@ -1325,9 +1312,7 @@ class Palmimo:
         positions = {n: raw[n] for n in wanted if n in raw}
         return _PoseRead(positions, tuple(n for n in wanted if n not in positions))
 
-    def _timed_return_to_neutral(
-        self, duration: float, cancel_snapshot: int | None = None, arm_legs: tuple[int, ...] = ()
-    ) -> None:
+    def _timed_return_to_neutral(self, duration: float, cancel_snapshot: int | None = None) -> None:
         """Software glide straight to the driver, bypassing :meth:`step` (see :meth:`return_to_neutral`).
 
         Outside the neck thermal guard's reach (see :attr:`neck_lock_active`)
@@ -1338,7 +1323,6 @@ class Palmimo:
         Args:
             duration (float): Glide time in seconds.
             cancel_snapshot (int, optional): Cancellation snapshot, see :meth:`cancel`.
-            arm_legs (tuple[int, ...]): Legs that were the raised arm before the glide.
         """
         if self._driver is None or not self._driver.is_connected:
             raise RuntimeError("Timed return-to-neutral needs a connected driver.")
@@ -1363,7 +1347,7 @@ class Palmimo:
             if cancel_snapshot is not None:
                 self._check_cancelled(cancel_snapshot)
             f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
-            self._watch_glide(self._driver, "return_to_neutral", arm_legs)
+            self._watch_glide(self._driver, "return_to_neutral")
             frame = {n: round(p + (targets.get(n, MotionEngine.NEUTRAL) - p) * f) for n, p in current.items()}
             self._write_goal(self._driver, frame)
             time.sleep(1.0 / self._fps)

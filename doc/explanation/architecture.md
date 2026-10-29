@@ -352,10 +352,9 @@ stops or an SSH session drops.
   A set-aside axis is unknown, never healthy, and the change is recorded and logged
   rather than acted on.
   `wake()`, the timed `return_to_neutral()` and `sleep()` write the driver directly,
-  so they poll `LegSafety` themselves: a trip is recorded under the glide's name and
-  never stops the glide, and only an arm trip reacts, by taking the same soft-return
-  path as `step()`. `sleep()` passes no arm, since its ramp already takes every
-  leg limp.
+  so they poll `LegSafety` themselves and only record a trip, under the glide's name.
+  They judge every leg on the leg channel: a leg that was the raised arm lands and
+  takes weight on the way to neutral, which the arm threshold would read as a trip.
   See [the API reference](../reference/api-reference.md#overload-guard) for thresholds,
   the trip API and the scope
 - **Rail voltage IS acted on** (`rail.py`'s `RailGuard`, fed by the same 30 Hz leg
