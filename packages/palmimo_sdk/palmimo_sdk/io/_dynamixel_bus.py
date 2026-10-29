@@ -317,36 +317,32 @@ class DynamixelBus:
     def enable_torque(self, num_retry: int = 0, *, motors: Sequence[str] | None = None) -> None:
         """Enable torque on *motors* (every motor when ``None``).
 
-        A communication failure or rejection stops at the first motor. A reply
-        carrying the Alert bit does not stop the sweep, but a servo that shut
-        down on its error will not take torque, so it is raised once every
-        motor has been written.
+        Stops at the first motor that fails. A reply carrying the Alert bit
+        means the servo shut down on its error and will not take torque.
 
         Raises:
-            ConnectionError / RuntimeError: A write failed (stops at the first such
-                motor), after all retries.
-            RuntimeError: One or more motors reported a latched hardware error;
-                the message names them and their error bits.
+            ConnectionError / RuntimeError: A write failed, after all retries.
+            RuntimeError: A motor reported a latched hardware error; the message
+                names it and its error bits.
         """
-        names = list(self.motors if motors is None else motors)
-        alerted = [motor for motor in names if self.write("Torque_Enable", motor, _TORQUE_ENABLE, num_retry=num_retry)]
-        if alerted:
-            raise RuntimeError(
-                f"Torque may not hold: hardware error latched on {self._describe_latched(alerted)}; "
-                "reboot the servo to clear it."
-            )
+        for motor in self.motors if motors is None else motors:
+            if self.write("Torque_Enable", motor, _TORQUE_ENABLE, num_retry=num_retry):
+                raise RuntimeError(
+                    f"Torque may not hold: hardware error latched on {self._describe_latched(motor)}; "
+                    "reboot the servo to clear it."
+                )
 
-    def _describe_latched(self, motors: Sequence[str]) -> str:
-        """Name *motors* with their Hardware_Error_Status bits, where they can be read."""
+    def _describe_latched(self, motor: str) -> str:
+        """Name *motor* with its Hardware_Error_Status bits, where they can be read."""
         try:
-            read = self.sync_read_span(["Hardware_Error_Status"], motors=motors)
+            bits = (
+                self.sync_read_span(["Hardware_Error_Status"], motors=[motor])
+                .values.get(motor, {})
+                .get("Hardware_Error_Status")
+            )
         except Exception:
-            read = SpanRead()
-        parts = []
-        for motor in motors:
-            bits = read.values.get(motor, {}).get("Hardware_Error_Status")
-            parts.append(motor if bits is None else f"{motor} ({describe_hardware_error(bits)})")
-        return ", ".join(parts)
+            bits = None
+        return motor if bits is None else f"{motor} ({describe_hardware_error(bits)})"
 
     def disable_torque(self, num_retry: int = 0, *, motors: Sequence[str] | None = None) -> None:
         """Disable torque on *motors* (every motor when ``None``), trying each one.

@@ -326,7 +326,7 @@ def test_write_fails_only_on_a_status_error_beyond_the_alert_bit(error: int, rai
 
 
 @pytest.mark.parametrize("alerted", [False, True], ids=["clean", "alert_on_one"])
-def test_enable_torque_raises_after_writing_every_motor_when_one_reports_an_alert(alerted: bool) -> None:
+def test_enable_torque_stops_at_the_first_motor_that_reports_an_alert(alerted: bool) -> None:
     """A servo that shut down answers the torque write with Alert; torque is not holding."""
     handler = FakePacketHandler(silent=set(), errors={2: 0x80} if alerted else {})
     bus = make_write_bus(handler)
@@ -337,7 +337,7 @@ def test_enable_torque_raises_after_writing_every_motor_when_one_reports_an_aler
     else:
         bus.enable_torque()
 
-    assert handler.writes == [1, 2, 3]
+    assert handler.writes == ([1, 2] if alerted else [1, 2, 3])
 
 
 @pytest.mark.parametrize(
