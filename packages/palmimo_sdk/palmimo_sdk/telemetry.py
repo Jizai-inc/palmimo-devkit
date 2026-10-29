@@ -20,11 +20,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ._guard import TripLog
-from .io import ServoTelemetry
 
 
 if TYPE_CHECKING:
-    from .io import ServoDriver
+    from .io.base import ServoDriver, ServoTelemetry
 
 # How often a failing read is allowed to re-log, so a persistently flaky bus
 # does not spam the log once per poll.
@@ -148,7 +147,7 @@ class TelemetryPoller:
         probe = self._pick_recheck(now)
         asked = [m for m in self._motors if m not in self._set_aside or m == probe]
         if not asked:
-            return ServoTelemetry()
+            return None
         try:
             telemetry = driver.read_telemetry(asked)
         except NotImplementedError:

@@ -163,6 +163,19 @@ def test_set_aside_motor_that_stays_silent_is_rechecked_one_motor_at_a_time() ->
     assert driver.requests[-1] == ("m1", "m3", "m4")
 
 
+def test_read_returns_no_sweep_while_every_motor_is_set_aside_and_no_recheck_is_due() -> None:
+    poller, driver = TelemetryPoller(("m1",), 0.1, guard_name="test guard", logger=logger), BusDriver()
+    driver.silent = {"m1"}
+    now = 0.0
+    for _ in range(SILENT_SWEEPS_TO_SET_ASIDE):
+        _read(poller, driver, now)
+        now += 0.1
+    asked = len(driver.requests)
+
+    assert poller.read(driver, now, "read failed") is None
+    assert len(driver.requests) == asked
+
+
 def test_blind_error_is_logged_once_and_never_raises(caplog: pytest.LogCaptureFixture) -> None:
     poller, driver = _poller(), BusDriver()
     driver.silent = {"m1", "m2", "m3"}
