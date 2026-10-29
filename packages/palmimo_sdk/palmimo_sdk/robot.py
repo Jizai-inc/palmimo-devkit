@@ -86,6 +86,7 @@ from .overload import (
     OverloadTrip,
 )
 from .rail import RAIL_UNDERVOLTAGE_V, RailTrip
+from .telemetry import WatchChange
 from .thermal import NECK_MOTORS as _NECK_MOTORS
 from .thermal import NeckThermalGuard, NeckThermalState
 
@@ -2393,6 +2394,23 @@ class Palmimo:
     def last_rail_trip(self) -> RailTrip | None:
         """The most recent rail trip, kept across :meth:`connect`; ``None`` if none has happened."""
         return self._leg_safety.rail_trips.last
+
+    def drain_watch_changes(self) -> list[WatchChange]:
+        """Return and clear the changes in which motors the guards watch, oldest first.
+
+        A motor that stays silent is set aside from the guards' telemetry sweeps
+        so it cannot hide the motors behind it on the bus, and rejoins when it
+        answers a later re-check. Both are recorded here (leg and neck guards
+        together). Nothing is actuated: while a motor is set aside no guard
+        watches it. The queue keeps the most recent 64 per guard.
+        """
+        changes = [*self._leg_safety.poller.watch_changes.drain(), *self._thermal.poller.watch_changes.drain()]
+        return sorted(changes, key=lambda change: change.at)
+
+    @property
+    def unwatched_motors(self) -> tuple[str, ...]:
+        """Motors currently set aside as unresponsive by the leg and neck guards; empty when all are watched."""
+        return (*self._leg_safety.poller.unwatched, *self._thermal.poller.unwatched)
 
     def _log_thermal_lockout(self) -> None:
         """Re-log every :data:`_THERMAL_IGNORE_LOG_INTERVAL_S` while the guard keeps overriding the neck.

@@ -346,6 +346,11 @@ stops or an SSH session drops.
   release of the wave's own tuning on the next frame would otherwise overwrite it. A
   leg trip touches no gain. Position, not current, decides when the arm is home:
   a gripped arm draws little current at the soft gain but stays away from neutral.
+  The bus reader stops at the first axis that does not answer, so `TelemetryPoller`
+  sets an axis aside after three silent sweeps in a row and re-checks it alone every
+  1.5 s; otherwise one dead servo would hide every axis behind it from every guard.
+  A set-aside axis is unknown, never healthy, and the change is recorded and logged
+  rather than acted on.
   See [the API reference](../reference/api-reference.md#overload-guard) for thresholds,
   the trip API and the scope, which is that of the neck guard
 - **Rail voltage IS acted on** (`rail.py`'s `RailGuard`, fed by the same 30 Hz leg

@@ -134,6 +134,11 @@ class OverloadGuard:
             self._streaks.clear()
         return tripped
 
+    def forget(self, motors: Sequence[str]) -> None:
+        """Drop the streaks of *motors*, which were unobserved for a while and may have changed since."""
+        for motor in motors:
+            self._streaks.drop(motor)
+
     def reset(self) -> None:
         """Forget every streak."""
         self._streaks.clear()
@@ -141,6 +146,9 @@ class OverloadGuard:
 
 class SoftReturnMonitor:
     """Decides when a softened arm has eased back to its neutral pose.
+
+    An axis missing from a sweep (set aside as unresponsive, say) resets the
+    count, so the soft return then ends only by the caller's own decision.
 
     Position rather than current is the signal: at the soft gain a gripped arm
     draws little current too, but it stays far from neutral, so only a released

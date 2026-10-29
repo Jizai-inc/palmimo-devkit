@@ -2441,6 +2441,7 @@ class _OverloadDriver(ServoDriver):
         self.torque_supported = torque_supported
         self.profile_velocity = 300
         self.telemetry_error: Exception | None = None
+        self.silent: set[str] = set()
         self._connected = True
 
     @property
@@ -2463,11 +2464,21 @@ class _OverloadDriver(ServoDriver):
         self.telemetry_requests.append(None if motors is None else tuple(motors))
         if self.telemetry_error is not None:
             raise self.telemetry_error
-        wanted = motors if motors is not None else LEG_MOTORS
+        wanted = list(motors if motors is not None else LEG_MOTORS)
+        silent: tuple[str, ...] = ()
+        unreached: tuple[str, ...] = ()
+        # Like the real bus: the sweep stops at the first silent motor.
+        for i, motor in enumerate(wanted):
+            if motor in self.silent:
+                silent, unreached = (motor,), tuple(wanted[i + 1 :])
+                wanted = wanted[:i]
+                break
         return ServoTelemetry(
             current={m: self.currents[m] for m in wanted if m in self.currents},
             position={m: self.positions[m] for m in wanted if m in self.positions},
             voltage={m: self.voltages[m] for m in wanted if m in self.voltages},
+            silent=silent,
+            unreached=unreached,
         )
 
     def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
@@ -2529,6 +2540,24 @@ def test_wave_arm_trip_drops_to_idle_and_softens_only_the_arm() -> None:
     assert (trip.channel, trip.motion) == ("arm", "wave")
     assert robot.drain_overload_trips() == []
     assert robot.last_overload_trip == trip
+
+
+def test_arm_trips_when_a_motor_ahead_of_it_on_the_bus_stays_silent() -> None:
+    """A silent axis cuts every sweep short, so it is set aside rather than hiding the arm behind it."""
+    driver = _OverloadDriver()
+    driver.silent = {"leg_1_yaw"}
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800}
+
+    _poll_steps(robot, clock, 12)
+
+    assert robot.motion == "idle"
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_6_yaw", "arm", "wave")
+    assert robot.unwatched_motors == ("leg_1_yaw",)
+    (change,) = robot.drain_watch_changes()
+    assert (change.motor, change.watched) == ("leg_1_yaw", False)
 
 
 def test_trip_frame_is_computed_but_not_written() -> None:
