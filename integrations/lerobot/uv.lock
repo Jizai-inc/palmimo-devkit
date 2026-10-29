@@ -1091,9 +1091,11 @@ hardware = [
 [package.metadata]
 requires-dist = [
     { name = "ai-edge-litert", marker = "extra == 'voice'", specifier = ">=2.1" },
+    { name = "anyio", marker = "extra == 'mcp'", specifier = ">=4" },
     { name = "dynamixel-sdk", marker = "extra == 'hardware'", specifier = ">=3.7.31" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2,<3" },
     { name = "mcp-types", marker = "extra == 'mcp'", specifier = ">=2,<3" },
+    { name = "nltk", marker = "extra == 'speech'", specifier = ">=3.9" },
     { name = "numpy", marker = "extra == 'voice'", specifier = ">=1.24" },
     { name = "opencv-python", marker = "extra == 'vision'", specifier = ">=4" },
     { name = "palmimo-sdk", extras = ["agent"], marker = "extra == 'mcp'", editable = "../../packages/palmimo_sdk" },

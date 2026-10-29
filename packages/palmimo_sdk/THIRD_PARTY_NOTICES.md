@@ -144,6 +144,14 @@ Applies to piper-plus text-to-speech (`palmimo_sdk.io.speaker`).
 - License: MIT
 - Source: https://github.com/ayutaz/piper-plus
 
+### nltk
+
+- License: Apache-2.0
+- Copyright (C) 2001-2026 NLTK Project
+- Source: https://github.com/nltk/nltk
+- The copyright line is the one `nltk/__init__.py` carries; the wheel ships no
+  `NOTICE` file, so Apache-2.0 §4(d) propagates nothing further.
+
 ### pyopenjtalk-plus
 
 - License: MIT (the Python bindings/code)
@@ -273,6 +281,12 @@ extra, so that section's notices apply as well.
 - The repository sits under a maintainer's account rather than the copyright
   holder's; both are as the dist declares them (`Project-URL: Source` and the
   bundled `LICENSE.md`). The same split applies to `uvicorn` below.
+
+### anyio
+
+- License: MIT
+- Copyright (c) 2018 Alex Grönholm
+- Source: https://github.com/agronholm/anyio
 
 ### uvicorn
 
