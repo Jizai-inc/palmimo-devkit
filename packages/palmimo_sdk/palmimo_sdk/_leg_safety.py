@@ -110,12 +110,10 @@ class LegSafety:
             motion (Motion): The motion currently running.
             arm_legs (tuple[int, ...]): Legs acting as the raised arm under *motion*.
             glide (str, optional): Name of a glide that writes the driver directly (``"wake"``).
-                Trips are recorded under it and never stop the glide; only an arm trip is reported,
-                so the caller can soften that arm.
+                Trips are recorded under it and never stop the glide.
 
         Returns:
-            bool: ``True`` if a guard tripped and the motion must stop; with *glide*, ``True`` if
-                the arm channel tripped.
+            bool: ``True`` if a guard tripped and the motion must stop; always ``False`` with *glide*.
         """
         if driver is None:
             self._sweep = None
@@ -153,8 +151,7 @@ class LegSafety:
         # IDLE and the neck gestures move no leg, so a trip under them has nothing to stop.
         resting = motion in _SOFT_RETURN_MOTIONS
         trips: list[OverloadTrip | None] = []
-        # A glide keeps going after an arm trip, so the softened arm is not judged again for it.
-        if self._arm_overload is not None and arm and not (glide and self._soft_return is not None):
+        if self._arm_overload is not None and arm:
             trips.append(self._arm_overload.sample(telemetry.current, arm))
         if self._leg_overload is not None:
             leg_trip = self._leg_overload.sample(telemetry.current, [m for m in LEG_MOTORS if m not in arm])
@@ -191,13 +188,9 @@ class LegSafety:
                 found_rail.motion,
                 outcome,
             )
-        arm_tripped = any(t.channel == "arm" for t in found)
-        if glide is not None:
-            if not arm_tripped:
-                return False
-        elif (not found and found_rail is None) or resting:
+        if glide is not None or (not found and found_rail is None) or resting:
             return False
-        if arm_tripped:
+        if any(t.channel == "arm" for t in found):
             self._soft_return = arm
             self._soft_return_monitor.reset()
         return True

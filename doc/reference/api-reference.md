@@ -1109,13 +1109,11 @@ keeps the counts and does not stop the motion.
 `wake()`, `return_to_neutral(duration=...)` and `sleep()`, which write the
 driver directly. A glide is never stopped by a trip. The trip is recorded with
 the glide's name as its `motion` (`"wake"`, `"return_to_neutral"` or
-`"sleep"`); a leg trip
-(and a rail trip) only records, and an arm trip, for the leg that was the raised
-arm before the glide, also holds those three axes at `Position_P_Gain` 100 as
-above, falling back to cutting their torque. The softened arm is left out of
-`wake()`'s gain ramp and is not judged again during that glide. `sleep()` only
-records: its ramp is already taking every leg limp, so the whole leg set is
-judged on the leg channel and no arm is softened. The LeRobot teleop
+`"sleep"`) and nothing else happens. Every leg is judged on the leg channel
+during a glide, including a leg that was the raised arm: it lands and takes
+weight on the way to neutral, where the arm threshold would trip on ordinary
+load. An arm already softened by an earlier trip keeps its soft return until it
+is home, and `wake()` and `sleep()` ramp it from there. The LeRobot teleop
 integration drives the engine directly, so the guard does not watch it. The neck guard stays
 `Palmimo.step()` only.
 

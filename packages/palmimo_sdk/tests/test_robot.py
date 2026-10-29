@@ -2571,25 +2571,11 @@ def _glide_robot(driver: _OverloadDriver) -> Palmimo:
     return robot
 
 
-def test_return_to_neutral_glide_records_an_arm_trip_softens_the_arm_and_finishes() -> None:
+def test_return_to_neutral_glide_judges_the_lowered_arm_on_the_leg_channel_and_only_records() -> None:
     driver = _OverloadDriver()
     robot = _glide_robot(driver)
-    driver.currents = {"leg_6_yaw": 800}
-
-    robot.return_to_neutral(duration=0.3)
-
-    (trip,) = robot.drain_overload_trips()
-    assert (trip.motor, trip.channel, trip.motion) == ("leg_6_yaw", "arm", "return_to_neutral")
-    assert _soft_gain_calls(driver) == [(SOFT_RETURN_GAIN, _ARM_6)]
-    assert driver.torque_calls == []
-    assert len(driver.writes) == 18  # round(0.3 s * 60 fps): the glide ran to its last frame
-    assert driver.writes[-1]["leg_6_yaw"] == MotionEngine.NEUTRAL
-
-
-def test_return_to_neutral_glide_only_records_a_leg_trip() -> None:
-    driver = _OverloadDriver()
-    robot = _glide_robot(driver)
-    driver.currents = {"leg_2_pitch1": 1300}
+    # The waving arm lands and takes weight on the way: over the arm threshold, under the leg one.
+    driver.currents = {"leg_6_yaw": 800, "leg_2_pitch1": 1300}
 
     robot.return_to_neutral(duration=0.3)
 
@@ -2597,20 +2583,18 @@ def test_return_to_neutral_glide_only_records_a_leg_trip() -> None:
     assert (trip.motor, trip.channel, trip.motion) == ("leg_2_pitch1", "leg", "return_to_neutral")
     assert _soft_gain_calls(driver) == []
     assert driver.torque_calls == []
-    assert len(driver.writes) == 18
+    assert len(driver.writes) == 18  # round(0.3 s * 60 fps): the glide ran to its last frame
 
 
-def test_wake_keeps_a_softened_arm_out_of_the_gain_ramp() -> None:
+def test_wake_glide_records_a_trip_under_its_name() -> None:
     driver = _OverloadDriver()
     robot = _glide_robot(driver)
-    driver.currents = {"leg_6_yaw": 800}
+    driver.currents = {"leg_2_pitch1": 1300}
 
     robot.wake(duration=0.3)
 
     (trip,) = robot.drain_overload_trips()
-    assert trip.motion == "wake"
-    soft_at = driver.gain_calls.index((SOFT_RETURN_GAIN, _ARM_6))
-    assert not [c for c in driver.gain_calls[soft_at + 1 :] if c[1] is None or "leg_6_yaw" in c[1]]
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_2_pitch1", "leg", "wake")
 
 
 def test_wake_ramps_an_arm_left_soft_by_a_step_trip_without_restoring_it_to_full_gain_first() -> None:
