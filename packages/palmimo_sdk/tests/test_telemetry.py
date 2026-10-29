@@ -176,6 +176,21 @@ def test_read_returns_no_sweep_while_every_motor_is_set_aside_and_no_recheck_is_
     assert len(driver.requests) == asked
 
 
+def test_one_silent_motor_at_the_head_of_the_bus_is_not_reported_as_a_blind_guard(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    poller, driver = _poller(), BusDriver()
+    driver.silent = {"m1"}
+    now = 0.0
+    with caplog.at_level(logging.ERROR, logger=logger.name):
+        for _ in range(SILENT_SWEEPS_TO_SET_ASIDE + 2):
+            poller.read(driver, now, "read failed")
+            now += 0.1
+
+    assert poller.unwatched == ("m1",)
+    assert not [r for r in caplog.records if r.levelno == logging.ERROR]
+
+
 def test_blind_error_is_logged_once_and_never_raises(caplog: pytest.LogCaptureFixture) -> None:
     poller, driver = _poller(), BusDriver()
     driver.silent = {"m1", "m2", "m3"}
