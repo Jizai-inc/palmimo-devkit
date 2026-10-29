@@ -1111,10 +1111,14 @@ class Palmimo:
         heading for neutral, and a leg that was the raised arm lands and takes
         weight on the way, so every leg is judged on the leg channel, as
         :meth:`step` judges it once the gesture has ended. A soft-returning arm
-        from an earlier trip is still let go once it is home.
+        from an earlier trip is still let go once it is home. The sweep also
+        goes to the flight recorder, under *name*.
         """
         self._leg_safety.poll(driver, Motion.IDLE, (), glide=name)
-        self._leg_safety.take_sweep()
+        sweep = self._leg_safety.take_sweep()
+        ride = self._flight_ride
+        if ride is not None and ride.poll(driver, name, sweep, None, self._last_goal) and not self._disconnecting:
+            self._flush_recorder()
         tuned = self._gesture_tuned
         if tuned is not None and tuned[0] == "soft_return":
             self._sync_gesture_tuning()
@@ -2348,7 +2352,9 @@ class Palmimo:
         neck_sweep = self._thermal.take_sweep()
         due = False
         if self._flight_ride is not None:
-            due = self._flight_ride.poll(connected_driver, self._engine.motion, leg_sweep, neck_sweep, self._last_goal)
+            due = self._flight_ride.poll(
+                connected_driver, self._engine.motion.name.lower(), leg_sweep, neck_sweep, self._last_goal
+            )
         pos = self._engine.step()
         self._log_thermal_lockout()
         if connected_driver is not None:
