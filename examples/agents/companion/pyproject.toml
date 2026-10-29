@@ -9,7 +9,10 @@ license = "Apache-2.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "litellm>=1.40",
+    "pydantic>=2",
     "pydantic-settings>=2.0",
+    # settings.py loads .env itself before pydantic-settings reads the environment.
+    "python-dotenv>=1",
     # MicStream (streaming mic capture + GTCRN denoise), int16_to_wav, and the
     # head camera (palmimo_sdk.io.camera), for the speech pipeline's audio
     # source (see palmimo_companion_agent.pipeline.speech) and the capture
@@ -32,6 +35,8 @@ dependencies = [
     # palmimo_companion_agent.main / .pipeline.ui.cli / .pipeline.ui.tui).
     "typer>=0.12",
     "textual>=0.60",
+    # tui.py escapes transcript text with rich.markup.
+    "rich>=13",
     # The realtime voice session (palmimo_companion_agent.realtime) talks to
     # the OpenAI Realtime API over a websocket.
     "websockets>=14",
