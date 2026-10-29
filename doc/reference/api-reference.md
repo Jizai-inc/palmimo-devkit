@@ -1053,8 +1053,10 @@ axis is added to a sweep to see if it answers; a re-check that stays silent
 leaves the axes behind it unreached for that one sweep. An axis that answers is
 watched again and its overload counts restart. Each change is logged as a warning
 and recorded as a `WatchChange` (frozen dataclass: `motor`, `guard`, `watched`,
-`at`). When 3 axes (or all of a guard's axes, if it watches fewer) are set aside,
-one error is logged; nothing is actuated. The neck guard sets aside its own
+`at`). One error is logged when 3 axes (or all of a guard's axes, if it watches
+fewer) are set aside, or when `EMPTY_READS_TO_BLIND` (3) reads in a row fail or
+carry no axis at all, as when the request never reaches the bus; one warning is
+logged when the guard can see again. Nothing is actuated. The neck guard sets aside its own
 silent axes the same way, so its judgement is held while one is set aside.
 
 | Member | Returns |

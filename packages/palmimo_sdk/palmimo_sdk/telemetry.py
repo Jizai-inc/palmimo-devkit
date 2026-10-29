@@ -35,6 +35,8 @@ SILENT_SWEEPS_TO_SET_ASIDE = 3
 RECHECK_INTERVAL_S = 1.5
 # Motors set aside at which a guard is as good as blind (capped by how many it watches).
 BLIND_SET_ASIDE_COUNT = 3
+# Reads in a row that fail or return no motor at all before the guard is reported blind.
+EMPTY_READS_TO_BLIND = 3
 _WATCH_CHANGE_HISTORY = 64
 
 
@@ -71,6 +73,11 @@ class TelemetryPoller:
     never reached are no evidence and are not counted. Nothing here actuates:
     the changes are logged and recorded in :attr:`watch_changes`.
 
+    The guard is logged as blind, once, when ``BLIND_SET_ASIDE_COUNT`` motors
+    are set aside or when ``EMPTY_READS_TO_BLIND`` reads in a row fail or carry
+    no motor at all (a sweep whose request never went out reaches no one), and
+    logged again, once, when it can see.
+
     Args:
         motors (Sequence[str]): Motors every sweep asks for.
         interval_s (float): Shortest time between two reads.
@@ -99,6 +106,7 @@ class TelemetryPoller:
         self._set_aside: list[str] = []
         self._recheck_due: float | None = None
         self._restored: tuple[str, ...] = ()
+        self._empty_reads = 0
         self._blind = False
         self.watch_changes: TripLog[WatchChange] = TripLog(_WATCH_CHANGE_HISTORY)
 
@@ -161,6 +169,8 @@ class TelemetryPoller:
             if self._last_failure_log is None or now - self._last_failure_log >= READ_FAILURE_LOG_INTERVAL_S:
                 self._logger.warning("%s: %s", failure_message, exc)
                 self._last_failure_log = now
+            self._empty_reads += 1
+            self._log_blindness()
         else:
             self._account(telemetry, asked, probe, now)
             return telemetry
@@ -175,6 +185,7 @@ class TelemetryPoller:
 
     def _account(self, telemetry: ServoTelemetry, asked: Sequence[str], probe: str | None, now: float) -> None:
         answered = {*telemetry.current, *telemetry.voltage, *telemetry.temperature, *telemetry.position}
+        self._empty_reads = 0 if answered else self._empty_reads + 1
         for motor in asked:
             if motor in answered:
                 self._silent_counts.pop(motor, None)
@@ -213,11 +224,18 @@ class TelemetryPoller:
         self._logger.warning("%s: %s answered again; watching it.", self._guard_name, motor)
 
     def _log_blindness(self) -> None:
-        blind = len(self._set_aside) >= min(BLIND_SET_ASIDE_COUNT, len(self._motors))
+        empty = self._empty_reads >= EMPTY_READS_TO_BLIND
+        blind = empty or len(self._set_aside) >= min(BLIND_SET_ASIDE_COUNT, len(self._motors))
         if blind == self._blind:
             return
         self._blind = blind
-        if blind:
+        if empty:
+            self._logger.error(
+                "%s: %d reads in a row returned no motor; the guard can no longer see the bus.",
+                self._guard_name,
+                self._empty_reads,
+            )
+        elif blind:
             self._logger.error(
                 "%s: %d of %d motors are unresponsive (%s); the guard can no longer see the bus.",
                 self._guard_name,
@@ -240,4 +258,5 @@ class TelemetryPoller:
         self._set_aside.clear()
         self._recheck_due = None
         self._restored = ()
+        self._empty_reads = 0
         self._blind = False
