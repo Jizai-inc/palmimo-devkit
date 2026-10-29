@@ -182,7 +182,7 @@ class NeckThermalGuard:
         a timer left over from the old one.
         """
         self._sweep = None
-        self._poller.reset()
+        self._poller.reset(self._now())
         self._last_missing_log = None
 
     def poll(self, driver: ServoDriver | None) -> None:

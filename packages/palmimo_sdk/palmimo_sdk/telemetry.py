@@ -262,11 +262,18 @@ class TelemetryPoller:
         else:
             self._logger.warning("%s: enough motors answer again to watch the bus.", self._guard_name)
 
-    def reset(self) -> None:
+    def reset(self, now: float) -> None:
         """Forget the disabled latch, the timers and every set-aside motor, for a newly attached driver.
 
         :attr:`watch_changes` survives: it is a record, not connection state.
+        Each set-aside motor is recorded as watched again, since the next sweep
+        asks for it.
+
+        Args:
+            now (float): The caller's clock reading, for those records.
         """
+        for motor in self.unwatched:
+            self.watch_changes.record(WatchChange(motor, self._guard_name, True, now))
         self._disabled = False
         self._last_poll = None
         self._last_failure_log = None
