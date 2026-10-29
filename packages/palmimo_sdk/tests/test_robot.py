@@ -2586,6 +2586,28 @@ def test_return_to_neutral_glide_judges_the_lowered_arm_on_the_leg_channel_and_o
     assert len(driver.writes) == 18  # round(0.3 s * 60 fps): the glide ran to its last frame
 
 
+def test_return_to_neutral_glide_keeps_its_duration_when_each_frame_takes_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    elapsed = [0.0]
+    monkeypatch.setattr(time, "perf_counter", lambda: elapsed[0])
+    monkeypatch.setattr(time, "sleep", lambda s: elapsed.__setitem__(0, elapsed[0] + s))
+    on_write = driver.on_write
+    assert on_write is not None
+
+    def slow_write() -> None:
+        on_write()
+        elapsed[0] += 0.005  # the bus time a frame spends
+
+    driver.on_write = slow_write
+
+    robot.return_to_neutral(duration=0.3)
+
+    assert elapsed[0] == pytest.approx(0.3)
+
+
 def test_wake_glide_records_a_trip_under_its_name() -> None:
     driver = _OverloadDriver()
     robot = _glide_robot(driver)
