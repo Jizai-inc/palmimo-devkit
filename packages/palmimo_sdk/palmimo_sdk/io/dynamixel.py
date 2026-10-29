@@ -459,8 +459,8 @@ class DynamixelDriver(ServoDriver):
 
         Turning torque off tries every motor even when one does not answer and
         resends each write once; turning it on stops at the first communication
-        or rejection failure, and raises ``RuntimeError`` if any servo has a
-        hardware error latched.
+        or rejection failure, or at the first servo with a hardware error latched
+        (``RuntimeError``).
         """
         if self._bus is None:
             raise RuntimeError("Driver is not connected. Call connect() before set_torque_enabled().")
