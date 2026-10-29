@@ -1077,6 +1077,7 @@ class Palmimo:
             with contextlib.suppress(Exception):
                 self._write_gain(driver, _WAKE_FULL_GAIN, motors=neck)
         steps = max(1, round(duration * self._fps))
+        start = time.perf_counter()
         for s in range(1, steps + 1):
             f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
             self._watch_glide(driver, "wake")
@@ -1087,11 +1088,21 @@ class Palmimo:
                     has_gain = False  # driver can't ramp gain — keep gliding
             frame = {n: round(p + (targets.get(n, MotionEngine.NEUTRAL) - p) * f) for n, p in current.items()}
             self._write_goal(driver, frame)
-            time.sleep(1.0 / self._fps)
+            self._sleep_to_frame(start, s)
         if has_gain:
             with contextlib.suppress(Exception):
                 self._write_gain(driver, None)  # land exactly on the default gain
         self._seed_engine_pose(targets)
+
+    def _sleep_to_frame(self, start: float, frame: int) -> None:
+        """Sleep until glide *frame* is due, counted from *start* at the control rate.
+
+        Against a deadline, as :meth:`_pace` does, so the guard's bus read in each
+        frame does not stretch the glide past its duration.
+        """
+        remaining = start + frame / self._fps - time.perf_counter()
+        if remaining > 0:
+            time.sleep(remaining)
 
     def _watch_glide(self, driver: ServoDriver, name: str) -> None:
         """Judge the leg guards once during a glide that writes the driver directly.
@@ -1204,6 +1215,7 @@ class Palmimo:
         # driver backfills an unnamed motor with NEUTRAL, which is the head-up
         # goal this is here to avoid, arrived at in one step instead of a glide.
         steps = max(1, round(duration * self._fps))
+        start = time.perf_counter()
         landed = dict(current)
         try:
             for s in range(1, steps + 1):
@@ -1228,7 +1240,7 @@ class Palmimo:
                 # Only after the write returns: sync_write raises with nothing
                 # applied, so a frame that failed is not a pose the robot reached.
                 landed = frame
-                time.sleep(1.0 / self._fps)
+                self._sleep_to_frame(start, s)
         finally:
             # However the loop ended. Each step is suppressed separately: this
             # runs on the EIO path it exists for, where the gain writes are
@@ -1343,6 +1355,7 @@ class Palmimo:
         # glide — never snaps if the bus is flaky, mirroring the current-survey
         # scripts' glide_to.
         steps = max(1, round(duration * self._fps))
+        start = time.perf_counter()
         for s in range(1, steps + 1):
             if cancel_snapshot is not None:
                 self._check_cancelled(cancel_snapshot)
@@ -1350,7 +1363,7 @@ class Palmimo:
             self._watch_glide(self._driver, "return_to_neutral")
             frame = {n: round(p + (targets.get(n, MotionEngine.NEUTRAL) - p) * f) for n, p in current.items()}
             self._write_goal(self._driver, frame)
-            time.sleep(1.0 / self._fps)
+            self._sleep_to_frame(start, s)
         # Seed the engine from the real pose so the first motion interpolates
         # from it instead of stale internal state.
         self._seed_engine_pose(targets)
