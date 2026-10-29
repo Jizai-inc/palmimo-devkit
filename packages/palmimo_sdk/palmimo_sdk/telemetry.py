@@ -184,7 +184,11 @@ class TelemetryPoller:
 
     def _account(self, telemetry: ServoTelemetry, asked: Sequence[str], probe: str | None, now: float) -> None:
         answered = {*telemetry.current, *telemetry.voltage, *telemetry.temperature, *telemetry.position}
-        self._empty_reads = 0 if answered else self._empty_reads + 1
+        # A silent motor is counted by the set-aside path; only a sweep that reached no one is empty.
+        if answered:
+            self._empty_reads = 0
+        elif not telemetry.silent:
+            self._empty_reads += 1
         for motor in asked:
             if motor in answered:
                 self._silent_counts.pop(motor, None)
