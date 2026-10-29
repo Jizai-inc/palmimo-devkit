@@ -26,14 +26,13 @@ was built from:
 - [`examples/agents/wakeword/THIRD_PARTY_NOTICES.md`](examples/agents/wakeword/THIRD_PARTY_NOTICES.md)
 - [`examples/teleop/THIRD_PARTY_NOTICES.md`](examples/teleop/THIRD_PARTY_NOTICES.md)
 
-The root also declares `dynamixel-sdk` and `pyserial` directly, and both are
-`palmimo-sdk` dependencies as well, so the attribution text that applies to
-them is the one in its file above. The scope wording there differs, though:
-`pyserial` is a `palmimo-sdk` base dependency, so its section is unconditional
-and matches the root exactly, whereas `dynamixel-sdk` sits under the `hardware`
-extra, and that file scopes each extra's section to "only when the named extra
-is installed and used". From the root, `dynamixel-sdk` is an unconditional
-direct dependency: it is installed with or without that extra selected.
+The root also declares `dynamixel-sdk` directly, and it is a `palmimo-sdk`
+dependency as well, so the attribution text that applies to it is the one in
+its file above. The scope wording there differs, though: `dynamixel-sdk` sits
+under the `hardware` extra, and that file scopes each extra's section to "only
+when the named extra is installed and used". From the root, `dynamixel-sdk` is
+an unconditional direct dependency: it is installed with or without that extra
+selected.
 
 None of the components below are vendored or distributed with this repository
 — they are installed as regular PyPI dependencies.
