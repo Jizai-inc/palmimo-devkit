@@ -18,8 +18,7 @@ stays hardware-free.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -299,15 +298,6 @@ class DynamixelBus:
                 # A bare Alert bit still means the servo is there; enable_torque reports it by name.
                 return model_number if error & ~self._dxl.ERRBIT_ALERT == 0 else None
         return None
-
-    @contextmanager
-    def torque_disabled(self) -> Iterator[None]:
-        """Context manager: disable torque, run the body, re-enable on exit."""
-        self.disable_torque()
-        try:
-            yield
-        finally:
-            self.enable_torque()
 
     def configure_motors(self) -> None:
         """Set every motor's Return_Delay_Time to 0 (minimum response delay)."""

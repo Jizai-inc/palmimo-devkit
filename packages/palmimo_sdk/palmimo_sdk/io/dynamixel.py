@@ -58,6 +58,14 @@ _VOLTAGE_UNITS_PER_VOLT = 10.0
 # 1 Mbaud; 10s is wide margin for a loaded Pi while still failing fast when no
 # robot is attached or the matched port is some other device (see _timeout.py).
 _BUS_CONNECT_TIMEOUT_S = 10.0
+# Batch reads of Present_Position tried before connect gives up on seeding the hold pose.
+# Each read that drops costs one packet timeout, so this also bounds the seed's time
+# inside the connect timeout.
+_SEED_READ_ATTEMPTS = 4
+
+# Extra attempts for each torque-off write: one dropped status packet is survivable,
+# while every silent servo stalls the caller for about 2 x the packet timeout.
+_TORQUE_OFF_RETRY = 1
 
 
 class DynamixelConnectTimeoutError(RuntimeError):
@@ -159,6 +167,38 @@ def _resolve_single(candidates: list[str], label: str) -> str:
     raise PortDetectionError(f"Multiple {label} found: {listed}. Cannot safely choose one -- specify with --port.")
 
 
+def _seed_hold_pose(bus: Any) -> None:
+    """Write each motor's present position into its Goal_Position.
+
+    Torque-on then holds the pose instead of jumping to a stale goal.
+
+    Raises:
+        ConnectionError: When some motor's position is still unread after
+            :data:`_SEED_READ_ATTEMPTS` batch reads.
+    """
+    seeded: dict[str, int] = {}
+    last_error: Exception | None = None
+    for _ in range(_SEED_READ_ATTEMPTS):
+        try:
+            pres = bus.sync_read("Present_Position", normalize=False)
+        except OSError as exc:
+            last_error = exc
+            continue
+        if pres is not None:
+            seeded.update({motor: tick for motor, tick in pres.items() if tick is not None})
+        if all(motor in seeded for motor in bus.motors):
+            break
+    missing = [motor for motor in bus.motors if motor not in seeded]
+    if missing:
+        raise ConnectionError(
+            f"Could not read the hold pose of {', '.join(missing)} after {_SEED_READ_ATTEMPTS} attempts; "
+            "torque was left off."
+        ) from last_error
+    for motor in bus.motors:
+        # A position read back from hardware, not a caller-chosen goal: write it verbatim.
+        bus.write("Goal_Position", motor, seeded[motor], normalize=False)
+
+
 def _open_dynamixel_bus(
     port: str,
     motor_model: str,
@@ -180,30 +220,13 @@ def _open_dynamixel_bus(
     bus.set_baudrate(baudrate)
     bus.connect()
     try:
-        with bus.torque_disabled():
-            bus.configure_motors()
-            for motor in bus.motors:
-                bus.write("Operating_Mode", motor, OPERATING_MODE_POSITION)
-            # Hold the current pose so re-enabling torque doesn't snap to a stale
-            # Goal_Position. Read with num_retry=3 — this bus is flaky and a single
-            # read can drop, which would skip the hold and let it snap. Mirrors the
-            # current-survey scripts' gentle bring-up (motion_current_survey.py).
-            try:
-                pres = bus.sync_read("Present_Position", normalize=False, num_retry=3)
-                if pres is None:
-                    # A fully dropped batch read returns None; skip seeding rather than
-                    # AttributeError into the except below (keeps the warning accurate).
-                    logger.warning("could not seed hold pose before torque-on: read returned None")
-                else:
-                    for motor in bus.motors:
-                        tick = pres.get(motor)
-                        if tick is not None:
-                            # A position read back from hardware, not a caller-chosen
-                            # goal -- write it verbatim so the goal equals the joint's
-                            # real position and torque-on holds rather than moves it.
-                            bus.write("Goal_Position", motor, tick, normalize=False)
-            except Exception as exc:
-                logger.warning("could not seed hold pose before torque-on: %s", exc)
+        # No torque_disabled() here: it re-enables torque on exit, even when the
+        # seed below fails. Torque goes on only as the last step.
+        bus.disable_torque()
+        bus.configure_motors()
+        for motor in bus.motors:
+            bus.write("Operating_Mode", motor, OPERATING_MODE_POSITION)
+        _seed_hold_pose(bus)
         bus.sync_write("Profile_Velocity", profile_velocity, normalize=False)
         bus.enable_torque()
     except BaseException:
@@ -434,14 +457,15 @@ class DynamixelDriver(ServoDriver):
     def set_torque_enabled(self, enabled: bool, motors: Sequence[str] | None = None) -> None:
         """Write Torque_Enable on *motors* (every motor when ``None``), one acknowledged write each.
 
-        Turning torque off tries every motor even when one does not answer;
-        turning it on stops at the first communication or rejection failure, and
-        raises ``RuntimeError`` if any servo has a hardware error latched.
+        Turning torque off tries every motor even when one does not answer and
+        resends each write once; turning it on stops at the first communication
+        or rejection failure, and raises ``RuntimeError`` if any servo has a
+        hardware error latched.
         """
         if self._bus is None:
             raise RuntimeError("Driver is not connected. Call connect() before set_torque_enabled().")
         if not enabled:
-            self._bus.disable_torque(motors=motors)
+            self._bus.disable_torque(num_retry=_TORQUE_OFF_RETRY, motors=motors)
             return
         self._bus.enable_torque(motors=motors)
 
