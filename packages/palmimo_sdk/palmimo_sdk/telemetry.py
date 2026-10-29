@@ -36,6 +36,8 @@ RECHECK_INTERVAL_S = 1.5
 BLIND_SET_ASIDE_COUNT = 3
 # Reads in a row that fail or return no motor at all before the guard is reported blind.
 EMPTY_READS_TO_BLIND = 3
+# How often one motor's set-aside / watched-again changes may re-log, so a flapping servo does not spam.
+WATCH_CHANGE_LOG_INTERVAL_S = 30.0
 _WATCH_CHANGE_HISTORY = 64
 
 
@@ -70,7 +72,8 @@ class TelemetryPoller:
     answers; the reader follows bus order, so a re-check that stays silent
     leaves the motors behind it unreached for that one sweep. Motors the sweep
     never reached are no evidence and are not counted. Nothing here actuates:
-    the changes are logged and recorded in :attr:`watch_changes`.
+    the changes are recorded in :attr:`watch_changes` and logged, at most every
+    ``WATCH_CHANGE_LOG_INTERVAL_S`` per motor.
 
     The guard is logged as blind, once, when ``BLIND_SET_ASIDE_COUNT`` motors
     are set aside or when ``EMPTY_READS_TO_BLIND`` reads in a row fail or carry
@@ -107,6 +110,7 @@ class TelemetryPoller:
         self._restored: tuple[str, ...] = ()
         self._empty_reads = 0
         self._blind = False
+        self._change_logs: dict[str, tuple[float, int]] = {}
         self.watch_changes: TripLog[WatchChange] = TripLog(_WATCH_CHANGE_HISTORY)
 
     @property
@@ -211,12 +215,11 @@ class TelemetryPoller:
         if self._recheck_due is None:
             self._recheck_due = now + RECHECK_INTERVAL_S
         self.watch_changes.record(WatchChange(motor, self._guard_name, False, now))
-        self._logger.warning(
-            "%s: %s stayed silent for %d sweeps in a row; leaving it out of the sweep and re-checking every %.1fs.",
-            self._guard_name,
+        self._log_change(
             motor,
-            SILENT_SWEEPS_TO_SET_ASIDE,
-            RECHECK_INTERVAL_S,
+            now,
+            f"stayed silent for {SILENT_SWEEPS_TO_SET_ASIDE} sweeps in a row;"
+            f" leaving it out of the sweep and re-checking every {RECHECK_INTERVAL_S:.1f}s",
         )
 
     def _restore(self, motor: str, now: float) -> None:
@@ -224,7 +227,17 @@ class TelemetryPoller:
         self._recheck_due = now + RECHECK_INTERVAL_S if self._set_aside else None
         self._restored = (*self._restored, motor)
         self.watch_changes.record(WatchChange(motor, self._guard_name, True, now))
-        self._logger.warning("%s: %s answered again; watching it.", self._guard_name, motor)
+        self._log_change(motor, now, "answered again; watching it")
+
+    def _log_change(self, motor: str, now: float, what: str) -> None:
+        last, skipped = self._change_logs.get(motor, (None, 0))
+        if last is not None and now - last < WATCH_CHANGE_LOG_INTERVAL_S:
+            self._change_logs[motor] = (last, skipped + 1)
+            return
+        self._change_logs[motor] = (now, 0)
+        if skipped:
+            what += f" ({skipped} earlier changes not logged; see watch_changes)"
+        self._logger.warning("%s: %s %s.", self._guard_name, motor, what)
 
     def _log_blindness(self) -> None:
         empty = self._empty_reads >= EMPTY_READS_TO_BLIND
@@ -263,3 +276,4 @@ class TelemetryPoller:
         self._restored = ()
         self._empty_reads = 0
         self._blind = False
+        self._change_logs.clear()
