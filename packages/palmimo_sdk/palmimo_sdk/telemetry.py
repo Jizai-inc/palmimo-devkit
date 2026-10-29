@@ -69,7 +69,9 @@ class TelemetryPoller:
     is not asked for again, and so is absent from every sweep returned, which
     keeps the contract that a missing motor is unknown. Every
     ``RECHECK_INTERVAL_S`` one set-aside motor is added to a sweep to see if it
-    answers; the reader follows bus order, so a re-check that stays silent
+    answers, and after an answer the next one is tried on the next sweep, so a
+    bus that comes back as a whole is watched again within a sweep per motor;
+    the reader follows bus order, so a re-check that stays silent
     leaves the motors behind it unreached for that one sweep. Motors the sweep
     never reached are no evidence and are not counted. Nothing here actuates:
     the changes are recorded in :attr:`watch_changes` and logged, at most every
@@ -224,7 +226,8 @@ class TelemetryPoller:
 
     def _restore(self, motor: str, now: float) -> None:
         self._set_aside.remove(motor)
-        self._recheck_due = now + RECHECK_INTERVAL_S if self._set_aside else None
+        # One answer suggests the bus came back as a whole, so the next set-aside motor is tried at once.
+        self._recheck_due = now if self._set_aside else None
         self._restored = (*self._restored, motor)
         self.watch_changes.record(WatchChange(motor, self._guard_name, True, now))
         self._log_change(motor, now, "answered again; watching it")
