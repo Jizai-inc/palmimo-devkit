@@ -1247,10 +1247,12 @@ not change signal handlers. The automatic flush inside `step()` uses the same
 SIGINT protection and also discards Ctrl+C during that write. Other termination
 signals are not covered.
 
-**Scope.** Only calls through `Palmimo.step()` are sampled, including facade
-methods that drive that loop. Direct wake/sleep glides have no samples, and
-LeRobot teleoperation that drives the engine and driver directly is outside
-this recorder's scope.
+**Scope.** Calls through `Palmimo.step()` are sampled, including facade
+methods that drive that loop, and so are the direct glides of `wake()`,
+`return_to_neutral(duration=...)` and `sleep()`: their leg sweeps are recorded
+with the glide's name as `motion`, and latched errors are polled on the same
+schedule. LeRobot teleoperation that drives the engine and driver directly is
+outside this recorder's scope.
 
 ### Files and header
 
