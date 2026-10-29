@@ -1055,7 +1055,8 @@ class Palmimo:
             raise ValueError("duration must be positive.")
         arm_legs = self._wave_arm_legs(self._engine.motion)
         self.stop()
-        self._leg_safety.end_soft_return()
+        # The ramp takes over a soft-returning arm; a release here would snap it to full gain first.
+        self._take_soft_return()
         targets = self._neutral_targets()
         pose = self._read_pose(driver)
         if pose is None:  # driver can't sense position — fall back to a single neutral command
