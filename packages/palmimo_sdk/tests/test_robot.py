@@ -2613,6 +2613,21 @@ def test_wake_keeps_a_softened_arm_out_of_the_gain_ramp() -> None:
     assert not [c for c in driver.gain_calls[soft_at + 1 :] if c[1] is None or "leg_6_yaw" in c[1]]
 
 
+def test_wake_ramps_an_arm_left_soft_by_a_step_trip_without_restoring_it_to_full_gain_first() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800}
+    _poll_steps(robot, clock, 12)
+    assert _soft_gain_calls(driver) == [(SOFT_RETURN_GAIN, _ARM_6)]
+    driver.currents = {}
+    before = len(driver.gain_calls)
+
+    robot.wake(duration=0.3)
+
+    assert (None, _ARM_6) not in driver.gain_calls[before:]
+
+
 def test_sleep_glide_records_a_trip_without_softening_the_arm() -> None:
     driver = _OverloadDriver()
     robot = _glide_robot(driver)
