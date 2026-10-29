@@ -348,7 +348,7 @@ stops or an SSH session drops.
   a gripped arm draws little current at the soft gain but stays away from neutral.
   The bus reader stops at the first axis that does not answer, so `TelemetryPoller`
   sets an axis aside after three silent sweeps in a row and re-checks it alone every
-  1.5 s; otherwise one dead servo would hide every axis behind it from every guard.
+  1.5 s (at once after a re-check that answers); otherwise one dead servo would hide every axis behind it from every guard.
   A set-aside axis is unknown, never healthy, and the change is recorded and logged
   rather than acted on.
   `wake()`, the timed `return_to_neutral()` and `sleep()` write the driver directly,

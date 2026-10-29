@@ -163,6 +163,23 @@ def test_set_aside_motor_that_stays_silent_is_rechecked_one_motor_at_a_time() ->
     assert driver.requests[-1] == ("m1", "m3", "m4")
 
 
+def test_a_bus_that_comes_back_as_a_whole_is_watched_again_one_sweep_per_motor() -> None:
+    poller, driver = _poller(), BusDriver()
+    driver.silent = set(BUS)
+    now = 0.0
+    while len(poller.unwatched) < len(BUS):
+        poller.read(driver, now, "read failed")
+        now += 0.1
+    driver.silent = set()
+    now += RECHECK_INTERVAL_S
+
+    for _ in BUS:
+        poller.read(driver, now, "read failed")
+        now += 0.1
+
+    assert poller.unwatched == ()
+
+
 def test_read_returns_no_sweep_while_every_motor_is_set_aside_and_no_recheck_is_due() -> None:
     poller, driver = TelemetryPoller(("m1",), 0.1, guard_name="test guard", logger=logger), BusDriver()
     driver.silent = {"m1"}

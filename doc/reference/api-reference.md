@@ -1051,7 +1051,9 @@ contain it, so it stays unknown rather than healthy. Unreached axes are no
 evidence and are not counted. Every `RECHECK_INTERVAL_S` (1.5 s) one set-aside
 axis is added to a sweep to see if it answers; a re-check that stays silent
 leaves the axes behind it unreached for that one sweep. An axis that answers is
-watched again and its overload counts restart. Each change is recorded as a
+watched again and its overload counts restart, and the next set-aside axis is
+tried on the very next sweep, so a bus that was unplugged and plugged back in is
+watched again within one sweep per axis instead of 1.5 s per axis. Each change is recorded as a
 `WatchChange` (frozen dataclass: `motor`, `guard`, `watched`, `at`) and logged as
 a warning, at most once every `WATCH_CHANGE_LOG_INTERVAL_S` (30 s) per axis so a
 flapping servo cannot flood the log. A reconnect records every set-aside axis as
