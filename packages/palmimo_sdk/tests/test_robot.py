@@ -2613,6 +2613,19 @@ def test_wake_keeps_a_softened_arm_out_of_the_gain_ramp() -> None:
     assert not [c for c in driver.gain_calls[soft_at + 1 :] if c[1] is None or "leg_6_yaw" in c[1]]
 
 
+def test_sleep_glide_records_a_trip_without_softening_the_arm() -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    driver.currents = {"leg_6_yaw": 1300}
+
+    robot.sleep(duration=0.3)
+
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_6_yaw", "leg", "sleep")
+    assert (SOFT_RETURN_GAIN, _ARM_6) not in _soft_gain_calls(driver)
+    assert driver.torque_calls == []
+
+
 def test_trip_frame_is_computed_but_not_written() -> None:
     driver = _OverloadDriver()
     robot, clock = _overload_robot(driver)

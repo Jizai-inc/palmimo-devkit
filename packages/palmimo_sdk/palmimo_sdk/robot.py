@@ -1164,6 +1164,9 @@ class Palmimo:
         hold-current-pose glide below is skipped entirely: the neck needs
         relief now, not after another ``duration`` seconds at temperature.
         See :meth:`_sleep_thermal_locked`.
+
+        The overload and rail guards watch the glide and only record a trip,
+        under ``"sleep"``: the ramp is already taking every leg limp.
         """
         driver = self._driver
         if driver is None or not driver.is_connected:
@@ -1215,6 +1218,9 @@ class Palmimo:
         try:
             for s in range(1, steps + 1):
                 f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
+                # No arm legs: this ramp is already taking every leg limp, and an arm
+                # softened here would be restored to full gain once it settled.
+                self._watch_glide(driver, "sleep", ())
                 if has_gain:
                     try:
                         self._write_gain(driver, int(start_gain + (end_gain - start_gain) * f), motors=firm)
