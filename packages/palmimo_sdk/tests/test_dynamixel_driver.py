@@ -24,6 +24,7 @@ from palmimo_sdk import (
     find_servo_port,
 )
 from palmimo_sdk.io._dynamixel_bus import SpanRead
+from palmimo_sdk.io.dynamixel import _SEED_READ_ATTEMPTS, _open_dynamixel_bus
 from palmimo_sdk.kinematics import NEUTRAL
 
 
@@ -1281,3 +1282,63 @@ def test_read_hardware_errors_requires_a_connection() -> None:
     driver, _, _ = make_driver()
     with pytest.raises(RuntimeError):
         driver.read_hardware_errors()
+
+
+class _SeedBus(FakeBus):
+    """FakeBus whose Present_Position reads follow a script (a dict, None, or an exception per call)."""
+
+    def __init__(self, reads: list[Any]) -> None:
+        super().__init__()
+        self.reads = reads
+        self.read_retries: list[int] = []
+
+    def sync_read(self, address: str, normalize: bool = False, num_retry: int = 0) -> dict[str, int | None] | None:
+        self.read_calls += 1
+        self.read_retries.append(num_retry)
+        step = self.reads[min(self.read_calls - 1, len(self.reads) - 1)]
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+    def enable_torque(self, num_retry: int = 0) -> None:
+        self.events.append(("enable_torque",))
+
+    def configure_motors(self) -> None:
+        pass
+
+    def set_baudrate(self, baudrate: int) -> None:
+        pass
+
+    def connect(self) -> None:
+        pass
+
+
+def _open_with(monkeypatch: pytest.MonkeyPatch, bus: _SeedBus) -> Any:
+    monkeypatch.setattr("palmimo_sdk.io._dynamixel_bus.DynamixelBus", lambda **_: bus)
+    return _open_dynamixel_bus("/dev/fake", "xc330-m288", 1_000_000, 300)
+
+
+def test_open_bus_retries_seed_read_then_enables_torque_after_profile_velocity(monkeypatch: pytest.MonkeyPatch) -> None:
+    bus = _SeedBus([None, dict.fromkeys(MOTOR_NAMES, 2000)])
+    _open_with(monkeypatch, bus)
+    goals = [w for w in bus.writes if w[0] == "Goal_Position"]
+    assert len(goals) == len(MOTOR_NAMES)
+    assert all(w[2] == 2000 for w in goals)
+    torque_on = bus.events.index(("enable_torque",))
+    assert all(bus.events.index(("write", "Goal_Position", m)) < torque_on for m in MOTOR_NAMES)
+    assert bus.events.index(("sync_write", "Profile_Velocity")) < torque_on
+
+
+@pytest.mark.parametrize("failure", [None, ConnectionError("bus down")])
+def test_open_bus_keeps_torque_off_when_a_motor_stays_unread(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception | None
+) -> None:
+    partial: dict[str, int | None] = dict.fromkeys(MOTOR_NAMES, 2000)
+    partial["neck_yaw"] = None
+    bus = _SeedBus([failure if failure else partial])
+    with pytest.raises(ConnectionError, match="neck_yaw" if failure is None else "leg_1_yaw"):
+        _open_with(monkeypatch, bus)
+    assert ("enable_torque",) not in bus.events
+    assert bus.disconnect_calls == [True]
+    # Each dropped read costs a packet timeout; the total must stay inside the connect timeout.
+    assert bus.read_retries == [0] * _SEED_READ_ATTEMPTS

@@ -1542,6 +1542,8 @@ The bundled hardware backend (Dynamixel serial bus; needs the `palmimo-sdk[hardw
 - `bus_factory` opens the serial bus; replace it to run the driver against a fake bus in tests.
 - `connect_timeout` bounds the whole connect sequence (see `DynamixelConnectTimeoutError` below).
 
+`connect()` seeds each motor's Goal_Position from its present position before enabling torque. If any motor's position cannot be read after four attempts, `connect()` raises `ConnectionError` naming the motors and torque stays off.
+
 ```python
 from palmimo_sdk import SUPPORTED_MOTOR_MODELS, palmimo_motor_ids
 
