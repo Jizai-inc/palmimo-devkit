@@ -266,14 +266,21 @@ def test_sync_read_span_reports_nothing_for_an_empty_motor_set() -> None:
 
 
 class FakePacketHandler:
-    """Stands in for ``dynamixel_sdk.PacketHandler`` acknowledged writes; *silent* ids never answer."""
+    """Stands in for ``dynamixel_sdk.PacketHandler`` acknowledged writes.
 
-    def __init__(self, silent: set[int]) -> None:
+    *silent* ids never answer; an id in *drops* loses that many replies before answering.
+    """
+
+    def __init__(self, silent: set[int], drops: dict[int, int] | None = None) -> None:
         self.silent = silent
+        self.drops = dict(drops or {})
         self.writes: list[int] = []
 
     def writeTxRx(self, port: object, motor_id: int, address: int, length: int, data: list[int]) -> tuple[int, int]:  # noqa: N802 - mirrors the vendored SDK's name
         self.writes.append(motor_id)
+        if self.drops.get(motor_id, 0) > 0:
+            self.drops[motor_id] -= 1
+            return COMM_RX_FAIL, 0
         return (COMM_RX_FAIL if motor_id in self.silent else COMM_SUCCESS), 0
 
     def getTxRxResult(self, comm: int) -> str:  # noqa: N802 - mirrors the vendored SDK's name
@@ -292,3 +299,27 @@ def test_disable_torque_still_reaches_the_motors_after_a_silent_one() -> None:
         bus.disable_torque()
 
     assert handler.writes == [1, 2, 3]
+
+
+@pytest.mark.parametrize(
+    ("drops", "raises", "writes"),
+    [(1, False, [1, 2, 2, 3]), (2, True, [1, 2, 2, 3])],
+    ids=["one_drop_recovers", "two_drops_give_up"],
+)
+def test_disable_torque_retries_a_dropped_reply_a_bounded_number_of_times(
+    drops: int, raises: bool, writes: list[int]
+) -> None:
+    """With num_retry=1 a single lost reply is survivable, and a silent servo costs exactly two tries."""
+    handler = FakePacketHandler(silent=set(), drops={2: drops})
+    bus = make_bus(FakeSyncReader({}), MOTORS)
+    bus.packet_handler = handler
+    bus.port_handler = object()
+    bus._dxl = dynamixel_sdk
+
+    if raises:
+        with pytest.raises(ConnectionError, match=r"1 motor\(s\): leg_1_pitch1"):
+            bus.disable_torque(num_retry=1)
+    else:
+        bus.disable_torque(num_retry=1)
+
+    assert handler.writes == writes
