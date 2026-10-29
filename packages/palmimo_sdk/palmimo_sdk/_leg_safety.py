@@ -95,16 +95,27 @@ class LegSafety:
         """
         return self._soft_return if motion in _SOFT_RETURN_MOTIONS else None
 
-    def poll(self, driver: ServoDriver | None, motion: Motion, arm_legs: tuple[int, ...]) -> bool:
+    def poll(
+        self,
+        driver: ServoDriver | None,
+        motion: Motion,
+        arm_legs: tuple[int, ...],
+        *,
+        glide: str | None = None,
+    ) -> bool:
         """Sample leg telemetry at most every ``OVERLOAD_POLL_INTERVAL_S`` and judge it.
 
         Args:
             driver (ServoDriver, optional): Connected driver to read from; ``None`` skips the poll.
             motion (Motion): The motion currently running.
             arm_legs (tuple[int, ...]): Legs acting as the raised arm under *motion*.
+            glide (str, optional): Name of a glide that writes the driver directly (``"wake"``).
+                Trips are recorded under it and never stop the glide; only an arm trip is reported,
+                so the caller can soften that arm.
 
         Returns:
-            bool: ``True`` if a guard tripped and the motion must stop.
+            bool: ``True`` if a guard tripped and the motion must stop; with *glide*, ``True`` if
+                the arm channel tripped.
         """
         if driver is None:
             self._sweep = None
@@ -142,7 +153,8 @@ class LegSafety:
         # IDLE and the neck gestures move no leg, so a trip under them has nothing to stop.
         resting = motion in _SOFT_RETURN_MOTIONS
         trips: list[OverloadTrip | None] = []
-        if self._arm_overload is not None and arm:
+        # A glide keeps going after an arm trip, so the softened arm is not judged again for it.
+        if self._arm_overload is not None and arm and not (glide and self._soft_return is not None):
             trips.append(self._arm_overload.sample(telemetry.current, arm))
         if self._leg_overload is not None:
             leg_trip = self._leg_overload.sample(telemetry.current, [m for m in LEG_MOTORS if m not in arm])
@@ -152,8 +164,10 @@ class LegSafety:
         if self._rail is not None:
             rail_trip = self._rail.sample(telemetry.voltage, LEG_MOTORS)
             rail_trip = self._resting_sag.filter(rail_trip, resting=resting, breached=self._rail.sagging)
-        found = [replace(t, motion=motion.name.lower()) for t in trips if t is not None]
-        found_rail = replace(rail_trip, motion=motion.name.lower()) if rail_trip is not None else None
+        name = glide or motion.name.lower()
+        outcome = "the glide continues" if glide else "no leg motion to stop" if resting else "stopping"
+        found = [replace(t, motion=name) for t in trips if t is not None]
+        found_rail = replace(rail_trip, motion=name) if rail_trip is not None else None
         for trip in found:
             self.overload_trips.record(trip)
             self._logger.warning(
@@ -164,7 +178,7 @@ class LegSafety:
                 trip.threshold,
                 trip.samples,
                 trip.motion,
-                "no leg motion to stop" if resting else "stopping",
+                outcome,
             )
         if found_rail is not None:
             self.rail_trips.record(found_rail)
@@ -175,11 +189,15 @@ class LegSafety:
                 found_rail.threshold,
                 found_rail.samples,
                 found_rail.motion,
-                "no leg motion to stop" if resting else "stopping",
+                outcome,
             )
-        if (not found and found_rail is None) or resting:
+        arm_tripped = any(t.channel == "arm" for t in found)
+        if glide is not None:
+            if not arm_tripped:
+                return False
+        elif (not found and found_rail is None) or resting:
             return False
-        if any(t.channel == "arm" for t in found):
+        if arm_tripped:
             self._soft_return = arm
             self._soft_return_monitor.reset()
         return True

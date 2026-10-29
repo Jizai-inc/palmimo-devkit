@@ -1103,10 +1103,17 @@ because it does not carry all 18 leg motors, disables this guard and the rail
 guard with one warning until the next `connect()`. Any other read failure is logged at most every 5 s,
 keeps the counts and does not stop the motion.
 
-**Scope.** The same as the neck guard: only `Palmimo.step()` callers are
-covered. `wake()`, `sleep()` and `return_to_neutral()` write the driver
-directly, and the LeRobot teleop integration drives the engine directly, so the
-guard does not watch them.
+**Scope.** Only `Palmimo.step()` callers are covered, plus the glides of
+`wake()` and `return_to_neutral(duration=...)`, which write the driver
+directly. A glide is never stopped by a trip. The trip is recorded with the
+glide's name as its `motion` (`"wake"` or `"return_to_neutral"`); a leg trip
+(and a rail trip) only records, and an arm trip, for the leg that was the raised
+arm before the glide, also holds those three axes at `Position_P_Gain` 100 as
+above, falling back to cutting their torque. The softened arm is left out of
+`wake()`'s gain ramp and is not judged again during that glide. `sleep()` has
+its own glide and is not watched, and the LeRobot teleop integration drives the
+engine directly, so the guard does not watch it either. The neck guard stays
+`Palmimo.step()` only.
 
 ## Rail Undervoltage Guard
 
@@ -1166,8 +1173,9 @@ land on the same sweep, both are recorded and the motion is stopped once.
 `motor` (the axis that read it), `threshold`, `samples` and `motion` (lowercase
 name). Each trip is also logged as one warning.
 
-**Scope.** The same as the overload guard: only `Palmimo.step()` callers are
-covered.
+**Scope.** The same as the overload guard: `Palmimo.step()` callers and the
+glides of `wake()` and `return_to_neutral(duration=...)`, where a trip is only
+recorded.
 
 ## Servo Flight Recorder
 
