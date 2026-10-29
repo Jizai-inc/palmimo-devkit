@@ -78,6 +78,11 @@ class LegSafety:
         self._soft_return: tuple[str, ...] | None = None
         self._soft_return_monitor = SoftReturnMonitor(MotionEngine.NEUTRAL)
 
+    @property
+    def poller(self) -> TelemetryPoller:
+        """The leg telemetry poller, for the motors it has set aside and the changes it recorded."""
+        return self._poller
+
     def soft_return_under(self, motion: Motion) -> tuple[str, ...] | None:
         """Arm axes to hold at ``SOFT_RETURN_GAIN`` while *motion* runs.
 
@@ -127,6 +132,10 @@ class LegSafety:
                 if stale is not None:
                     stale.reset()
         self._last_sample = now
+        if self._poller.restored:
+            for guard in (self._arm_overload, self._leg_overload):
+                if guard is not None:
+                    guard.forget(self._poller.restored)
         arm = leg_motors(arm_legs)
         if self._soft_return is not None and self._soft_return_monitor.sample(telemetry.position, self._soft_return):
             self.end_soft_return()

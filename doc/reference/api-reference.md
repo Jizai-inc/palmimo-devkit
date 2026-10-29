@@ -1042,6 +1042,26 @@ axes. The counts restart whenever the motion or its arm leg changes, and on
 **Polling.** The clock is the one injected as `thermal_clock`. At most every
 1/30 s, `step()` makes one `read_telemetry()` call for all 18 leg axes.
 
+**Silent axes.** The bus reader stops at the first axis that does not answer and
+reports every axis behind it as unreached, so one dead servo would blind the guard
+to the rest of the bus on every sweep. An axis that is silent on
+`SILENT_SWEEPS_TO_SET_ASIDE` (3) sweeps in a row is therefore set aside: later
+`read_telemetry()` calls leave it out and the sweeps handed to the guards never
+contain it, so it stays unknown rather than healthy. Unreached axes are no
+evidence and are not counted. Every `RECHECK_INTERVAL_S` (1.5 s) one set-aside
+axis is added to a sweep to see if it answers; a re-check that stays silent
+leaves the axes behind it unreached for that one sweep. An axis that answers is
+watched again and its overload counts restart. Each change is logged as a warning
+and recorded as a `WatchChange` (frozen dataclass: `motor`, `guard`, `watched`,
+`at`). When 3 axes (or all of a guard's axes, if it watches fewer) are set aside,
+one error is logged; nothing is actuated. The neck guard sets aside its own
+silent axes the same way, so its judgement is held while one is set aside.
+
+| Member | Returns |
+|--------|---------|
+| `robot.drain_watch_changes()` | `list[WatchChange]` of the leg and neck guards, oldest first; the call empties the queues, which keep the newest 64 each |
+| `robot.unwatched_motors` | Axes currently set aside, as a tuple; empty when all are watched |
+
 **Reaction.**
 
 | Channel | On trip |

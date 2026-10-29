@@ -107,6 +107,7 @@ from .robot import (
     Palmimo,
     RoutineStep,
 )
+from .telemetry import WatchChange
 from .thermal import NeckThermalState
 
 
@@ -166,6 +167,7 @@ __all__ = [
     "Subscription",
     "TtsEngine",
     "TtsVoice",
+    "WatchChange",
     "default_incident_dir",
     "describe_hardware_error",
     "find_face_port",
