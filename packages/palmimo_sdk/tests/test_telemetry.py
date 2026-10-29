@@ -245,6 +245,15 @@ def test_blind_error_is_logged_once_when_no_read_carries_a_motor(
     assert "watch the bus" in caplog.records[0].getMessage()
 
 
+def test_reset_records_each_set_aside_motor_as_watched_again() -> None:
+    poller, driver = _poller(), BusDriver()
+    now = _set_m2_aside(poller, driver)
+
+    poller.reset(now)
+
+    assert [(c.motor, c.watched) for c in poller.watch_changes.drain()] == [("m2", False), ("m2", True)]
+
+
 def test_a_flapping_motor_is_logged_once_per_interval_but_every_change_is_recorded(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

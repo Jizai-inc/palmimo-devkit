@@ -211,7 +211,7 @@ class LegSafety:
         self._scope = None
         self._last_sample = None
         self._sweep = None
-        self._poller.reset()
+        self._poller.reset(self._clock())
         if self._rail is not None:
             self._rail.reset()
         self._resting_strain.reset()
