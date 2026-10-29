@@ -351,8 +351,12 @@ stops or an SSH session drops.
   1.5 s; otherwise one dead servo would hide every axis behind it from every guard.
   A set-aside axis is unknown, never healthy, and the change is recorded and logged
   rather than acted on.
+  `wake()` and the timed `return_to_neutral()` write the driver directly, so they
+  poll `LegSafety` themselves: a trip is recorded under the glide's name and never
+  stops the glide, and only an arm trip reacts, by taking the same soft-return
+  path as `step()`.
   See [the API reference](../reference/api-reference.md#overload-guard) for thresholds,
-  the trip API and the scope, which is that of the neck guard
+  the trip API and the scope
 - **Rail voltage IS acted on** (`rail.py`'s `RailGuard`, fed by the same 30 Hz leg
   telemetry sweep as the overload guard — no extra bus read) — resistance in the
   supply path pulls every axis's input voltage down together when the summed current

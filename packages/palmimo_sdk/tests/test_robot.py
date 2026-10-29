@@ -2442,6 +2442,7 @@ class _OverloadDriver(ServoDriver):
         self.profile_velocity = 300
         self.telemetry_error: Exception | None = None
         self.silent: set[str] = set()
+        self.on_write: Callable[[], None] | None = None
         self._connected = True
 
     @property
@@ -2456,6 +2457,8 @@ class _OverloadDriver(ServoDriver):
 
     def _write_positions(self, positions: dict[str, int]) -> None:
         self.writes.append(dict(positions))
+        if self.on_write is not None:
+            self.on_write()
 
     def read_positions(self) -> dict[str, int]:
         return dict(self.positions)
@@ -2558,6 +2561,56 @@ def test_arm_trips_when_a_motor_ahead_of_it_on_the_bus_stays_silent() -> None:
     assert robot.unwatched_motors == ("leg_1_yaw",)
     (change,) = robot.drain_watch_changes()
     assert (change.motor, change.watched) == ("leg_1_yaw", False)
+
+
+def _glide_robot(driver: _OverloadDriver) -> Palmimo:
+    """A robot waving with *driver*'s clock advancing one poll per written frame."""
+    robot, clock = _overload_robot(driver)
+    driver.on_write = lambda: clock.advance(_POLL_DT)
+    robot.wave()
+    return robot
+
+
+def test_return_to_neutral_glide_records_an_arm_trip_softens_the_arm_and_finishes() -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    driver.currents = {"leg_6_yaw": 800}
+
+    robot.return_to_neutral(duration=0.3)
+
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_6_yaw", "arm", "return_to_neutral")
+    assert _soft_gain_calls(driver) == [(SOFT_RETURN_GAIN, _ARM_6)]
+    assert driver.torque_calls == []
+    assert len(driver.writes) == 18  # round(0.3 s * 60 fps): the glide ran to its last frame
+    assert driver.writes[-1]["leg_6_yaw"] == MotionEngine.NEUTRAL
+
+
+def test_return_to_neutral_glide_only_records_a_leg_trip() -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    driver.currents = {"leg_2_pitch1": 1300}
+
+    robot.return_to_neutral(duration=0.3)
+
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_2_pitch1", "leg", "return_to_neutral")
+    assert _soft_gain_calls(driver) == []
+    assert driver.torque_calls == []
+    assert len(driver.writes) == 18
+
+
+def test_wake_keeps_a_softened_arm_out_of_the_gain_ramp() -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    driver.currents = {"leg_6_yaw": 800}
+
+    robot.wake(duration=0.3)
+
+    (trip,) = robot.drain_overload_trips()
+    assert trip.motion == "wake"
+    soft_at = driver.gain_calls.index((SOFT_RETURN_GAIN, _ARM_6))
+    assert not [c for c in driver.gain_calls[soft_at + 1 :] if c[1] is None or "leg_6_yaw" in c[1]]
 
 
 def test_trip_frame_is_computed_but_not_written() -> None:
