@@ -6,7 +6,6 @@ import logging
 from collections.abc import Callable, Mapping
 
 from ._flight_recorder import HARDWARE_ERROR_INTERVAL_S, AxisSample, ServoFlightRecorder
-from .engine import Motion
 from .io.base import ServoDriver, ServoTelemetry
 from .telemetry import READ_FAILURE_LOG_INTERVAL_S
 
@@ -94,7 +93,7 @@ class FlightRide:
     def poll(
         self,
         driver: ServoDriver | None,
-        motion: Motion,
+        name: str,
         leg_sweep: tuple[float, ServoTelemetry] | None,
         neck_sweep: tuple[float, ServoTelemetry] | None,
         last_goal: Mapping[str, int],
@@ -102,7 +101,6 @@ class FlightRide:
         if driver is None or self._disabled:
             return self._recorder.window_due(self._clock())
         now = self._clock()
-        name = motion.name.lower()
         if leg_sweep is not None:
             at, telemetry = leg_sweep
             self._leg = (at, self._axes(telemetry, last_goal))
