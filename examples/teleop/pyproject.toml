@@ -31,7 +31,6 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-cov>=5",
     "ruff>=0.3,<1",
-    "types-PyYAML",
     # starlette.testclient.TestClient (used by tests/test_server.py) requires
     # httpx2 at import time; fastapi/starlette do not declare it as a runtime
     # dependency of the app itself, only of their own test client.

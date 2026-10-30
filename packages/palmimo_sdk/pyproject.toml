@@ -34,10 +34,12 @@ Changelog = "https://github.com/Jizai-inc/palmimo-devkit/releases"
 # dep). Compute-only use needs none of this.
 hardware = ["dynamixel-sdk>=3.7.31"]
 # Face display client (FaceDisplay over USB-CDC to the face-display board).
-# Lazy-imported, so `import palmimo_sdk` stays dependency-free without it.
+# Its transport, pyserial, is already a base dependency, so this installs
+# nothing; it names the feature (tests/contracts/test_sdk_extra_declarations.py).
 face = ["pyserial"]
 # Speaker (piper-plus TTS). Opt-in so `import palmimo_sdk` stays dependency-free.
-speech = ["piper-plus"]
+# io/tts/piper.py imports nltk itself to fetch English phonemization data.
+speech = ["piper-plus", "nltk>=3.9"]
 # Mic streaming capture (MicStream) + GTCRN noise removal (sherpa-onnx
 # OnlineSpeechDenoiser). Lazy-imported, so `import palmimo_sdk` stays
 # dependency-free without it. sherpa-onnx-core is pinned separately because
@@ -66,12 +68,12 @@ vision = ["opencv-python>=4"]
 # decorator-based list_tools()/call_tool() registration in favor of the
 # on_list_tools/on_call_tool constructor kwargs, and mcp.shared.memory's
 # create_connected_server_and_client_session in favor of a unified Client).
-# mcp-types, starlette, and uvicorn are all already reachable transitively
+# mcp-types, starlette, uvicorn, and anyio are all already reachable transitively
 # through `mcp` itself, but palmimo_sdk.mcp imports each of them directly
-# (server.py: `import mcp_types`; __main__.py: `import uvicorn`,
+# (server.py: `import mcp_types`; __main__.py: `import uvicorn`, `import anyio`,
 # `from starlette...`), so they are declared here too rather than relying on
 # an undeclared transitive dependency for a direct import.
-mcp = ["mcp>=2,<3", "mcp-types>=2,<3", "starlette>=0.27", "uvicorn>=0.31.1", "palmimo-sdk[agent]"]
+mcp = ["mcp>=2,<3", "mcp-types>=2,<3", "starlette>=0.27", "uvicorn>=0.31.1", "anyio>=4", "palmimo-sdk[agent]"]
 
 [build-system]
 requires = ["hatchling"]

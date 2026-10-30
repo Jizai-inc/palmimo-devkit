@@ -960,7 +960,6 @@ source = { virtual = "." }
 dependencies = [
     { name = "dynamixel-sdk" },
     { name = "palmimo-sdk", extra = ["hardware"] },
-    { name = "pyserial" },
     { name = "tqdm" },
 ]
 
@@ -995,7 +994,6 @@ requires-dist = [
     { name = "palmimo-sdk", extras = ["mcp"], marker = "extra == 'mcp'", editable = "packages/palmimo_sdk" },
     { name = "palmimo-sdk", extras = ["vision"], marker = "extra == 'vision'", editable = "packages/palmimo_sdk" },
     { name = "palmimo-sdk", extras = ["voice"], marker = "extra == 'voice'", editable = "packages/palmimo_sdk" },
-    { name = "pyserial", specifier = ">=3.5" },
     { name = "tqdm", specifier = ">=4.66.0" },
 ]
 provides-extras = ["voice", "vision", "mcp"]
@@ -1032,6 +1030,7 @@ hardware = [
     { name = "dynamixel-sdk" },
 ]
 mcp = [
+    { name = "anyio" },
     { name = "mcp" },
     { name = "mcp-types" },
     { name = "pydantic" },
@@ -1039,6 +1038,7 @@ mcp = [
     { name = "uvicorn" },
 ]
 speech = [
+    { name = "nltk" },
     { name = "piper-plus" },
 ]
 vision = [
@@ -1055,9 +1055,11 @@ voice = [
 [package.metadata]
 requires-dist = [
     { name = "ai-edge-litert", marker = "extra == 'voice'", specifier = ">=2.1" },
+    { name = "anyio", marker = "extra == 'mcp'", specifier = ">=4" },
     { name = "dynamixel-sdk", marker = "extra == 'hardware'", specifier = ">=3.7.31" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2,<3" },
     { name = "mcp-types", marker = "extra == 'mcp'", specifier = ">=2,<3" },
+    { name = "nltk", marker = "extra == 'speech'", specifier = ">=3.9" },
     { name = "numpy", marker = "extra == 'voice'", specifier = ">=1.24" },
     { name = "opencv-python", marker = "extra == 'vision'", specifier = ">=4" },
     { name = "palmimo-sdk", extras = ["agent"], marker = "extra == 'mcp'", editable = "packages/palmimo_sdk" },

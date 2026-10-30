@@ -82,6 +82,13 @@ spells out in full.
 - Copyright (c) 2022 Samuel Colvin and other contributors
 - Source: https://github.com/pydantic/pydantic-settings
 
+### python-dotenv
+
+- License: BSD-3-Clause
+- Copyright (c) 2014, Saurabh Kumar (python-dotenv), 2013, Ted Tieken
+  (django-dotenv-rw), 2013, Jacob Kaplan-Moss (django-dotenv)
+- Source: https://github.com/theskumar/python-dotenv
+
 ### onnxruntime
 
 - License: MIT
@@ -102,6 +109,12 @@ spells out in full.
 - License: MIT
 - Copyright (c) 2021 Will McGugan
 - Source: https://github.com/Textualize/textual
+
+### rich
+
+- License: MIT
+- Copyright (c) 2020 Will McGugan
+- Source: https://github.com/Textualize/rich
 
 ### websockets
 
