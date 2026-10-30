@@ -22,6 +22,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..hardware_error import describe_hardware_error
 from ..reservation import Reservation, acquire_resource
 
 
@@ -294,7 +295,8 @@ class DynamixelBus:
         for _ in range(1 + num_retry):
             model_number, comm, error = self.packet_handler.ping(self.port_handler, motor_id)
             if comm == self._comm_success:
-                return model_number if error == 0 else None
+                # A bare Alert bit still means the servo is there; enable_torque reports it by name.
+                return model_number if error & ~self._dxl.ERRBIT_ALERT == 0 else None
         return None
 
     def configure_motors(self) -> None:
@@ -302,10 +304,35 @@ class DynamixelBus:
         for motor in self.motors:
             self.write("Return_Delay_Time", motor, 0)
 
-    def enable_torque(self, num_retry: int = 0) -> None:
-        """Enable torque on every motor."""
-        for motor in self.motors:
-            self.write("Torque_Enable", motor, _TORQUE_ENABLE, num_retry=num_retry)
+    def enable_torque(self, num_retry: int = 0, *, motors: Sequence[str] | None = None) -> None:
+        """Enable torque on *motors* (every motor when ``None``).
+
+        Stops at the first motor that fails. A reply carrying the Alert bit
+        means the servo shut down on its error and will not take torque.
+
+        Raises:
+            ConnectionError / RuntimeError: A write failed, after all retries.
+            RuntimeError: A motor reported a latched hardware error; the message
+                names it and its error bits.
+        """
+        for motor in self.motors if motors is None else motors:
+            if self.write("Torque_Enable", motor, _TORQUE_ENABLE, num_retry=num_retry):
+                raise RuntimeError(
+                    f"Torque may not hold: hardware error latched on {self._describe_latched(motor)}; "
+                    "reboot the servo to clear it."
+                )
+
+    def _describe_latched(self, motor: str) -> str:
+        """Name *motor* with its Hardware_Error_Status bits, where they can be read."""
+        try:
+            bits = (
+                self.sync_read_span(["Hardware_Error_Status"], motors=[motor])
+                .values.get(motor, {})
+                .get("Hardware_Error_Status")
+            )
+        except Exception:
+            bits = None
+        return motor if bits is None else f"{motor} ({describe_hardware_error(bits)})"
 
     def disable_torque(self, num_retry: int = 0, *, motors: Sequence[str] | None = None) -> None:
         """Disable torque on *motors* (every motor when ``None``), trying each one.
@@ -330,14 +357,20 @@ class DynamixelBus:
             detail = "; ".join(f"{motor}: {exc}" for motor, exc in failures)
             raise type(first)(f"Could not disable torque on {len(failures)} motor(s): {detail}") from first
 
-    def write(self, data_name: str, motor: str, value: int, *, normalize: bool = False, num_retry: int = 0) -> None:
+    def write(self, data_name: str, motor: str, value: int, *, normalize: bool = False, num_retry: int = 0) -> bool:
         """Write one register on a single motor, waiting for a status packet.
 
         Slower but acknowledged; used for configuration and per-motor writes.
 
+        Returns:
+            bool: True when the reply carried the Alert bit (a hardware error is
+                latched on that servo).
+
         Raises:
             NotImplementedError: *normalize* is True (this bus is raw-ticks only).
-            ConnectionError / RuntimeError: The write failed after all retries.
+            ConnectionError: No status packet came back after all retries.
+            RuntimeError: The servo rejected the write. A bare Alert bit is
+                not a rejection.
         """
         _reject_normalize(normalize)
         addr, length = CONTROL_TABLE[data_name]
@@ -348,7 +381,7 @@ class DynamixelBus:
             comm, error = self.packet_handler.writeTxRx(self.port_handler, motor_id, addr, length, data)
             if comm == self._comm_success:
                 break
-        self._check(comm, error, f"write '{data_name}' on id {motor_id}")
+        return self._check(comm, error, f"write '{data_name}' on id {motor_id}")
 
     def sync_write(
         self, data_name: str, values: int | dict[str, int], *, normalize: bool = False, num_retry: int = 0
@@ -512,12 +545,21 @@ class DynamixelBus:
             ]
         raise ValueError(f"Unsupported register byte size: {length}.")
 
-    def _check(self, comm: int, error: int, what: str) -> None:
-        """Raise if a single-motor comm result or packet error indicates failure."""
+    def _check(self, comm: int, error: int, what: str) -> bool:
+        """Raise if a single-motor comm result or packet error indicates failure.
+
+        A bare Alert bit (``ERRBIT_ALERT``) is not a failure: it flags a latched
+        hardware error, and the instruction itself was processed.
+
+        Returns:
+            bool: Whether the Alert bit was set.
+        """
         if comm != self._comm_success:
             raise ConnectionError(f"Failed to {what}: {self.packet_handler.getTxRxResult(comm)}")
-        if error != 0:
-            raise RuntimeError(f"Failed to {what}: {self.packet_handler.getRxPacketError(error)}")
+        rejection = error & ~self._dxl.ERRBIT_ALERT
+        if rejection != 0:
+            raise RuntimeError(f"Failed to {what}: {self.packet_handler.getRxPacketError(rejection)}")
+        return bool(error & self._dxl.ERRBIT_ALERT)
 
 
 def _reject_normalize(normalize: bool) -> None:

@@ -643,7 +643,7 @@ from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK
 
 `ServoDriver.read_positions()` は現在のサーボ位置を読みますが、読み取り失敗を安全な代替値（バッチ全体の失敗なら `{}`、単一モーターの欠落なら `NEUTRAL`）に置き換えるため、呼び出し元は欠落と実際の `NEUTRAL` 読み取りを区別できません。 `ServoDriver.read_positions_span(motors=None)` は、同じ信号を代替値なしで読みます。返すのは `ServoPositions`（`palmimo_sdk.io.base.ServoPositions`）で、`positions` のマッピングには応答したモーターだけを含めます。併せて `silent`（問い合わせたが無応答）と `unreached`（走査がすでに停止したため、問い合わせていない）を持ちます。後述の `ServoTelemetry` と同じ構造です。読み取りの欠落を実際の関節位置と取り違えてはいけない呼び出し元（固定の制御レートで動くポリシーループなど）は、 `read_positions()` の代わりにこちらを使います。任意の機能で、デフォルトは `NotImplementedError` を送出します。
 
-`ServoDriver.read_telemetry(motors=None)` は、1 回の走査で `current`（符号付きの生の値）、 `voltage`（V）、`temperature`（°C）、`position`（生の tick）を持つ `ServoTelemetry` を返し、同じ `silent` / `unreached` の管理情報を持ちます。[電源レールの低電圧ガード](#電源レールの低電圧ガード)は `voltage` を読みます。 `ServoDriver.set_torque_enabled(enabled, motors=None)` は、指定したモーターのトルクを切り替えます（`None` なら全モーター）。どちらも任意の機能で、デフォルトは `NotImplementedError` を送出します。
+`ServoDriver.read_telemetry(motors=None)` は、1 回の走査で `current`（符号付きの生の値）、 `voltage`（V）、`temperature`（°C）、`position`（生の tick）を持つ `ServoTelemetry` を返し、同じ `silent` / `unreached` の管理情報を持ちます。[電源レールの低電圧ガード](#電源レールの低電圧ガード)は `voltage` を読みます。 `ServoDriver.set_torque_enabled(enabled, motors=None)` は、指定したモーターのトルクを切り替えます（`None` なら全モーター）。どちらも任意の機能で、デフォルトは `NotImplementedError` を送出します。 `DynamixelDriver` でトルクを入れる操作（`connect()` も行います）は、ハードウェアエラーがラッチされたサーボがあると、そのサーボ名を示して `RuntimeError` を送出します。シャットダウンしたサーボにはトルクが入らないためです。
 
 ## ポートの自動検出
 

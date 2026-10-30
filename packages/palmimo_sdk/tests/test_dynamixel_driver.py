@@ -119,6 +119,10 @@ class FakeBus:
         self.writes.append((address, motor, value))
         self.events.append(("write", address, motor))
 
+    def enable_torque(self, num_retry: int = 0, *, motors: Sequence[str] | None = None) -> None:
+        for motor in self.motors if motors is None else motors:
+            self.write("Torque_Enable", motor, 1)
+
     def disable_torque(self, num_retry: int = 0, *, motors: Sequence[str] | None = None) -> None:
         self.disable_torque_retries.append(num_retry)
         for motor in self.motors if motors is None else motors:
@@ -1311,7 +1315,7 @@ class _SeedBus(FakeBus):
             raise step
         return step
 
-    def enable_torque(self, num_retry: int = 0) -> None:
+    def enable_torque(self, num_retry: int = 0, *, motors: Sequence[str] | None = None) -> None:
         self.events.append(("enable_torque",))
 
     def configure_motors(self) -> None:

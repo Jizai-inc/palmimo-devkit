@@ -269,10 +269,19 @@ class FakePacketHandler:
     """Stands in for ``dynamixel_sdk.PacketHandler`` acknowledged writes.
 
     *silent* ids never answer; an id in *drops* loses that many replies before answering.
+    Every reply carries *error*, or the per-id value in *errors*.
     """
 
-    def __init__(self, silent: set[int], drops: dict[int, int] | None = None) -> None:
+    def __init__(
+        self,
+        silent: set[int],
+        error: int = 0,
+        errors: dict[int, int] | None = None,
+        drops: dict[int, int] | None = None,
+    ) -> None:
         self.silent = silent
+        self.error = error
+        self.errors = errors or {}
         self.drops = dict(drops or {})
         self.writes: list[int] = []
 
@@ -281,19 +290,31 @@ class FakePacketHandler:
         if self.drops.get(motor_id, 0) > 0:
             self.drops[motor_id] -= 1
             return COMM_RX_FAIL, 0
-        return (COMM_RX_FAIL if motor_id in self.silent else COMM_SUCCESS), 0
+        return (COMM_RX_FAIL if motor_id in self.silent else COMM_SUCCESS), self.errors.get(motor_id, self.error)
+
+    def ping(self, port: object, motor_id: int) -> tuple[int, int, int]:
+        return 1200, COMM_SUCCESS, self.errors.get(motor_id, self.error)
 
     def getTxRxResult(self, comm: int) -> str:  # noqa: N802 - mirrors the vendored SDK's name
         return "[TxRxResult] There is no status packet!"
+
+    def getRxPacketError(self, error: int) -> str:  # noqa: N802 - mirrors the vendored SDK's name
+        return f"[RxPacketError] {error:#04x}"
+
+
+def make_write_bus(handler: FakePacketHandler) -> DynamixelBus:
+    """A bus whose acknowledged writes go to *handler*."""
+    bus = make_bus(FakeSyncReader({}), MOTORS)
+    bus.packet_handler = handler
+    bus.port_handler = object()
+    bus._dxl = dynamixel_sdk
+    return bus
 
 
 def test_disable_torque_still_reaches_the_motors_after_a_silent_one() -> None:
     """One unplugged servo must not leave every servo behind it armed."""
     handler = FakePacketHandler(silent={2})
-    bus = make_bus(FakeSyncReader({}), MOTORS)
-    bus.packet_handler = handler
-    bus.port_handler = object()
-    bus._dxl = dynamixel_sdk
+    bus = make_write_bus(handler)
 
     with pytest.raises(ConnectionError, match=r"1 motor\(s\): leg_1_pitch1"):
         bus.disable_torque()
@@ -311,10 +332,7 @@ def test_disable_torque_retries_a_dropped_reply_a_bounded_number_of_times(
 ) -> None:
     """With num_retry=1 a single lost reply is survivable, and a silent servo costs exactly two tries."""
     handler = FakePacketHandler(silent=set(), drops={2: drops})
-    bus = make_bus(FakeSyncReader({}), MOTORS)
-    bus.packet_handler = handler
-    bus.port_handler = object()
-    bus._dxl = dynamixel_sdk
+    bus = make_write_bus(handler)
 
     if raises:
         with pytest.raises(ConnectionError, match=r"1 motor\(s\): leg_1_pitch1"):
@@ -323,3 +341,46 @@ def test_disable_torque_retries_a_dropped_reply_a_bounded_number_of_times(
         bus.disable_torque(num_retry=1)
 
     assert handler.writes == writes
+
+
+@pytest.mark.parametrize(
+    ("error", "raises"),
+    [(0x80, False), (0x80 | 0x04, True), (0x04, True)],
+    ids=["alert_only", "alert_and_other", "other_only"],
+)
+def test_write_fails_only_on_a_status_error_beyond_the_alert_bit(error: int, raises: bool) -> None:
+    """The Alert bit flags a latched hardware error; the write itself was processed."""
+    bus = make_write_bus(FakePacketHandler(silent=set(), error=error))
+
+    if raises:
+        # The message names the rejection code alone, not the masked-off alert.
+        with pytest.raises(RuntimeError, match=r"Failed to write 'Torque_Enable' on id 1: \[RxPacketError\] 0x04$"):
+            bus.write("Torque_Enable", "leg_1_yaw", 0)
+    else:
+        bus.write("Torque_Enable", "leg_1_yaw", 0)
+
+
+@pytest.mark.parametrize("alerted", [False, True], ids=["clean", "alert_on_one"])
+def test_enable_torque_stops_at_the_first_motor_that_reports_an_alert(alerted: bool) -> None:
+    """A servo that shut down answers the torque write with Alert; torque is not holding."""
+    handler = FakePacketHandler(silent=set(), errors={2: 0x80} if alerted else {})
+    bus = make_write_bus(handler)
+
+    if alerted:
+        with pytest.raises(RuntimeError, match=r"hardware error latched on leg_1_pitch1"):
+            bus.enable_torque()
+    else:
+        bus.enable_torque()
+
+    assert handler.writes == ([1, 2] if alerted else [1, 2, 3])
+
+
+@pytest.mark.parametrize(
+    ("error", "found"),
+    [(0x80, True), (0x80 | 0x04, False), (0x04, False)],
+    ids=["alert_only", "alert_and_other", "other_only"],
+)
+def test_ping_counts_a_servo_with_only_the_alert_bit_as_present(error: int, found: bool) -> None:
+    bus = make_write_bus(FakePacketHandler(silent=set(), error=error))
+
+    assert (bus._ping(1) == 1200) is found
