@@ -236,7 +236,7 @@ LeRobot プラグインのスクリプトは LeRobot の `DynamixelMotorsBus` �
 
 後続のリソースや、起動時の滑らかな移動自体が失敗すると、すでに開いたリソースを閉じてからエラーを再送出します。そのため、部分的な失敗でも、ハンドルを閉じるときに予約が解放されます。このロールバックは `Exception` だけでなく、起動時の移動中の `KeyboardInterrupt`（Ctrl+C）にも対応します。ほかのロールバックと同様、ドライバーを閉じる前に首を柔らかく解放するため、起動が中断されても、トルクを切る直前まで頭をフルゲインで保持したままにはなりません。
 
-`DynamixelDriver.connect()` と `FaceDisplay.connect()` は、ロボットが接続されていないマシンで待ち続けず、早期に失敗します。接続処理全体（ポート検出、ポート / バスのオープン、Dynamixel バスではモーターとのハンドシェイクとトルク有効化も含む）に、ドライバーごとの `connect_timeout` で上限を設けています。デフォルトは 10 秒 / 5 秒で、 1 秒未満の実機の場合に対し十分な余裕があります。超過すると、 `DynamixelConnectTimeoutError` / `FaceDisplayConnectTimeoutError` を送出します。これらはほかの接続失敗と同様、`robot.connect()` のロールバックを通じて伝播します（詳細は後述および `palmimo_sdk.io._timeout` を参照）。また `DynamixelDriver.connect()` は、トルクを有効にする前に各モーターの現在位置を Goal_Position に書き込みます。4 回試しても読み取れないモーターがあれば、そのモーター名を示す `ConnectionError` を送出し、トルクは OFF のままです。
+`DynamixelDriver.connect()` と `FaceDisplay.connect()` は、ロボットが接続されていないマシンで待ち続けず、早期に失敗します。接続処理全体（ポート検出、ポート / バスのオープン、Dynamixel バスではモーターとのハンドシェイクとトルク有効化も含む）に、ドライバーごとの `connect_timeout` で上限を設けています。デフォルトは 10 秒 / 5 秒で、 1 秒未満の実機の場合に対し十分な余裕があります。超過すると、 `DynamixelConnectTimeoutError` / `FaceDisplayConnectTimeoutError` を送出します。これらはほかの接続失敗と同様、`robot.connect()` のロールバックを通じて伝播します（詳細は後述および `palmimo_sdk.io._timeout` を参照）。
 
 ### `robot.disconnect(*, park=True) -> None`
 ロボットをパークし、マイク、カメラ、スピーカーを順に閉じます。その後、ディスプレイをニュートラルの IDLE の顔へ戻して閉じ、最後にドライバーを閉じます。冪等で、アイドル時も安全です。周辺機器の終了処理はベストエフォートです。
@@ -645,6 +645,31 @@ from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK
 
 `ServoDriver.read_telemetry(motors=None)` は、1 回の走査で `current`（符号付きの生の値）、 `voltage`（V）、`temperature`（°C）、`position`（生の tick）を持つ `ServoTelemetry` を返し、同じ `silent` / `unreached` の管理情報を持ちます。[電源レールの低電圧ガード](#電源レールの低電圧ガード)は `voltage` を読みます。 `ServoDriver.set_torque_enabled(enabled, motors=None)` は、指定したモーターのトルクを切り替えます（`None` なら全モーター）。どちらも任意の機能で、デフォルトは `NotImplementedError` を送出します。
 
+### `DynamixelDriver`
+
+同梱のハードウェアバックエンドです（Dynamixel シリアルバス。`palmimo-sdk[hardware]` extra が必要です）。
+
+`DynamixelDriver(port=None, *, baudrate=1_000_000, motor_model="xc330-m288", profile_velocity=300, keep_torque_on_disconnect=False, calibration=None, bus_factory=..., connect_timeout=10.0)`
+
+- `port=None` の場合、`connect()` 時にバスを自動検出します（[ポートの自動検出](#ポートの自動検出)を参照）。
+- `motor_model` は `SUPPORTED_MOTOR_MODELS` のいずれかでなければならず、それ以外の値は `ValueError` を送出します。`"xc330-m288"` が実機のモーターで、`"xl330-m288"` は実機では接続時のハンドシェイクに失敗します。
+- `profile_velocity` は、接続時にすべてのモーターへ適用する時間ベースの Profile_Velocity で、1 回の移動あたりのミリ秒です（小さいほど速くなります）。
+- `keep_torque_on_disconnect=False` の場合、`disconnect()` でトルクを切ります。
+- `calibration` は API の互換性のために受け付けますが、適用されません。バスでやり取りするのは生の tick です。
+- `bus_factory` はシリアルバスを開きます。テストで偽のバスに対してドライバーを動かすときは、これを差し替えます。
+- `connect_timeout` は接続処理全体の上限です（後述の `DynamixelConnectTimeoutError` を参照）。
+
+`connect()` は、トルクを有効にする前に、各モーターの現在位置を Goal_Position に書き込みます。4 回試しても位置を読み取れないモーターがあれば、`connect()` はそのモーター名を示す `ConnectionError` を送出し、トルクは OFF のままです。
+
+```python
+from palmimo_sdk import SUPPORTED_MOTOR_MODELS, palmimo_motor_ids
+
+SUPPORTED_MOTOR_MODELS   # ("xl330-m288", "xc330-m288")
+palmimo_motor_ids()      # {"leg_1_yaw": 1, ..., "neck_pitch1": 19, "neck_pitch2": 20, "neck_yaw": 21}
+```
+
+`palmimo_motor_ids() -> dict[str, int]` は、21 個のモーターについて、名前から Dynamixel ID への対応表を返します。ID 1〜18 は 6 本の脚（`leg_{1-6}_{yaw,pitch1,pitch2}`、胴体側から先端側の順）、ID 19〜21 は首です。名前は `step()` が出力するキーと一致します。
+
 ## ポートの自動検出
 
 ### `find_servo_port() -> str`
@@ -666,6 +691,11 @@ except PortDetectionError as e:
 候補がちょうど 1 つ見つかると、デバイスパス（例: `"/dev/ttyACM0"`）を返します。候補が 0 または複数ある場合は、`PortDetectionError` を送出します。
 
 自分で呼ぶ必要があるのは、解決したパスを表示したりログに記録したりする場合だけです。 `DynamixelDriver(port=None)`（デフォルト）は、`FaceDisplay(port=None)` と同様、 `connect()` 時に同じ検出を実行します。
+
+### `find_face_port() -> str | None`
+接続されているフェイスディスプレイのシリアルデバイスパスを返します。見つからない場合は `None` を返します。フェイスディスプレイの USB ベンダー ID（`0x2E8A`）で照合するため、Pi のようにフェイスとサーボバスがどちらも `/dev/ttyACM*` として現れる環境でも、バスではなくフェイスを選びます。複数のフェイスディスプレイが接続されている場合は、警告を記録して最初の 1 つを返します。
+
+`find_servo_port()` と異なり、見つからなくても例外は送出しません。`FaceDisplay(port=None)`（デフォルト）は `connect()` 時にこれを呼び、`None` が返ると `FaceDisplayError` を送出します。
 
 ### `PortDetectionError`
 検出に失敗すると `find_servo_port()` が送出します。メッセージには必ず対処方法（`--port` を明示的に指定）が含まれます。
