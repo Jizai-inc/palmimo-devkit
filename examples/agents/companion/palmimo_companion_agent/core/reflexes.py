@@ -61,10 +61,9 @@ _FACE_LOOK_SECONDS = 3.0
 #: How long look_at_face tolerates losing the face before giving up early.
 _FACE_LOST_GRACE_SECONDS = 1.0
 
-#: Per-kind cooldown (seconds), counted from the end of the gesture: a reflex
-#: that just fired won't fire again for this long, even once the robot is free
-#: -- a continuously-waving hand (or a face that never leaves frame) must not
-#: retrigger every detection.
+#: Per-kind cooldown (seconds): a reflex that just fired won't fire again for
+#: this long, even once the robot is free -- a continuously-waving hand (or a
+#: face that never leaves frame) must not retrigger every detection.
 _COOLDOWNS: dict[DetectionKind, float] = {
     DetectionKind.WAVE: 8.0,
     DetectionKind.FACE: 15.0,
@@ -105,6 +104,7 @@ class ReflexEngine:
         self._notify = notify
         self._inhibited = inhibited
         self._last_fired: dict[DetectionKind, float] = {}
+        self._last_gesture_end = float("-inf")
 
     async def run(self, detections: AsyncIterator[Detection]) -> None:
         """Consume *detections* until the iterator ends (e.g. the source's ``aclose()``)."""
@@ -115,6 +115,8 @@ class ReflexEngine:
         cooldown = _COOLDOWNS.get(detection.kind)
         if cooldown is None:
             return  # No reflex configured for this kind.
+        if detection.noticed_at < self._last_gesture_end:
+            return  # Noticed while the robot was busy with a reflex: skipped, not queued.
         now = time.monotonic()
         last = self._last_fired.get(detection.kind)
         if last is not None and now - last < cooldown:
@@ -122,6 +124,7 @@ class ReflexEngine:
         if self._toolset.is_busy() or self._inhibited():
             # Skip outright rather than queue: see the module docstring for why.
             return
+        self._last_fired[detection.kind] = now
         try:
             if detection.kind is DetectionKind.WAVE:
                 await self._on_wave(detection)
@@ -132,7 +135,7 @@ class ReflexEngine:
         except Exception:
             _log.warning("reflex for kind=%s failed", detection.kind, exc_info=True)
         finally:
-            self._last_fired[detection.kind] = time.monotonic()
+            self._last_gesture_end = time.monotonic()
 
     async def _on_wave(self, detection: Detection) -> None:
         await self._toolset.call("wave_both", {"face": _WAVE_FACE, "reason": "reflex: waving back"})

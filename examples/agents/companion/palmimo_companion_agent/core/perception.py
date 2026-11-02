@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class DetectionKind(enum.StrEnum):
@@ -43,10 +44,13 @@ class Detection:
             (:class:`DetectionKind` is a ``StrEnum``), so it still
             serializes/compares like a string (e.g. through
             :mod:`~palmimo_companion_agent.pipeline.event_log`'s JSONL).
+        noticed_at: ``time.monotonic()`` when the sense noticed it. A detection
+            can wait in a queue, so this is not when it gets handled.
     """
 
     summary: str
     kind: DetectionKind
+    noticed_at: float = field(default_factory=time.monotonic, compare=False)
 
 
 async def merge(*sources: AsyncIterator[Detection]) -> AsyncIterator[Detection]:
