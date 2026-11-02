@@ -128,6 +128,14 @@ def test_reservation_shares_resource_between_threads(lock_dir: Path) -> None:
     assert contender("camera", lock_dir).returncode == 0
 
 
+def test_reservation_directory_cannot_be_replaced_by_a_racing_creator(lock_dir: Path) -> None:
+    rsv._lock_directory()
+    racer = lock_dir.parent / "racer"
+    racer.mkdir()
+    with pytest.raises(OSError):
+        racer.rename(lock_dir)
+
+
 def test_reservation_creates_world_writable_file_despite_umask(lock_dir: Path) -> None:
     previous = os.umask(0o077)
     try:
