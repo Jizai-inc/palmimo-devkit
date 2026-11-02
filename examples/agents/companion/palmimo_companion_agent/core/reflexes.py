@@ -104,6 +104,7 @@ class ReflexEngine:
         self._notify = notify
         self._inhibited = inhibited
         self._last_fired: dict[DetectionKind, float] = {}
+        self._last_gesture_end = float("-inf")
 
     async def run(self, detections: AsyncIterator[Detection]) -> None:
         """Consume *detections* until the iterator ends (e.g. the source's ``aclose()``)."""
@@ -114,6 +115,8 @@ class ReflexEngine:
         cooldown = _COOLDOWNS.get(detection.kind)
         if cooldown is None:
             return  # No reflex configured for this kind.
+        if detection.noticed_at < self._last_gesture_end:
+            return  # Noticed while the robot was busy with a reflex: skipped, not queued.
         now = time.monotonic()
         last = self._last_fired.get(detection.kind)
         if last is not None and now - last < cooldown:
@@ -131,6 +134,8 @@ class ReflexEngine:
                 await self._on_name_call(detection)
         except Exception:
             _log.warning("reflex for kind=%s failed", detection.kind, exc_info=True)
+        finally:
+            self._last_gesture_end = time.monotonic()
 
     async def _on_wave(self, detection: Detection) -> None:
         await self._toolset.call("wave_both", {"face": _WAVE_FACE, "reason": "reflex: waving back"})

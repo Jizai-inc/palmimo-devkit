@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
+from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
+
+from palmimo_companion_agent.core import reflexes
 from palmimo_companion_agent.core.perception import Detection, DetectionKind
 from palmimo_companion_agent.core.reflexes import ReflexEngine
 from palmimo_companion_agent.core.tools import LOOK_AT_FACE_SEEN_MARK
@@ -253,3 +257,84 @@ async def test_calling_twice_in_quick_succession_answers_once() -> None:
     await engine.run(_detections(calls))
 
     assert [name for name, _ in toolset.calls].count("show_emoji") == 1
+
+
+class SlowToolset(FakeToolset):
+    """Every call takes *seconds* on *clock*, so what is noticed meanwhile waits in the queue."""
+
+    def __init__(self, clock: SimpleNamespace, seconds: float) -> None:
+        super().__init__()
+        self._clock = clock
+        self._seconds = seconds
+
+    async def call(self, name: str, args: dict) -> Any:
+        self._clock.now += self._seconds
+        return await super().call(name, args)
+
+
+def _fake_clock(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(reflexes, "time", SimpleNamespace(monotonic=lambda: clock.now))
+    return clock
+
+
+async def test_detections_noticed_during_a_gesture_are_dropped_whatever_their_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    toolset = SlowToolset(_fake_clock(monkeypatch), seconds=2.0)
+    _, notify = _recorder()
+    engine = ReflexEngine(_toolset(toolset), notify)
+
+    await engine.run(
+        _detections(
+            [
+                Detection(summary="called", kind=DetectionKind.NAME_CALL, noticed_at=100.0),
+                Detection(summary="face", kind=DetectionKind.FACE, noticed_at=101.0),
+                Detection(summary="called again", kind=DetectionKind.NAME_CALL, noticed_at=102.0),
+            ]
+        )
+    )
+
+    assert [name for name, _ in toolset.calls] == ["show_emoji", "look_at_face"]
+
+
+async def test_a_call_noticed_after_the_gesture_is_answered_once_the_cooldown_has_passed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cooldown runs from the start of the gesture, so a gesture does not lengthen it."""
+    toolset = SlowToolset(_fake_clock(monkeypatch), seconds=2.0)
+    _, notify = _recorder()
+    engine = ReflexEngine(_toolset(toolset), notify)
+
+    await engine.run(
+        _detections(
+            [
+                Detection(summary="called", kind=DetectionKind.NAME_CALL, noticed_at=100.0),
+                Detection(summary="called again", kind=DetectionKind.NAME_CALL, noticed_at=104.5),
+            ]
+        )
+    )
+
+    assert [name for name, _ in toolset.calls].count("show_emoji") == 2
+
+
+async def test_detections_noticed_during_a_failed_gesture_are_dropped_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    class RaisingToolset(SlowToolset):
+        async def call(self, name: str, args: dict) -> Any:
+            await super().call(name, args)
+            raise RuntimeError("servo fault")
+
+    toolset = RaisingToolset(_fake_clock(monkeypatch), seconds=2.0)
+    _, notify = _recorder()
+    engine = ReflexEngine(_toolset(toolset), notify)
+
+    await engine.run(
+        _detections(
+            [
+                Detection(summary="wave", kind=DetectionKind.WAVE, noticed_at=100.0),
+                Detection(summary="face", kind=DetectionKind.FACE, noticed_at=101.0),
+            ]
+        )
+    )
+
+    assert [name for name, _ in toolset.calls] == ["wave_both"]
