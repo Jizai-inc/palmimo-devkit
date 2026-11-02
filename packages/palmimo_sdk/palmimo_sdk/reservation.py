@@ -28,6 +28,7 @@ SYSTEM_LOCK_ROOT = Path("/run/lock")
 SYSTEM_LOCK_DIR = SYSTEM_LOCK_ROOT / "palmimo"
 _RESOURCES = frozenset({"servo_bus", "camera", "microphone", "speaker", "display"})
 _MUTEX = threading.Lock()
+_DIRECTORY_MARKER = ".palmimo-locks"
 
 
 class ReservationError(Exception):
@@ -165,6 +166,9 @@ def _lock_directory() -> Path:
             temporary = Path(tempfile.mkdtemp(prefix=".palmimo-locks-", dir=directory.parent))
             try:
                 temporary.chmod(0o1777)
+                # rename() silently replaces an empty directory; a marker keeps the
+                # published directory non-empty so a racing creator gets ENOTEMPTY.
+                (temporary / _DIRECTORY_MARKER).touch()
                 try:
                     temporary.rename(directory)
                 except OSError as error:
@@ -172,6 +176,7 @@ def _lock_directory() -> Path:
                         raise
             finally:
                 if temporary.exists():
+                    (temporary / _DIRECTORY_MARKER).unlink(missing_ok=True)
                     temporary.rmdir()
         if not stat.S_ISDIR(directory.lstat().st_mode):
             raise _setup_error(directory)
