@@ -61,9 +61,10 @@ _FACE_LOOK_SECONDS = 3.0
 #: How long look_at_face tolerates losing the face before giving up early.
 _FACE_LOST_GRACE_SECONDS = 1.0
 
-#: Per-kind cooldown (seconds): a reflex that just fired won't fire again for
-#: this long, even once the robot is free -- a continuously-waving hand (or a
-#: face that never leaves frame) must not retrigger every detection.
+#: Per-kind cooldown (seconds), counted from the end of the gesture: a reflex
+#: that just fired won't fire again for this long, even once the robot is free
+#: -- a continuously-waving hand (or a face that never leaves frame) must not
+#: retrigger every detection.
 _COOLDOWNS: dict[DetectionKind, float] = {
     DetectionKind.WAVE: 8.0,
     DetectionKind.FACE: 15.0,
@@ -121,7 +122,6 @@ class ReflexEngine:
         if self._toolset.is_busy() or self._inhibited():
             # Skip outright rather than queue: see the module docstring for why.
             return
-        self._last_fired[detection.kind] = now
         try:
             if detection.kind is DetectionKind.WAVE:
                 await self._on_wave(detection)
@@ -131,6 +131,8 @@ class ReflexEngine:
                 await self._on_name_call(detection)
         except Exception:
             _log.warning("reflex for kind=%s failed", detection.kind, exc_info=True)
+        finally:
+            self._last_fired[detection.kind] = time.monotonic()
 
     async def _on_wave(self, detection: Detection) -> None:
         await self._toolset.call("wave_both", {"face": _WAVE_FACE, "reason": "reflex: waving back"})
