@@ -103,6 +103,7 @@ def fake_popen(monkeypatch: pytest.MonkeyPatch) -> type[_FakePopen]:
     _FakePopen.block_until_killed = False
     _FakePopen.wait_timeouts_before_success = 0
     monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    monkeypatch.setattr(Playback, "_STOP_GRACE_S", 0.01)
     return _FakePopen
 
 
@@ -541,6 +542,35 @@ def test_first_failed_write_warns_once(fake_popen: type[_FakePopen], capsys: pyt
 
     captured = capsys.readouterr().err
     assert captured.count("playback write failed") == 1
+    playback.close()
+
+
+def test_a_write_failure_that_a_stop_follows_does_not_warn(
+    fake_popen: type[_FakePopen], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stop signal ends aplay before interrupt() runs, so the pipe breaks first and the stop arrives after."""
+    monkeypatch.setattr(Playback, "_STOP_GRACE_S", 5.0)
+    holding_the_warning = threading.Event()
+    wait_for_a_stop = Playback._reclaimed_within_grace
+
+    def _signalling_wait(self: Playback, generation: int) -> bool:
+        holding_the_warning.set()
+        return wait_for_a_stop(self, generation)
+
+    monkeypatch.setattr(Playback, "_reclaimed_within_grace", _signalling_wait)
+    playback = Playback()
+    playback.write(b"\x00\x00")
+    _wait_until(lambda: fake_popen.instances and fake_popen.instances[0].stdin.chunks)
+    fake_popen.instances[0].stdin.write = _raise_on_write  # type: ignore[assignment]
+
+    playback.write(b"\x01\x01")
+    assert holding_the_warning.wait(timeout=2.0), "the writer reported the failure without waiting for a stop"
+    playback.interrupt()
+    playback.write(b"\x02\x02")  # lands in a fresh aplay only once the writer is past the failed chunk
+    _wait_until(lambda: len(fake_popen.instances) == 2 and fake_popen.instances[1].stdin.chunks)
+
+    assert playback._write_failures == 0
+    assert "playback write failed" not in capsys.readouterr().err
     playback.close()
 
 
