@@ -1,0 +1,44 @@
+schema = 1
+name = "controller"
+description = "Drive Palmimo from a phone or laptop browser, then switch to an AI voice mode with one tap. Teleop works without an API key."
+command = ["palmimo-controller", "--port", "{port}", "--fps", "{fps}", "--gait-speed", "{gait_speed}", "{no_camera}", "{dry_run}"]
+url = "http://{host}:{port}/"
+devices = ["camera", "audio", "motor_display"]
+
+[params.port]
+type = "int"
+default = 8010
+min = 1024
+max = 65535
+description = "HTTP/WebSocket port the controller web app is served on."
+
+[params.fps]
+type = "int"
+default = 60
+min = 1
+max = 120
+description = "Robot control loop rate, in cycles per second."
+
+[params.gait_speed]
+type = "float"
+default = 0.012
+min = 0.001
+max = 0.05
+description = "How fast the robot walks; higher is faster."
+
+[params.no_camera]
+type = "bool"
+default = false
+flag = "--no-camera"
+description = "Disable the head camera video feed."
+
+[params.dry_run]
+type = "bool"
+default = false
+flag = "--dry-run"
+description = "Run compute-only, without ever attaching a servo driver."
+
+[env.OPENAI_API_KEY]
+required = false
+description = "OpenAI API key for the AI voice modes. Without it, manual control still works and AI modes stay off."
+help_url = "https://platform.openai.com/api-keys"

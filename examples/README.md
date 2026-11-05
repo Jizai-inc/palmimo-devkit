@@ -2,8 +2,8 @@
 
 Demo and sample apps built on top of `palmimo_sdk`. Each consumes the SDK as
 its single window into the hardware — none of them open a servo bus or motion
-backend directly. The Python ones (`teleop/`, `agents/wakeword/`,
-`agents/companion/`) are each a standalone uv project — their own
+backend directly. The Python ones (`teleop/`, `controller/`,
+`agents/wakeword/`, `agents/companion/`) are each a standalone uv project — their own
 `pyproject.toml` and `uv.lock` — depending on the released `palmimo-sdk` from
 PyPI, not on this repository's SDK source, so a copy of one works the same
 outside this repository. `agents/openclaw/` carries no Python at all.
@@ -28,7 +28,7 @@ example's venv runs that venv's interpreter directly and never sees the
 overlay), e.g. `uv run --with-editable ../../packages/palmimo_sdk python -m
 palmimo_teleop.main` or `... python -m pytest` (the relative path to
 `packages/palmimo_sdk` depends on how deep the example sits under `examples/`
-— two levels for `teleop/`, three for `agents/*`).
+— two levels for `teleop/` and `controller/`, three for `agents/*`).
 
 - `agents/` — Standalone agent implementation examples, one uv project each;
   see [agents/README.md](agents/README.md) for what each one is.
@@ -36,6 +36,9 @@ palmimo_teleop.main` or `... python -m pytest` (the relative path to
   the robot over a WebSocket and views its head camera over MJPEG, on the
   same LAN with no authentication. See
   [teleop/README.md](teleop/README.md).
+- `controller/` — Teleop plus AI voice modes: the same browser controls, and
+  one tap switches the robot to a preset AI character (OpenAI Realtime) on
+  the same robot connection. See [controller/README.md](controller/README.md).
 
 ## Running
 
@@ -45,5 +48,6 @@ launch command, CLI options, and design notes live in its own README --
 [agents/wakeword/README.md](agents/wakeword/README.md),
 [agents/companion/README.md](agents/companion/README.md), and
 [agents/openclaw/README.md](agents/openclaw/README.md), which is a connection
-kit rather than a uv project. `teleop/`'s own launch command and options are
-in [teleop/README.md](teleop/README.md).
+kit rather than a uv project. `teleop/`'s and `controller/`'s own launch
+commands and options are in [teleop/README.md](teleop/README.md) and
+[controller/README.md](controller/README.md).

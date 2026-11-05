@@ -68,6 +68,9 @@ RUNTIME_TEXT_FILES: frozenset[str] = frozenset(
         "examples/agents/companion/palmimo_companion_agent/core/prompts/identity.md",
         "examples/agents/companion/palmimo_companion_agent/core/prompts/idle.md",
         "examples/agents/companion/palmimo_companion_agent/core/prompts/respond.md",
+        # The controller's AI mode prompts: the character each mode speaks as.
+        "examples/controller/palmimo_controller/modes/default.md",
+        "examples/controller/palmimo_controller/modes/kansai.md",
     }
 )
 
@@ -82,6 +85,7 @@ UNCHECKED_BY_DESIGN: Mapping[str, str] = {
             "integrations/lerobot/uv.lock",
             # Each standalone example project resolves its own.
             "examples/teleop/uv.lock",
+            "examples/controller/uv.lock",
             "examples/agents/wakeword/uv.lock",
             "examples/agents/companion/uv.lock",
         ),

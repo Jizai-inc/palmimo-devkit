@@ -1,0 +1,72 @@
+"""Behavior of `palmimo_controller.ai.tools.run_tool`: tool calls become session intents."""
+
+import json
+
+import pytest
+
+from palmimo_controller.ai.tools import TOOL_DEFINITIONS, run_tool
+from palmimo_controller.session import PilotInput, PilotSession
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _ai_session() -> tuple[PilotSession, FakeClock]:
+    clock = FakeClock()
+    session = PilotSession(now=clock)
+    session.acquire_pilot("a")
+    session.begin_ai("a", "default")
+    session.ai_started()
+    return session, clock
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments", "expected"),
+    [
+        ("walk", {"direction": "forward", "seconds": 2}, PilotInput(move="forward")),
+        ("walk", {"direction": "left", "seconds": 2}, PilotInput(move="strafe_left")),
+        ("turn", {"direction": "right", "seconds": 1}, PilotInput(rotate=1)),
+        ("gesture", {"name": "wave"}, PilotInput(gesture="wave")),
+        ("look", {"pitch": 0.5, "yaw": -2}, PilotInput(neck_pitch=0.5, neck_yaw=-1.0)),
+        ("stop", {}, PilotInput()),
+    ],
+)
+def test_run_tool_sets_the_matching_intent(name: str, arguments: dict, expected: PilotInput) -> None:
+    session, _ = _ai_session()
+    assert json.loads(run_tool(session, name, json.dumps(arguments))) == {"ok": True}
+    assert session.effective_input() == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("fly", "{}"),
+        ("walk", '{"direction": "up", "seconds": 1}'),
+        ("walk", '{"direction": "forward", "seconds": "long"}'),
+        ("look", '{"pitch": true, "yaw": 0}'),
+        ("walk", "not json"),
+        ("walk", "[]"),
+    ],
+)
+def test_run_tool_reports_a_bad_call_to_the_model(name: str, arguments: str) -> None:
+    # Without this, one malformed call from the model would crash the AI session.
+    session, _ = _ai_session()
+    result = json.loads(run_tool(session, name, arguments))
+    assert result["ok"] is False
+    assert session.effective_input() == PilotInput()
+
+
+def test_run_tool_refuses_when_ai_mode_has_ended() -> None:
+    session, _ = _ai_session()
+    session.end_ai()
+    assert json.loads(run_tool(session, "walk", '{"direction": "forward", "seconds": 1}'))["ok"] is False
+
+
+def test_every_tool_definition_is_runnable() -> None:
+    names = {definition["name"] for definition in TOOL_DEFINITIONS}
+    assert names == {"walk", "turn", "gesture", "look", "stop"}
