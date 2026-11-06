@@ -21,25 +21,11 @@ ALLOWED_ROTATES: frozenset[int] = frozenset({-1, 0, 1})
 #: the server's input validation before it ever reaches this module.
 ALLOWED_GESTURES: frozenset[str] = frozenset({"wave", "dance"})
 
-#: Playback speed multipliers the pilot may select, applied to walking and
-#: rotating, and (up to `MAX_GESTURE_SPEED`) to wave and dance. A closed set
-#: rather than a free-form number: each entry is a speed someone chose to
-#: offer, and anything else is rejected by the server's input validation like
-#: an unknown gait name.
-ALLOWED_SPEEDS: tuple[float, ...] = (1.0, 1.5, 2.0, 2.5, 3.0, 4.0)
-
-#: Highest multiplier the wave and dance are played at; a higher selection
-#: speeds up only walking and rotating. Gestures have been run on hardware up
-#: to this speed and no further.
-MAX_GESTURE_SPEED: float = 3.0
-
-#: Fraction of the startup step height (swing-leg lift) a gait multiplier
-#: lifts the legs by; multipliers not listed keep the full height. At 4x a
-#: full-height lift asks the lift joints for more speed than the servos can
-#: comfortably give: measured on a robot on a stand, lowering it to 0.6 of
-#: 30 mm cut the peak lift-joint speed from about 300 to about 240 deg/s and
-#: the peak leg current with it, while the stride was kept.
-STEP_HEIGHT_SCALE: dict[float, float] = {4.0: 0.6}
+#: Playback speed multipliers the pilot may select, applied to walking,
+#: rotating, wave and dance alike. A closed set rather than a free-form
+#: number: each entry is a speed someone chose to offer, and anything else is
+#: rejected by the server's input validation like an unknown gait name.
+ALLOWED_SPEEDS: tuple[float, ...] = (1.0, 1.5, 2.0, 2.5, 3.0)
 
 #: The multiplier a session starts at and falls back to once no pilot is
 #: driving -- the SDK's own tuned speed.

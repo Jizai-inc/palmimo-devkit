@@ -45,7 +45,6 @@ def _build_argv(manifest: dict[str, Any]) -> list[str]:
 
 class _DummyEngine:
     gait_speed = 0.012
-    step_height = 30.0
 
 
 class _DummyRobot:

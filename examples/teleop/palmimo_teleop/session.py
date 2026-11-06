@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
 
-from .control import DEFAULT_SPEED, MAX_GESTURE_SPEED, resolve_motion
+from .control import DEFAULT_SPEED, resolve_motion
 
 
 #: How long the pilot's connection may go without a control frame before the
@@ -22,20 +22,14 @@ DEADMAN_TIMEOUT_S: float = 0.4
 
 #: How long a played gesture (`PilotSession.play`) keeps overriding move/
 #: rotate before falling back to whatever the pilot is currently steering, at
-#: the default speed -- `PilotSession.play` divides it by the speed the
-#: gesture is played at (the selected multiplier, capped at
-#: `control.MAX_GESTURE_SPEED`), since a gesture played faster finishes sooner.
+#: the default speed -- `PilotSession.play` divides it by the selected speed
+#: multiplier, since a gesture played faster finishes sooner.
 #: `palmimo_sdk` does not expose a wave or dance motion's own playback
 #: length: `Palmimo.wave()` plays once and then holds neutral (so a window
 #: longer than the playthrough is harmless), while `Palmimo.dance()` loops
 #: until deselected (so this window is what ends it). Replace this with SDK
 #: introspection if a future release publishes per-motion play length.
 GESTURE_PLAY_SECONDS: dict[str, float] = {"wave": 5.0, "dance": 5.0}
-
-
-def _gesture_speed(speed: float) -> float:
-    """The speed a gesture plays at under the selected multiplier *speed*."""
-    return min(speed, MAX_GESTURE_SPEED)
 
 
 @dataclass(frozen=True)
@@ -170,7 +164,7 @@ class PilotSession:
         rather than restarting its window (tap-to-toggle, matching the
         pilot page's click handler); playing a different gesture replaces
         whichever one is running. The window is `GESTURE_PLAY_SECONDS`
-        divided by the speed the gesture plays at (`_gesture_speed`).
+        divided by the selected speed multiplier.
 
         Args:
             client_id (Hashable): Must match the current pilot holder.
@@ -189,7 +183,7 @@ class PilotSession:
         if active and state.playing_gesture == name:
             playing_gesture, gesture_until = None, None
         else:
-            playing_gesture, gesture_until = name, now + GESTURE_PLAY_SECONDS[name] / _gesture_speed(state.speed)
+            playing_gesture, gesture_until = name, now + GESTURE_PLAY_SECONDS[name] / state.speed
         self._state = _PilotState(
             input=state.input,
             last_input_at=state.last_input_at,
@@ -222,7 +216,7 @@ class PilotSession:
         now = self._now()
         gesture_until = state.gesture_until
         if gesture_until is not None and now < gesture_until:
-            gesture_until = now + (gesture_until - now) * _gesture_speed(state.speed) / _gesture_speed(speed)
+            gesture_until = now + (gesture_until - now) * state.speed / speed
         self._state = _PilotState(
             input=state.input,
             last_input_at=state.last_input_at,

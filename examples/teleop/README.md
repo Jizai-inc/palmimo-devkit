@@ -91,7 +91,7 @@ otherwise.
 
 A play request starts (or replaces) a gesture that then runs for
 `session.GESTURE_PLAY_SECONDS` (5 seconds for both, at the time of writing)
-divided by the [speed](#speed) the gesture plays at before
+divided by the selected [speed](#speed) multiplier before
 `effective_input()` stops reporting it and the robot loop falls back to
 move/rotate. `palmimo_sdk` does not publish how long `Palmimo.wave()` or
 `Palmimo.dance()` actually take to play, so this window is a fixed
@@ -110,10 +110,8 @@ takes priority over letting the gesture finish its window.
 ### Speed
 
 A row of buttons under the d-pad selects a speed multiplier -- **1x, 1.5x,
-2x, 2.5x, 3x, 4x** (`control.ALLOWED_SPEEDS`) -- applied to walking and
-rotating, and to wave and dance up to 3x (`control.MAX_GESTURE_SPEED`;
-selecting 4x plays the gestures at 3x, the highest speed they have been run
-at on hardware). Tapping one sends an independent `{"speed": <n>}`
+2x, 2.5x, 3x** (`control.ALLOWED_SPEEDS`) -- applied to walking, rotating,
+wave and dance alike. Tapping one sends an independent `{"speed": <n>}`
 message, which only the current pilot may send and which is dropped unless
 it is one of those values. The selection holds until the pilot picks
 another one; the highlighted button is the multiplier the server reports as
@@ -140,13 +138,6 @@ driver default when the robot stands still or switches to a gesture, and
 writes nothing while the gesture plays (`Palmimo` retunes the servos for a
 wave itself). A dropped bus reply on one of these writes is retried next
 cycle instead of failing it.
-
-At 4x the gait also lifts its legs lower (`control.STEP_HEIGHT_SCALE`, 0.6
-of the startup step height -- 18 mm instead of 30 mm by default). Measured
-on a robot on a stand, the full 30 mm lift at 4x drove the lift joints to
-about 300 deg/s; at 18 mm they peaked at about 240 deg/s, with lower leg
-current and the stride kept, for an estimated 3.8x the 1x ground speed. The
-lower lift clears less of an uneven floor.
 
 The multiplier falls back to 1x whenever the robot is not being actively
 piloted -- the deadman expiring, the pilot leaving (the next pilot starts

@@ -320,17 +320,3 @@ def test_set_speed_rescales_the_rest_of_a_playing_gesture() -> None:
     assert session.effective_input().gesture == "wave"
     _keep_deadman_alive_for(session, clock, 0.2)
     assert session.effective_input().gesture is None
-
-
-def test_play_window_at_four_x_follows_the_three_x_gesture_speed() -> None:
-    # Without this, a dance at 4x (played at 3x) would be cut off a quarter of
-    # the way through instead of after a third.
-    session, clock = _session()
-    session.acquire_pilot("a")
-    _heartbeat(session)
-    session.set_speed("a", 4.0)
-    session.play("a", "dance")
-    _keep_deadman_alive_for(session, clock, GESTURE_PLAY_SECONDS["dance"] / 3 - 0.1)
-    assert session.effective_input().gesture == "dance"
-    _keep_deadman_alive_for(session, clock, 0.2)
-    assert session.effective_input().gesture is None
