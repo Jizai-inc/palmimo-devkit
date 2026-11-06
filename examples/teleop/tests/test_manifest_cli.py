@@ -51,6 +51,7 @@ class _DummyRobot:
     """Just what `main()` and `RobotLoop`'s constructor read off a robot."""
 
     has_connectable_resource = False
+    driver = None
     engine = _DummyEngine()
     wave_speed = 1.9
     wave_intro_speed = 2.3

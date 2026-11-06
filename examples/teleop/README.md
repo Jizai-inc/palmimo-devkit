@@ -187,6 +187,15 @@ tabs cost one capture/encode, not N. With `--no-camera`, or if opening the
 camera fails, the endpoint 503s and the status broadcast reports
 `camera_ok: false` instead of the server failing to start.
 
+### Face display
+
+When a face display is attached and opens at startup, it is handed to
+`Palmimo`, so it plays its wake-up animation as the robot connects and
+returns to its idle face at shutdown. A missing or unopenable face is
+skipped with a printed note, and the teleop runs without it; it is probed
+first because `Palmimo.connect()` rolls back the servo bus too when an
+attached display fails to open. `--dry-run` never opens it.
+
 ### Shutdown
 
 Ctrl-C / `SIGTERM` stops `uvicorn`, which runs the FastAPI `lifespan`'s
@@ -227,7 +236,7 @@ uv run --with-editable ../../packages/palmimo_sdk python -m palmimo_teleop.main
 | `--port` | `8000` | HTTP/WebSocket port to serve on |
 | `--fps` | `60` | Robot control loop rate in cycles per second (minimum 1) |
 | `--gait-speed` | `0.012` | `Palmimo` gait speed applied to every teleop-driven motion (0.001-0.05) |
-| `--dry-run` | off | Compute-only: never attach a servo driver |
+| `--dry-run` | off | Compute-only: never attach a servo driver or the face display |
 | `--no-camera` | off | Never attach the head camera |
 | `--servo-port` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0`; ignored under `--dry-run` |
 
