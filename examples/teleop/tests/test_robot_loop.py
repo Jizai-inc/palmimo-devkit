@@ -16,6 +16,7 @@ from palmimo_teleop.session import PilotSession
 class FakeEngine:
     def __init__(self, gait_speed: float) -> None:
         self.gait_speed = gait_speed
+        self.step_height = 30.0
 
 
 class FakeDriver:
@@ -575,3 +576,33 @@ def test_a_gesture_is_not_written_to_again_after_its_first_cycle() -> None:
     loop.tick()
     loop.tick()
     assert _profile_writes(robot) == []
+
+
+def test_four_x_lowers_the_gait_lift_and_three_x_restores_it() -> None:
+    # Without this, 4x would drive the lift joints past what the servos give
+    # comfortably, or a lowered lift would stick after stepping back down.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 4.0)
+    loop.tick()
+    assert robot.engine.step_height == pytest.approx(18.0)
+    assert robot.engine.gait_speed == pytest.approx(0.048)
+    session.set_speed("a", 3.0)
+    loop.tick()
+    assert robot.engine.step_height == pytest.approx(30.0)
+
+
+def test_four_x_plays_gestures_at_three_x() -> None:
+    # Without this, selecting 4x for walking would also run wave and dance at
+    # a speed they have never been run at on hardware.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 4.0)
+    loop.tick()
+    assert (robot.wave_speed, robot.wave_intro_speed, robot.wave_raise_speed, robot.dance_speed) == pytest.approx(
+        (5.7, 6.9, 1.8, 0.0447)
+    )

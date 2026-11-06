@@ -17,7 +17,15 @@ from typing import Any
 
 from palmimo_sdk import Palmimo
 
-from .control import DEFAULT_SPEED, GAIT_MOTIONS, LEG_MOTORS, MAX_GAIT_SPEED, resolve_motion
+from .control import (
+    DEFAULT_SPEED,
+    GAIT_MOTIONS,
+    LEG_MOTORS,
+    MAX_GAIT_SPEED,
+    MAX_GESTURE_SPEED,
+    STEP_HEIGHT_SCALE,
+    resolve_motion,
+)
 from .session import PilotSession
 
 
@@ -55,6 +63,7 @@ class _BaseSpeeds:
     """
 
     gait: float
+    step_height: float
     wave: float
     wave_intro: float
     wave_raise: float
@@ -64,6 +73,7 @@ class _BaseSpeeds:
     def read(cls, robot: Palmimo) -> _BaseSpeeds:
         return cls(
             gait=robot.engine.gait_speed,
+            step_height=robot.engine.step_height,
             wave=robot.wave_speed,
             wave_intro=robot.wave_intro_speed,
             wave_raise=robot.wave_raise_speed,
@@ -93,7 +103,9 @@ class RobotLoop:
     before the motion: walking and rotating through `robot.engine.gait_speed`
     (`Palmimo` takes gait speed only as a constructor argument), the wave
     and dance through their own rate properties. Each is the startup value
-    times the multiplier, with the gait capped at `control.MAX_GAIT_SPEED`.
+    times the multiplier, with the gait capped at `control.MAX_GAIT_SPEED`
+    and the gestures at `control.MAX_GESTURE_SPEED`; a multiplier listed in
+    `control.STEP_HEIGHT_SCALE` also lowers the gait's leg lift.
 
     Speeding up the commands alone is not enough for the gait: the driver's
     time-based Profile_Velocity (each goal reached over a fixed number of
@@ -210,10 +222,12 @@ class RobotLoop:
         """Write the startup speeds times *multiplier* to `robot`."""
         base = self._base_speeds
         self.robot.engine.gait_speed = min(MAX_GAIT_SPEED, base.gait * multiplier)
-        self.robot.wave_speed = base.wave * multiplier
-        self.robot.wave_intro_speed = base.wave_intro * multiplier
-        self.robot.wave_raise_speed = base.wave_raise * multiplier
-        self.robot.dance_speed = base.dance * multiplier
+        self.robot.engine.step_height = base.step_height * STEP_HEIGHT_SCALE.get(multiplier, 1.0)
+        gesture = min(multiplier, MAX_GESTURE_SPEED)
+        self.robot.wave_speed = base.wave * gesture
+        self.robot.wave_intro_speed = base.wave_intro * gesture
+        self.robot.wave_raise_speed = base.wave_raise * gesture
+        self.robot.dance_speed = base.dance * gesture
         self._applied_speed = multiplier
 
     def _profile_driver(self) -> tuple[Any, int] | None:
