@@ -292,31 +292,29 @@ def test_releasing_the_pilot_resets_the_speed() -> None:
     assert session.effective_input().speed == 1.0
 
 
-def test_play_window_shrinks_with_the_speed_multiplier() -> None:
-    # Without this, a dance played at 2x would run twice as many sways as at 1x,
-    # since its window, not the dance itself, is what ends it.
+def test_play_window_ignores_the_speed_multiplier() -> None:
+    # Without this, a dance at 2.5x walking speed would be cut short even
+    # though the dance itself always plays at its own speed.
     session, clock = _session()
     session.acquire_pilot("a")
     _heartbeat(session)
-    session.set_speed("a", 2.0)
+    session.set_speed("a", 2.5)
     session.play("a", "dance")
-    _keep_deadman_alive_for(session, clock, GESTURE_PLAY_SECONDS["dance"] / 2 - 0.1)
+    _keep_deadman_alive_for(session, clock, GESTURE_PLAY_SECONDS["dance"] - 0.1)
     assert session.effective_input().gesture == "dance"
     _keep_deadman_alive_for(session, clock, 0.2)
     assert session.effective_input().gesture is None
 
 
-def test_set_speed_rescales_the_rest_of_a_playing_gesture() -> None:
-    # Without this, slowing down mid-wave would cut the slowed wave off at the
-    # window its faster start was given.
+def test_set_speed_leaves_a_playing_gesture_window_alone() -> None:
+    # Without this, changing speed mid-wave would cut the wave off or stretch it.
     session, clock = _session()
     session.acquire_pilot("a")
     _heartbeat(session)
+    session.play("a", "wave")
+    _keep_deadman_alive_for(session, clock, 1.0)
     session.set_speed("a", 2.0)
-    session.play("a", "wave")  # 2.5 s window at 2x
-    _keep_deadman_alive_for(session, clock, 1.0)  # 1.5 s left at 2x
-    session.set_speed("a", 1.0)  # -> 3.0 s left at 1x
-    _keep_deadman_alive_for(session, clock, 2.9)
+    _keep_deadman_alive_for(session, clock, GESTURE_PLAY_SECONDS["wave"] - 1.1)
     assert session.effective_input().gesture == "wave"
     _keep_deadman_alive_for(session, clock, 0.2)
     assert session.effective_input().gesture is None

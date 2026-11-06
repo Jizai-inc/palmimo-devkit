@@ -21,9 +21,9 @@ from .control import DEFAULT_SPEED, resolve_motion
 DEADMAN_TIMEOUT_S: float = 0.4
 
 #: How long a played gesture (`PilotSession.play`) keeps overriding move/
-#: rotate before falling back to whatever the pilot is currently steering, at
-#: the default speed -- `PilotSession.play` divides it by the selected speed
-#: multiplier, since a gesture played faster finishes sooner.
+#: rotate before falling back to whatever the pilot is currently steering.
+#: Gestures always play at their own speed, so the speed multiplier does not
+#: change this window.
 #: `palmimo_sdk` does not expose a wave or dance motion's own playback
 #: length: `Palmimo.wave()` plays once and then holds neutral (so a window
 #: longer than the playthrough is harmless), while `Palmimo.dance()` loops
@@ -163,8 +163,8 @@ class PilotSession:
         Re-playing the gesture that is currently active stops it early
         rather than restarting its window (tap-to-toggle, matching the
         pilot page's click handler); playing a different gesture replaces
-        whichever one is running. The window is `GESTURE_PLAY_SECONDS`
-        divided by the selected speed multiplier.
+        whichever one is running. The window is `GESTURE_PLAY_SECONDS`,
+        whatever the speed multiplier.
 
         Args:
             client_id (Hashable): Must match the current pilot holder.
@@ -183,7 +183,7 @@ class PilotSession:
         if active and state.playing_gesture == name:
             playing_gesture, gesture_until = None, None
         else:
-            playing_gesture, gesture_until = name, now + GESTURE_PLAY_SECONDS[name] / state.speed
+            playing_gesture, gesture_until = name, now + GESTURE_PLAY_SECONDS[name]
         self._state = _PilotState(
             input=state.input,
             last_input_at=state.last_input_at,
@@ -194,12 +194,7 @@ class PilotSession:
         return True
 
     def set_speed(self, client_id: Hashable, speed: float) -> bool:
-        """Select the speed multiplier for the current pilot.
-
-        A gesture already playing keeps going at the new speed, so the rest
-        of its window is rescaled to match: switching from 1x to 2x halfway
-        through a dance ends it after half the remaining time, and switching
-        down stretches it, rather than cutting a slowed wave off mid-stroke.
+        """Select the speed multiplier (walking and rotating) for the current pilot.
 
         Args:
             client_id (Hashable): Must match the current pilot holder.
@@ -213,15 +208,11 @@ class PilotSession:
         if self._pilot_id != client_id:
             return False
         state = self._state
-        now = self._now()
-        gesture_until = state.gesture_until
-        if gesture_until is not None and now < gesture_until:
-            gesture_until = now + (gesture_until - now) * state.speed / speed
         self._state = _PilotState(
             input=state.input,
             last_input_at=state.last_input_at,
             playing_gesture=state.playing_gesture,
-            gesture_until=gesture_until,
+            gesture_until=state.gesture_until,
             speed=speed,
         )
         return True

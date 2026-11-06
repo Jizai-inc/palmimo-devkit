@@ -12,7 +12,6 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from palmimo_sdk import Palmimo
@@ -45,32 +44,6 @@ NECK_PITCH_SIGN: float = 1.0
 NECK_YAW_SIGN: float = 1.0
 
 
-@dataclass(frozen=True)
-class _BaseSpeeds:
-    """The robot's own speed knobs as found at startup -- what a 1x multiplier means.
-
-    Read once rather than per tick, so each multiplier scales the speeds the
-    robot was built with (`--gait-speed`, the SDK's tuned gesture rates)
-    instead of compounding on a value an earlier multiplier already wrote.
-    """
-
-    gait: float
-    wave: float
-    wave_intro: float
-    wave_raise: float
-    dance: float
-
-    @classmethod
-    def read(cls, robot: Palmimo) -> _BaseSpeeds:
-        return cls(
-            gait=robot.engine.gait_speed,
-            wave=robot.wave_speed,
-            wave_intro=robot.wave_intro_speed,
-            wave_raise=robot.wave_raise_speed,
-            dance=robot.dance_speed,
-        )
-
-
 class RobotLoop:
     """Drives *robot* from *session* at `fps` control cycles per second on a daemon thread.
 
@@ -90,10 +63,10 @@ class RobotLoop:
     Walking gaits do not reset on reselection, so this changes nothing for them.
 
     The pilot's speed multiplier is applied the same edge-triggered way,
-    before the motion: walking and rotating through `robot.engine.gait_speed`
-    (`Palmimo` takes gait speed only as a constructor argument), the wave
-    and dance through their own rate properties. Each is the startup value
-    times the multiplier, with the gait capped at `control.MAX_GAIT_SPEED`.
+    before the motion, to walking and rotating only: `robot.engine.gait_speed`
+    (`Palmimo` takes gait speed only as a constructor argument) becomes the
+    startup gait speed times the multiplier, capped at
+    `control.MAX_GAIT_SPEED`. Wave and dance always play at their own speed.
 
     Speeding up the commands alone is not enough for the gait: the driver's
     time-based Profile_Velocity (each goal reached over a fixed number of
@@ -142,9 +115,12 @@ class RobotLoop:
         #: tick's `robot.stop()` is issued even when the resolved motion is
         #: also `None`.
         self._applied_motion: str | object | None = _UNSET
-        self._base_speeds = _BaseSpeeds.read(robot)
+        #: The gait speed the robot was started with -- what 1x means. Read
+        #: once, so each multiplier scales `--gait-speed` instead of
+        #: compounding on a value an earlier multiplier already wrote.
+        self._base_gait_speed: float = robot.engine.gait_speed
         #: The speed multiplier currently written to `robot`; starts at the
-        #: default because that is what `_base_speeds` was read at.
+        #: default because that is what `_base_gait_speed` was read at.
         self._applied_speed = DEFAULT_SPEED
         #: The leg Profile_Velocity this loop last wrote, or `None` when it
         #: is not known (before the first write, or after a gesture, whose
@@ -207,13 +183,8 @@ class RobotLoop:
         return True
 
     def _apply_speed(self, multiplier: float) -> None:
-        """Write the startup speeds times *multiplier* to `robot`."""
-        base = self._base_speeds
-        self.robot.engine.gait_speed = min(MAX_GAIT_SPEED, base.gait * multiplier)
-        self.robot.wave_speed = base.wave * multiplier
-        self.robot.wave_intro_speed = base.wave_intro * multiplier
-        self.robot.wave_raise_speed = base.wave_raise * multiplier
-        self.robot.dance_speed = base.dance * multiplier
+        """Write the startup gait speed times *multiplier* to `robot`."""
+        self.robot.engine.gait_speed = min(MAX_GAIT_SPEED, self._base_gait_speed * multiplier)
         self._applied_speed = multiplier
 
     def _profile_driver(self) -> tuple[Any, int] | None:
@@ -240,7 +211,7 @@ class RobotLoop:
             return
         driver, default = found
         if motion in GAIT_MOTIONS:
-            ratio = self.robot.engine.gait_speed / self._base_speeds.gait
+            ratio = self.robot.engine.gait_speed / self._base_gait_speed
             want = max(1, round(default / ratio)) if default > 0 else 0
         else:
             want = default

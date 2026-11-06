@@ -91,8 +91,7 @@ otherwise.
 
 A play request starts (or replaces) a gesture that then runs for
 `session.GESTURE_PLAY_SECONDS` (5 seconds for both, at the time of writing)
-divided by the selected [speed](#speed) multiplier before
-`effective_input()` stops reporting it and the robot loop falls back to
+before `effective_input()` stops reporting it and the robot loop falls back to
 move/rotate. `palmimo_sdk` does not publish how long `Palmimo.wave()` or
 `Palmimo.dance()` actually take to play, so this window is a fixed
 placeholder rather than derived from the SDK -- `Palmimo.wave()` plays once
@@ -110,21 +109,17 @@ takes priority over letting the gesture finish its window.
 ### Speed
 
 A row of buttons under the d-pad selects a speed multiplier -- **1x, 1.5x,
-2x, 2.5x** (`control.ALLOWED_SPEEDS`) -- applied to walking, rotating,
-wave and dance alike. Tapping one sends an independent `{"speed": <n>}`
+2x, 2.5x** (`control.ALLOWED_SPEEDS`) -- applied to walking and
+rotating only; wave and dance always play at their own speed. Tapping one sends an independent `{"speed": <n>}`
 message, which only the current pilot may send and which is dropped unless
 it is one of those values. The selection holds until the pilot picks
 another one; the highlighted button is the multiplier the server reports as
 applied in the status broadcast, not the one last tapped.
 
-The robot loop scales the speeds the robot was started with -- `--gait-speed`
-for walking and rotating (written to `robot.engine.gait_speed`, since
-`Palmimo` takes gait speed only as a constructor argument), and the SDK's
-tuned `wave_speed` / `wave_intro_speed` / `wave_raise_speed` /
-`dance_speed` for the gestures. The multiplied gait speed is capped at
-`--gait-speed`'s own maximum (`control.MAX_GAIT_SPEED`, 0.05). Changing
-speed while a gesture plays rescales the rest of its window, so a wave
-slowed down mid-way still finishes.
+The robot loop scales the gait speed the robot was started with
+(`--gait-speed`), written to `robot.engine.gait_speed` since `Palmimo` takes
+gait speed only as a constructor argument. The multiplied gait speed is
+capped at `--gait-speed`'s own maximum (`control.MAX_GAIT_SPEED`, 0.05).
 
 Faster commands alone do not make the robot walk faster. The driver's
 time-based Profile_Velocity (300 ms per goal by default) low-passes the leg

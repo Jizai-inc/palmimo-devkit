@@ -316,16 +316,16 @@ def _piloted_session(clock: FakeClock) -> PilotSession:
     return session
 
 
-def test_tick_scales_every_speed_knob_by_the_selected_multiplier() -> None:
+def test_tick_scales_only_the_gait_speed_by_the_selected_multiplier() -> None:
     # Without this, the pilot's speed buttons would change nothing on the robot,
-    # or would speed up walking but leave wave and dance at their own rate.
+    # or would also speed up wave and dance, which always play at their own speed.
     robot = FakeRobot()
     clock = FakeClock()
     session = _piloted_session(clock)
     loop = _loop(robot, session)
     session.set_speed("a", 2.0)
     loop.tick()
-    assert _speeds(robot) == pytest.approx((0.024, 3.8, 4.6, 1.2, 0.0298))
+    assert _speeds(robot) == pytest.approx((0.024, 1.9, 2.3, 0.6, 0.0149))
 
 
 def test_tick_scales_from_the_startup_speeds_rather_than_compounding() -> None:
