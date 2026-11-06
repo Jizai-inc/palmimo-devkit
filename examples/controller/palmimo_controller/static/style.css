@@ -232,7 +232,7 @@ body[data-role="pilot"] #video-layer {
    that is. Budget in the worst case (portrait, vmin == vw): padding
    2*2vmin + dpad-column's 4vmin left margin + dpad-column (3*14vmin cells +
    2*1.5vmin gaps = 45vmin) + neck-controls (its widest child, the
-   gesture-buttons row at 2*15vmin + 1.2vmin gap = 31.2vmin) = 84.2vmin,
+   gesture-buttons grid at 4*10vmin + 3*1.2vmin gaps = 43.6vmin) = 96.6vmin,
    comfortably under the 100vw available so `justify-content: space-between`
    always has room and neither group needs to shrink. */
 #controls {
@@ -390,17 +390,17 @@ body[data-role="pilot"] #video-layer {
   gap: clamp(4px, 1.2vmin, 8px);
 }
 
+/* Four per row so all eight buttons (seven gestures + AI) fit beside the
+   d-pad in portrait -- see the width budget above `#controls`. */
 #gesture-buttons {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, auto);
   gap: clamp(4px, 1.2vmin, 8px);
 }
 
-/* Sized to match the d-pad's cells (see `#dpad`'s clamp above) so the SVG
-   icon occupies most of the button rather than reading as a small
-   secondary control. */
 #gesture-buttons button {
-  width: clamp(48px, 15vmin, 110px);
-  height: clamp(48px, 15vmin, 110px);
+  width: clamp(40px, 10vmin, 80px);
+  height: clamp(40px, 10vmin, 80px);
   padding: 10%;
   border-radius: 10px;
   border: none;
@@ -417,6 +417,21 @@ body[data-role="pilot"] #video-layer {
 #gesture-buttons button:active,
 #gesture-buttons button.pressed {
   background: rgba(255, 255, 255, 0.5);
+}
+
+/* The AI button opens the mode picker rather than playing a gesture, so it
+   keeps the AI accent color. Hidden while an AI mode runs; the mode bar's
+   teleop button is the way back. */
+#gesture-buttons #ai-button {
+  background: #4f7cff;
+}
+
+#gesture-buttons #ai-button:active {
+  background: #7d9dff;
+}
+
+#ai-button[hidden] {
+  display: none;
 }
 
 #neck-stick {
@@ -467,11 +482,6 @@ body[data-role="pilot"] #video-layer {
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-}
-
-#ai-button {
-  background: #4f7cff;
-  color: #fff;
 }
 
 #teleop-button {

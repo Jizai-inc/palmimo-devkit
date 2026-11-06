@@ -16,7 +16,15 @@ from collections.abc import Callable, Iterator
 import typer
 import uvicorn
 
-from palmimo_sdk import DynamixelDriver, HeadCamera, MicStream, Palmimo, ServoDriver, resolve_alsa_device
+from palmimo_sdk import (
+    Denoiser,
+    DynamixelDriver,
+    HeadCamera,
+    MicStream,
+    Palmimo,
+    ServoDriver,
+    resolve_alsa_device,
+)
 
 from .ai.audio import Playback
 from .ai.controller import AiController
@@ -49,7 +57,7 @@ DEFAULT_GAIT_SPEED: float = 0.012
 #: teleop app), so both apps can be installed on one robot.
 DEFAULT_PORT: int = 8010
 
-#: The robot's USB audio board, matched by name for both the mic and the speaker.
+#: The robot's USB audio board, matched by name for the speaker.
 AUDIO_DEVICE_HINT = "ReSpeaker"
 
 #: How many times the startup servo-bus probe is retried before degrading to
@@ -134,11 +142,38 @@ def _build_camera(no_camera: bool) -> HeadCamera | None:
     return HeadCamera()
 
 
+def _open_mic_stream(*, open_stream: Callable[..., MicStream] = MicStream) -> MicStream:
+    """Open the microphone, preferring echo cancellation.
+
+    No device name hint, matching the companion agent: the SDK picks whichever
+    input exposes the six channels its default `EchoCanceller` needs, and the
+    board's name varies between firmware builds. If no such input exists, fall
+    back to noise removal only, so AI mode still works -- but without echo
+    cancellation the robot can hear its own voice and cut itself off.
+    """
+    try:
+        mic = open_stream()
+        mic.open()
+        return mic
+    except RuntimeError as exc:
+        _LOG.warning(
+            "echo-cancelled capture unavailable (%s); using noise removal only, "
+            "so the robot may hear and interrupt its own voice",
+            exc,
+        )
+    mic = open_stream(processors=[Denoiser()])
+    mic.open()
+    return mic
+
+
 @contextlib.contextmanager
 def _open_mic() -> Iterator[MicStream]:
     """Open the microphone for one AI session; closed again when the session ends."""
-    with MicStream(device_name_hint=AUDIO_DEVICE_HINT) as mic:
+    mic = _open_mic_stream()
+    try:
         yield mic
+    finally:
+        mic.close()
 
 
 def _build_playback() -> Playback:

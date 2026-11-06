@@ -47,3 +47,18 @@ def test_every_js_hidden_element_has_a_css_rule_that_hides_it() -> None:
     hidden_by_js = _ids_hidden_via_js(app_js)
     assert hidden_by_js, "expected at least one element hidden via JS"
     assert hidden_by_js <= _ids_with_a_hidden_rule(style_css)
+
+
+def test_every_gesture_in_app_js_has_a_button_and_is_allowed_server_side() -> None:
+    # Without this, a gesture wired in app.js could point at a button id that
+    # pilot.html lacks (dead shortcut) or at a name the server rejects.
+    from palmimo_controller.control import ALLOWED_GESTURES
+
+    app_js = (STATIC_DIR / "app.js").read_text()
+    pilot_html = (STATIC_DIR / "pilot.html").read_text()
+    entries = re.findall(r'\{ id: "([\w-]+)", name: "(\w+)", key: "(\w)" \}', app_js)
+    assert {name for _, name, _ in entries} == ALLOWED_GESTURES
+    for button_id, _, _ in entries:
+        assert f'id="{button_id}"' in pilot_html
+    keys = [key for _, _, key in entries]
+    assert len(keys) == len(set(keys))

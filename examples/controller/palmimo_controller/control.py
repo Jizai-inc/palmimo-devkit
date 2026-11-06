@@ -19,7 +19,7 @@ ALLOWED_ROTATES: frozenset[int] = frozenset({-1, 0, 1})
 
 #: Gesture names the client is allowed to send. Anything else is rejected by
 #: the server's input validation before it ever reaches this module.
-ALLOWED_GESTURES: frozenset[str] = frozenset({"wave", "dance"})
+ALLOWED_GESTURES: frozenset[str] = frozenset({"wave", "dance", "nod", "clap", "pushup", "body_tilt", "bow"})
 
 #: `Palmimo` neck axes are normalized [-1, 1]; a pilot input past that range
 #: (a malicious or buggy client) is clamped rather than rejected -- there is
@@ -31,7 +31,7 @@ NECK_MAX: float = 1.0
 def resolve_motion(move: str | None, rotate: int, gesture: str | None = None) -> str | None:
     """Resolve a pilot's move/rotate/gesture triple to a `Palmimo.set_motion` name, or `None` to stop.
 
-    Priority is gesture > rotate > move: an active played gesture (wave/dance)
+    Priority is gesture > rotate > move: an active played gesture (wave, dance, ...)
     overrides steering the same way rotate overrides translation, since
     `MotionEngine` has no motion that mixes a gesture with a gait. `move` is
     passed through unchanged when both `rotate` is 0 and `gesture` is `None`.

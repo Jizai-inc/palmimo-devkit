@@ -61,7 +61,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "name": "gesture",
-        "description": "Play a gesture: wave hello, or a short dance.",
+        "description": (
+            "Play a gesture: wave hello, a short dance, nod yes, clap, do push-ups, tilt the body (curious), or bow."
+        ),
         "parameters": {
             "type": "object",
             "properties": {"name": {"type": "string", "enum": sorted(GESTURE_PLAY_SECONDS)}},

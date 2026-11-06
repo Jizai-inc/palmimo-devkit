@@ -22,12 +22,21 @@ DEADMAN_TIMEOUT_S: float = 0.4
 
 #: How long a played gesture (`PilotSession.play`) keeps overriding move/
 #: rotate before falling back to whatever the pilot is currently steering.
-#: `palmimo_sdk` does not expose a wave or dance motion's own playback
-#: length: `Palmimo.wave()` plays once and then holds neutral (so a window
-#: longer than the playthrough is harmless), while `Palmimo.dance()` loops
-#: until deselected (so this window is what ends it). Replace this with SDK
-#: introspection if a future release publishes per-motion play length.
-GESTURE_PLAY_SECONDS: dict[str, float] = {"wave": 5.0, "dance": 5.0}
+#: `palmimo_sdk` does not expose most motions' own playback length. The
+#: one-shots (wave, nod ~1.5 s, clap ~2 s, bow ~1.7 s) play once and then hold
+#: neutral, so a window longer than the playthrough is harmless; dance,
+#: pushup and body_tilt loop until deselected, so this window is what ends
+#: them. Replace this with SDK introspection if a future release publishes
+#: per-motion play length.
+GESTURE_PLAY_SECONDS: dict[str, float] = {
+    "wave": 5.0,
+    "dance": 5.0,
+    "nod": 5.0,
+    "clap": 5.0,
+    "pushup": 5.0,
+    "body_tilt": 5.0,
+    "bow": 5.0,
+}
 
 #: The pilot's own input drives the robot.
 MODE_TELEOP = "teleop"

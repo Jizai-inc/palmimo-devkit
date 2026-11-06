@@ -2,7 +2,7 @@
 
 import pytest
 
-from palmimo_controller.control import clamp_neck, resolve_motion
+from palmimo_controller.control import ALLOWED_GESTURES, clamp_neck, resolve_motion
 
 
 @pytest.mark.parametrize(
@@ -62,3 +62,14 @@ def test_clamp_neck_bounds_to_normalized_range(value: float, expected: float) ->
     # (NaN passes both `min`/`max` comparisons, reaching `Palmimo.look` at
     # full, un-clamped deflection).
     assert clamp_neck(value) == expected
+
+
+def test_every_allowed_gesture_is_a_palmimo_motion_with_a_play_window() -> None:
+    # Without this, a gesture added to the allow-list but misspelled would pass
+    # validation and then make `Palmimo.set_motion` raise every tick, and one
+    # missing from `GESTURE_PLAY_SECONDS` would make `PilotSession.play` raise.
+    from palmimo_controller.session import GESTURE_PLAY_SECONDS
+    from palmimo_sdk import Palmimo
+
+    assert set(Palmimo._MOTION_MAP) >= ALLOWED_GESTURES
+    assert set(GESTURE_PLAY_SECONDS) == ALLOWED_GESTURES

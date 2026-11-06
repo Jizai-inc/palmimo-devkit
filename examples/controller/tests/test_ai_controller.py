@@ -274,3 +274,40 @@ async def test_stop_is_harmless_in_teleop() -> None:
     await h.ai.stop()
     assert h.session.mode == MODE_TELEOP
     assert h.switches() == []
+
+
+async def test_mic_that_cannot_open_returns_to_teleop_without_connecting() -> None:
+    h = Harness()
+
+    @contextlib.contextmanager
+    def broken_mic() -> Iterator[FakeMic]:
+        raise RuntimeError("no input device with >= 6 channels")
+        yield FakeMic()
+
+    h.ai._mic_factory = broken_mic
+    await h.ai.start("a", "default")
+    await _until(lambda: h.session.mode == MODE_TELEOP)
+    assert h.session.status().notice == controller_module.NOTICE_MIC
+    assert h.connect_calls == 0
+
+
+async def test_slow_mic_open_does_not_block_the_event_loop() -> None:
+    # Without this, the first-use model download froze every pilot and viewer connection.
+    h = Harness()
+    release = __import__("threading").Event()
+
+    @contextlib.contextmanager
+    def slow_mic() -> Iterator[FakeMic]:
+        release.wait(timeout=2)
+        yield FakeMic()
+
+    h.ai._mic_factory = slow_mic
+    await h.ai.start("a", "default")
+    ticks = 0
+    for _ in range(5):
+        await asyncio.sleep(0.01)
+        ticks += 1
+    assert ticks == 5 and h.session.mode == MODE_AI_STARTING
+    release.set()
+    await _until(lambda: h.session.mode == MODE_AI)
+    await h.ai.stop()

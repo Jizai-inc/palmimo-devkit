@@ -316,8 +316,19 @@
     });
   }
 
-  bindPlayButton("gesture-wave", "wave");
-  bindPlayButton("gesture-dance", "dance");
+  // Button id and keyboard shortcut for each gesture, in on-screen order.
+  const GESTURES = [
+    { id: "gesture-wave", name: "wave", key: "1" },
+    { id: "gesture-dance", name: "dance", key: "2" },
+    { id: "gesture-nod", name: "nod", key: "3" },
+    { id: "gesture-clap", name: "clap", key: "4" },
+    { id: "gesture-pushup", name: "pushup", key: "5" },
+    { id: "gesture-body-tilt", name: "body_tilt", key: "6" },
+    { id: "gesture-bow", name: "bow", key: "7" },
+  ];
+  GESTURES.forEach(function (gesture) {
+    bindPlayButton(gesture.id, gesture.name);
+  });
 
   // ---- AI mode switching ----
   //
@@ -413,7 +424,7 @@
   };
 
   // Keyboard: WASD move, Q/E rotate, cursor keys increment the neck, c
-  // centers it, 1/2 play a gesture. `event.repeat` guards the gesture keys
+  // centers it, 1-7 play a gesture. `event.repeat` guards the gesture keys
   // so holding the key down doesn't fire `play` (and toggle the gesture
   // back off) on every OS-level auto-repeat keydown.
   window.addEventListener("keydown", function (event) {
@@ -423,8 +434,9 @@
       neckYaw = 0;
     }
     if (!event.repeat) {
-      if (event.key === "1") sendPlay("wave");
-      if (event.key === "2") sendPlay("dance");
+      GESTURES.forEach(function (gesture) {
+        if (event.key === gesture.key) sendPlay(gesture.name);
+      });
     }
   });
   window.addEventListener("keyup", function (event) {

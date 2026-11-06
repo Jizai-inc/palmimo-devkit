@@ -48,6 +48,7 @@ NOTICE_QUOTA = "AIは使用できません：OpenAIの利用上限に達しま�
 NOTICE_NETWORK = "AIとの接続が切れました。手動操作に戻りました"
 NOTICE_TIMEOUT = "AIの起動に時間がかかりすぎました。もう一度お試しください"
 NOTICE_NO_PROMPT = "このモードは読み込めませんでした"
+NOTICE_MIC = "マイクを開けませんでした。手動操作に戻りました"
 NOTICE_ROBOT_OFFLINE = "ロボットとの接続に問題があるため、AIを停止しました"
 NOTICE_FAILED = "AIでエラーが発生しました。手動操作に戻りました"
 
@@ -174,6 +175,9 @@ class AiController:
         playback: PlaybackLike | None = None
         try:
             async with contextlib.AsyncExitStack() as stack:
+                # Outside the start timeout: the first open downloads the echo
+                # canceller's model files, which is not a slow OpenAI start.
+                mic = await self._open_mic(stack)
                 async with asyncio.timeout(self._start_timeout):
                     client = await stack.enter_async_context(self._connect(model=MODEL, api_key=self._api_key))
                     await client.send(
@@ -185,7 +189,6 @@ class AiController:
                             transcription_language=LANGUAGE,
                         )
                     )
-                    mic = stack.enter_context(self._mic_factory())
                     playback = self._playback_factory()
                 self._session.ai_started()
                 live = True
@@ -217,6 +220,31 @@ class AiController:
             if playback is not None:
                 playback.interrupt()
                 await asyncio.to_thread(playback.close)
+
+    async def _open_mic(self, stack: contextlib.AsyncExitStack) -> MicStreamLike:
+        """Open the mic on a worker thread and register its close on *stack*.
+
+        Opening blocks (device setup, and a model download on first use), so
+        it must not run on the event loop, which also serves every pilot and
+        viewer connection. If the switch is cancelled while the open is still
+        running, the mic is closed as soon as the open finishes.
+        """
+        manager = self._mic_factory()
+        opening = asyncio.ensure_future(asyncio.to_thread(manager.__enter__))
+        try:
+            mic = await asyncio.shield(opening)
+        except Exception as exc:
+            raise _AiStopped(NOTICE_MIC, "mic_unavailable") from exc
+        except asyncio.CancelledError:
+
+            def close_when_open(future: asyncio.Future[MicStreamLike]) -> None:
+                if not future.cancelled() and future.exception() is None:
+                    manager.__exit__(None, None, None)
+
+            opening.add_done_callback(close_when_open)
+            raise
+        stack.push(manager.__exit__)
+        return mic
 
     async def _route(self, client: RealtimeClientLike, playback: PlaybackLike) -> None:
         async for event in client.events():
