@@ -52,6 +52,7 @@
     };
     addCell(status.pilot_present ? "pilot: connected" : "pilot: none");
     addCell("motion: " + (status.motion || "idle"));
+    addCell("speed: " + status.speed + "x");
     addCell("fps: " + status.loop_fps.toFixed(1));
     addCell("bus: " + (status.servo_attached ? "attached" : "compute-only"), okOrBad(status.servo_attached));
     addCell("camera: " + (status.camera_ok ? "ok" : "unavailable"), okOrBad(status.camera_ok));
@@ -84,6 +85,16 @@
         ? "Someone is piloting right now -- you can start once they leave."
         : "You are spectating. Press Start piloting to take control.";
     }
+  }
+
+  // Highlights the speed the server reports as applied, not the one last
+  // tapped: a tap the server dropped (or one still in flight) must not look
+  // selected.
+  function renderSpeedButtons(status) {
+    const buttons = document.querySelectorAll("#speed-buttons button");
+    buttons.forEach(function (button) {
+      button.classList.toggle("selected", Number(button.dataset.speed) === status.speed);
+    });
   }
 
   function preventDefault(event) {
@@ -130,6 +141,7 @@
       renderStatusBar(payload);
       renderPilotLinkAvailability(payload);
       renderServoBanners(payload);
+      renderSpeedButtons(payload);
     }
     if (payload.granted === false) {
       denyPilotControl();
@@ -313,6 +325,16 @@
 
   bindPlayButton("gesture-wave", "wave");
   bindPlayButton("gesture-dance", "dance");
+
+  // A speed is a one-off `{"speed": ...}` message, like a gesture; the
+  // server keeps it until the pilot picks another one or leaves.
+  document.querySelectorAll("#speed-buttons button").forEach(function (button) {
+    button.addEventListener("click", function (event) {
+      event.preventDefault();
+      if (socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ speed: Number(button.dataset.speed) }));
+    });
+  });
 
   // Keyboard: WASD move, Q/E rotate, cursor keys increment the neck, c
   // centers it, 1/2 play a gesture. `event.repeat` guards the gesture keys

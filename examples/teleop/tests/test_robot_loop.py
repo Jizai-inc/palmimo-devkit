@@ -8,15 +8,44 @@ from typing import Any, cast
 import pytest
 
 from palmimo_sdk import Palmimo
+from palmimo_teleop.control import LEG_MOTORS, MAX_GAIT_SPEED
 from palmimo_teleop.robot_loop import FAILURE_LOG_INTERVAL_S, NECK_PITCH_SIGN, NECK_YAW_SIGN, RobotLoop
 from palmimo_teleop.session import PilotSession
 
 
-class FakeRobot:
-    """Records every call `RobotLoop` makes, in order."""
+class FakeEngine:
+    def __init__(self, gait_speed: float) -> None:
+        self.gait_speed = gait_speed
 
-    def __init__(self) -> None:
+
+class FakeDriver:
+    """A time-based-profile servo driver; profile writes land in the robot's call log."""
+
+    profile_velocity = 300
+
+    def __init__(self, calls: list[tuple[str, Any]]) -> None:
+        self._calls = calls
+
+    fail_next_writes = 0
+
+    def set_profile_velocity_units(self, value: int, motors: list[str] | None = None) -> None:
+        if self.fail_next_writes:
+            self.fail_next_writes -= 1
+            raise ConnectionError("no status packet")
+        self._calls.append(("profile_velocity", (value, tuple(motors) if motors else None)))
+
+
+class FakeRobot:
+    """Records every call `RobotLoop` makes, in order, and holds the speed knobs it writes."""
+
+    def __init__(self, *, gait_speed: float = 0.012, with_driver: bool = True) -> None:
         self.calls: list[tuple[str, Any]] = []
+        self.engine = FakeEngine(gait_speed)
+        self.driver = FakeDriver(self.calls) if with_driver else None
+        self.wave_speed = 1.9
+        self.wave_intro_speed = 2.3
+        self.wave_raise_speed = 0.6
+        self.dance_speed = 0.0149
 
     def set_motion(self, name: str) -> None:
         self.calls.append(("set_motion", name))
@@ -268,3 +297,281 @@ def test_loop_fps_excludes_failed_ticks() -> None:
     clock.now = 1.1
     loop._update_loop_fps(loop.tick(), clock.now)
     assert loop.loop_fps == 0.0
+
+
+def _speeds(robot: FakeRobot) -> tuple[float, float, float, float, float]:
+    return (
+        robot.engine.gait_speed,
+        robot.wave_speed,
+        robot.wave_intro_speed,
+        robot.wave_raise_speed,
+        robot.dance_speed,
+    )
+
+
+def _piloted_session(clock: FakeClock) -> PilotSession:
+    session = PilotSession(now=clock)
+    session.acquire_pilot("a")
+    session.update_pilot_input("a", move=None, rotate=0, neck_pitch=0.0, neck_yaw=0.0)
+    return session
+
+
+def test_tick_scales_only_the_gait_speed_by_the_selected_multiplier() -> None:
+    # Without this, the pilot's speed buttons would change nothing on the robot,
+    # or would also speed up wave and dance, which always play at their own speed.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 2.0)
+    loop.tick()
+    assert _speeds(robot) == pytest.approx((0.024, 1.9, 2.3, 0.6, 0.0149))
+
+
+def test_tick_scales_from_the_startup_speeds_rather_than_compounding() -> None:
+    # Without this, stepping 1x -> 2x -> 3x would multiply an already doubled
+    # value and leave the robot at 6x.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    for speed in (2.0, 3.0, 1.0):
+        session.set_speed("a", speed)
+        loop.tick()
+    assert _speeds(robot) == pytest.approx((0.012, 1.9, 2.3, 0.6, 0.0149))
+
+
+def test_tick_caps_the_multiplied_gait_speed_at_the_cli_maximum() -> None:
+    # Without this, a robot started with a fast --gait-speed would walk at a
+    # gait speed the CLI itself refuses once the pilot picks 3x.
+    robot = FakeRobot(gait_speed=0.03)
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    loop.tick()
+    assert robot.engine.gait_speed == MAX_GAIT_SPEED
+
+
+def test_tick_returns_to_the_startup_speeds_when_the_deadman_expires() -> None:
+    # Without this, a pilot whose connection drops would leave the next pilot
+    # (or an unattended robot) at whatever multiplier was last selected.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    loop.tick()
+    clock.now = 1.0
+    loop.tick()
+    assert _speeds(robot) == pytest.approx((0.012, 1.9, 2.3, 0.6, 0.0149))
+
+
+def test_shutdown_settles_at_the_startup_speeds() -> None:
+    # Without this, a robot stopped while at 3x would ease to neutral at 3x
+    # instead of at its own tuned speed.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    loop.tick()
+    loop.shutdown()
+    assert _speeds(robot) == pytest.approx((0.012, 1.9, 2.3, 0.6, 0.0149))
+
+
+def _profile_writes(robot: FakeRobot) -> list[Any]:
+    return [args for name, args in robot.calls if name == "profile_velocity"]
+
+
+def _drive(session: PilotSession, *, move: str | None = None, rotate: int = 0) -> None:
+    session.update_pilot_input("a", move=move, rotate=rotate, neck_pitch=0.0, neck_yaw=0.0)
+
+
+def test_tick_shortens_the_leg_profile_with_the_gait_speed() -> None:
+    # Without this, the leg servos' fixed-time profile would low-pass a 3x gait
+    # into a small, fast stride that barely covers more ground than 1x.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    loop.tick()
+    assert _profile_writes(robot)[-1] == (100, LEG_MOTORS)
+
+
+def test_tick_writes_the_leg_profile_after_step() -> None:
+    # Without this, `Palmimo.step()` restoring the driver default as a gesture
+    # ends would overwrite the gait's shortened profile on that same tick.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 2.0)
+    _drive(session, rotate=1)
+    loop.tick()
+    names = [name for name, _ in robot.calls]
+    assert names.index("step") < len(names) - 1 - names[::-1].index("profile_velocity")
+
+
+def test_tick_restores_the_default_leg_profile_when_standing() -> None:
+    # Without this, a robot that stopped walking at 3x would hold every later
+    # pose change at the shortened, snappier profile.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    loop.tick()
+    _drive(session)
+    loop.tick()
+    assert _profile_writes(robot)[-1] == (300, LEG_MOTORS)
+
+
+def test_tick_leaves_the_servo_profile_alone_during_a_gesture() -> None:
+    # Without this, the loop would overwrite the crisp arm profile `Palmimo`
+    # sets for the wave.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    loop.tick()
+    before = len(_profile_writes(robot))
+    session.set_speed("a", 3.0)
+    session.play("a", "wave")
+    loop.tick()
+    loop.tick()
+    assert len(_profile_writes(robot)) == before
+
+
+def test_tick_rewrites_the_leg_profile_after_a_gesture() -> None:
+    # Without this, a gait resumed after a wave would keep the default profile
+    # `Palmimo` restored when the wave ended, losing the 3x stride.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    loop.tick()
+    session.play("a", "wave")
+    _drive(session)
+    loop.tick()
+    _drive(session, move="forward")
+    loop.tick()
+    assert _profile_writes(robot)[-1] == (100, LEG_MOTORS)
+
+
+def test_tick_matches_the_leg_profile_to_a_capped_gait_speed() -> None:
+    # Without this, a gait speed held at the cap would get a profile shortened
+    # by the full multiplier, faster than the commands it is tracking.
+    robot = FakeRobot(gait_speed=0.03)
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    loop.tick()
+    assert _profile_writes(robot)[-1] == (round(300 * 0.03 / MAX_GAIT_SPEED), LEG_MOTORS)
+
+
+def test_tick_skips_the_leg_profile_without_a_driver() -> None:
+    # Without this, a compute-only run (no servo driver) would fail every tick.
+    robot = FakeRobot(with_driver=False)
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    assert loop.tick() is True
+
+
+def test_shutdown_restores_the_default_leg_profile() -> None:
+    # Without this, a robot shut down mid-walk at 3x would settle with the
+    # shortened profile still on its leg servos.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    loop.tick()
+    loop.shutdown()
+    assert _profile_writes(robot)[-1] == (300, LEG_MOTORS)
+
+
+def test_switching_from_a_fast_gait_to_dance_restores_the_leg_profile_before_step() -> None:
+    # Without this, a dance after walking at 3x would run with the shortened
+    # leg profile, since `Palmimo` applies no servo tuning of its own to a dance.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    loop.tick()
+    robot.calls.clear()
+    session.play("a", "dance")
+    _drive(session)
+    loop.tick()
+    names = [name for name, _ in robot.calls]
+    assert _profile_writes(robot) == [(300, LEG_MOTORS)]
+    assert names.index("profile_velocity") < names.index("step")
+
+
+def test_shutdown_during_a_dance_leaves_no_shortened_leg_profile() -> None:
+    # Without this, a server stopped mid-dance after a 3x walk would settle and
+    # park with the shortened profile still on the legs.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    loop.tick()
+    session.play("a", "dance")
+    _drive(session)
+    loop.tick()
+    loop.shutdown()
+    assert _profile_writes(robot)[-1] == (300, LEG_MOTORS)
+
+
+def test_a_failed_leg_profile_write_does_not_fail_the_cycle_and_is_retried() -> None:
+    # Without this, one dropped bus reply would flash the pilot's servo-fault
+    # banner and, if never retried, leave the gait on the slow profile.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    assert robot.driver is not None
+    robot.driver.fail_next_writes = 1
+    assert loop.tick() is True
+    assert loop.robot_ok is True
+    assert _profile_writes(robot) == []
+    loop.tick()
+    assert _profile_writes(robot) == [(100, LEG_MOTORS)]
+
+
+def test_a_gesture_is_not_written_to_again_after_its_first_cycle() -> None:
+    # Without this, a retry during a wave would overwrite the crisp arm profile
+    # `Palmimo` applied on the wave's first step.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    loop.tick()
+    assert robot.driver is not None
+    robot.driver.fail_next_writes = 1
+    session.play("a", "wave")
+    _drive(session)
+    loop.tick()
+    robot.calls.clear()
+    loop.tick()
+    loop.tick()
+    assert _profile_writes(robot) == []

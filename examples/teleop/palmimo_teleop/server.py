@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 
 from palmimo_sdk import Palmimo
 
-from .control import ALLOWED_GESTURES, ALLOWED_MOVES, ALLOWED_ROTATES, clamp_neck
+from .control import ALLOWED_GESTURES, ALLOWED_MOVES, ALLOWED_ROTATES, ALLOWED_SPEEDS, clamp_neck
 from .robot_loop import RobotLoop
 from .session import PilotSession
 from .video import MJPEG_BOUNDARY, VideoStream, mjpeg_generator
@@ -163,6 +163,26 @@ def _validate_play_message(message: dict[str, Any]) -> str | None:
     return name
 
 
+def _validate_speed_message(message: dict[str, Any]) -> float | None:
+    """Validate a `{"speed": ...}` speed-multiplier message.
+
+    Returns:
+        float, optional: the multiplier as a `float` if it is one of
+            `ALLOWED_SPEEDS` (an integral JSON number such as `2` counts as
+            `2.0`), else `None` -- the caller drops the message entirely.
+            `bool` is rejected despite being an `int` subclass, matching
+            `rotate`'s treatment.
+    """
+    value = message.get("speed")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        speed = float(value)
+    except OverflowError:
+        return None
+    return speed if speed in ALLOWED_SPEEDS else None
+
+
 def _resolve_role(session: PilotSession, client_id: int, first_message: object) -> tuple[str | None, dict[str, Any]]:
     """Decide the role for a WebSocket's first message, without performing any I/O.
 
@@ -255,6 +275,14 @@ async def _control_connection(
                 gesture = _validate_play_message(message)
                 if gesture is not None:
                     session.play(client_id, gesture)
+                continue
+            if isinstance(message, dict) and "speed" in message:
+                # `{"speed": ...}` selects the speed multiplier, a setting
+                # that persists across control frames -- like `play`, it is
+                # not part of the per-100ms frame.
+                speed = _validate_speed_message(message)
+                if speed is not None:
+                    session.set_speed(client_id, speed)
                 continue
             validated = _validate_pilot_message(message)
             if validated is None:
@@ -381,6 +409,7 @@ async def _broadcast_loop(
                 {
                     "pilot_present": status.pilot_present,
                     "motion": status.motion,
+                    "speed": status.speed,
                     "loop_fps": robot_loop.loop_fps,
                     "camera_ok": video.camera_ok,
                     "robot_ok": robot_loop.robot_ok,
