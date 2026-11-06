@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import math
 import queue
 import subprocess
 import sys
@@ -44,17 +45,25 @@ _MIC_READ_TIMEOUT_S = 0.2
 class MicStreamLike(Protocol):
     """The subset of :class:`~palmimo_sdk.io.mic_stream.MicStream` this service needs."""
 
+    sample_rate: int
+
     def stream(self) -> Any: ...
 
 
 class MicrophoneFeed:
-    """Reads capture chunks, resamples 16k -> 24k, and appends them to the API's input buffer."""
+    """Reads capture chunks, resamples them to `API_RATE`, and appends them to the API's input buffer.
+
+    The capture rate is the mic's own: 16 kHz for the ReSpeaker array, 48 kHz
+    for the booth's USB mic, which opens at no lower rate.
+    """
 
     name = "microphone"
 
     def __init__(self, mic: MicStreamLike, client: RealtimeClientLike) -> None:
         self._mic = mic
         self._client = client
+        common = math.gcd(API_RATE, mic.sample_rate)
+        self._up, self._down = API_RATE // common, mic.sample_rate // common
 
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
@@ -63,8 +72,8 @@ class MicrophoneFeed:
                 chunk = await loop.run_in_executor(None, chunks.get, _MIC_READ_TIMEOUT_S)
                 if chunk is None:
                     continue
-                upsampled = resample_poly(np.asarray(chunk, dtype=np.float32), 3, 2)
-                pcm = np.clip(upsampled, -32768, 32767).astype(np.int16).tobytes()
+                resampled = resample_poly(np.asarray(chunk, dtype=np.float32), self._up, self._down)
+                pcm = np.clip(resampled, -32768, 32767).astype(np.int16).tobytes()
                 await self._client.send(AudioAppend(audio_b64=base64.b64encode(pcm).decode()))
 
 

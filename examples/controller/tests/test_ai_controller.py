@@ -6,6 +6,7 @@ controller sends back and what it does to the session.
 """
 
 import asyncio
+import base64
 import contextlib
 import json
 import time
@@ -16,8 +17,16 @@ from typing import Any
 import pytest
 
 from palmimo_controller.ai import controller as controller_module
+from palmimo_controller.ai.audio import API_RATE, MicrophoneFeed
 from palmimo_controller.ai.controller import AiController
-from palmimo_controller.ai.protocol import ClientEvent, ItemCreate, ResponseCreate, SessionUpdate, parse_server_event
+from palmimo_controller.ai.protocol import (
+    AudioAppend,
+    ClientEvent,
+    ItemCreate,
+    ResponseCreate,
+    SessionUpdate,
+    parse_server_event,
+)
 from palmimo_controller.modes import BundledPrompts, EditablePrompts, PromptSource
 from palmimo_controller.session import MODE_AI, MODE_AI_STARTING, MODE_TELEOP, PilotSession
 from palmimo_controller.telemetry import Telemetry
@@ -54,6 +63,8 @@ class FakeChunks:
 
 
 class FakeMic:
+    sample_rate = 16000
+
     def stream(self) -> FakeChunks:
         return FakeChunks()
 
@@ -331,3 +342,44 @@ async def test_slow_mic_open_does_not_block_the_event_loop() -> None:
     release.set()
     await _until(lambda: h.session.mode == MODE_AI)
     await h.ai.stop()
+
+
+class _OneChunk:
+    """Yields one chunk, then blocks like a silent mic until the feed is cancelled."""
+
+    def __init__(self, chunk: list[int]) -> None:
+        self._chunks = [chunk]
+
+    def get(self, timeout: float) -> list[int] | None:
+        if self._chunks:
+            return self._chunks.pop()
+        time.sleep(min(timeout, 0.01))
+        return None
+
+    def __enter__(self) -> "_OneChunk":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        pass
+
+
+@pytest.mark.parametrize(("rate", "samples"), [(16000, 160), (48000, 480)])
+async def test_microphone_feed_resamples_any_capture_rate_to_the_api_rate(rate: int, samples: int) -> None:
+    # Without this, the booth's 48 kHz USB mic would reach the API at double
+    # speed and the model would hear chipmunk audio it cannot transcribe.
+    class Mic:
+        sample_rate = rate
+
+        def stream(self) -> _OneChunk:
+            return _OneChunk([0] * samples)
+
+    client = FakeClient()
+    task = asyncio.create_task(MicrophoneFeed(Mic(), client).run())
+    await _until(lambda: bool(client.sent))
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    appended = client.sent[0]
+    assert isinstance(appended, AudioAppend)
+    pcm = base64.b64decode(appended.audio_b64)
+    assert len(pcm) // 2 == API_RATE // 100  # 10 ms of 16-bit audio at the API rate

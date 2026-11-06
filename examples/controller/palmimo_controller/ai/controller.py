@@ -259,7 +259,14 @@ class AiController:
                 playback.write(base64.b64decode(event.delta))
             case protocol.SpeechStarted():
                 # The visitor started talking: stop speaking over them.
+                _LOG.info("AI: heard speech")
                 playback.interrupt()
+            # Logged as lengths only, never the words: visitors did not agree
+            # to have what they say kept in the robot's journal.
+            case protocol.TranscriptCompleted():
+                _LOG.info("AI: visitor speech understood (%d chars)", len(event.transcript))
+            case protocol.TranscriptDone():
+                _LOG.info("AI: replied with speech (%d chars)", len(event.transcript))
             case protocol.ResponseDone():
                 calls = event.response.function_calls
                 for call in calls:

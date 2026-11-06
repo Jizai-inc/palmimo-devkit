@@ -1,7 +1,7 @@
 schema = 1
 name = "controller"
 description = "Drive Palmimo from a phone or laptop browser, then switch to an AI voice mode with one tap. Teleop works without an API key."
-command = ["palmimo-controller", "--port", "{port}", "--fps", "{fps}", "--gait-speed", "{gait_speed}", "{no_camera}", "{dry_run}"]
+command = ["palmimo-controller", "--port", "{port}", "--fps", "{fps}", "--gait-speed", "{gait_speed}", "--audio-device", "{audio_device}", "{no_camera}", "{dry_run}"]
 url = "http://{host}:{port}/"
 devices = ["camera", "audio", "motor_display"]
 
@@ -25,6 +25,12 @@ default = 0.012
 min = 0.001
 max = 0.05
 description = "How fast the robot walks; higher is faster."
+
+[params.audio_device]
+type = "enum"
+choices = ["respeaker", "booth-usb"]
+default = "respeaker"
+description = "Mic and speaker for AI modes: respeaker for a development robot with a ReSpeaker 4 Mic Array, or booth-usb for an exhibition robot with a push-to-talk USB microphone and USB speaker (hold the mic button while talking)."
 
 [params.no_camera]
 type = "bool"

@@ -8,10 +8,13 @@ choose them; `server.create_app` only ever sees the already-built pieces.
 from __future__ import annotations
 
 import contextlib
+import functools
 import logging
 import os
 import time
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from enum import StrEnum
 
 import typer
 import uvicorn
@@ -57,8 +60,37 @@ DEFAULT_GAIT_SPEED: float = 0.012
 #: teleop app), so both apps can be installed on one robot.
 DEFAULT_PORT: int = 8010
 
-#: The robot's USB audio board, matched by name for the speaker.
-AUDIO_DEVICE_HINT = "ReSpeaker"
+
+class AudioDeviceName(StrEnum):
+    """Which mic and speaker the robot has; the `--audio-device` choices."""
+
+    RESPEAKER = "respeaker"
+    BOOTH_USB = "booth-usb"
+
+
+@dataclass(frozen=True)
+class AudioDevice:
+    """How to open one robot's mic and speaker for an AI session."""
+
+    #: Capture device, matched by name; `None` lets the SDK pick the input its echo canceller needs.
+    mic_hint: str | None
+    mic_rate: int
+    #: Playback device, matched by name in `aplay -l`.
+    speaker_hint: str
+    echo_cancel: bool
+
+
+#: Matches the companion agent's `audio_device` choices. A development robot
+#: has a ReSpeaker array (mic and speaker on one board, so echo cancellation
+#: works). An exhibition robot has a push-to-talk USB mic, which opens only at
+#: 48 kHz and has no loopback channel to cancel echo against, and a separate
+#: USB speaker that `aplay -l` lists as "Composite".
+AUDIO_DEVICES: dict[AudioDeviceName, AudioDevice] = {
+    AudioDeviceName.RESPEAKER: AudioDevice(mic_hint=None, mic_rate=16000, speaker_hint="ReSpeaker", echo_cancel=True),
+    AudioDeviceName.BOOTH_USB: AudioDevice(
+        mic_hint="USB PnP", mic_rate=48000, speaker_hint="Composite", echo_cancel=False
+    ),
+}
 
 #: How many times the startup servo-bus probe is retried before degrading to
 #: compute-only. A real incident: the probe took its one ping right after a
@@ -142,8 +174,16 @@ def _build_camera(no_camera: bool) -> HeadCamera | None:
     return HeadCamera()
 
 
-def _open_mic_stream(*, open_stream: Callable[..., MicStream] = MicStream) -> MicStream:
-    """Open the microphone, preferring echo cancellation.
+def _open_mic_stream(
+    device: AudioDevice = AUDIO_DEVICES[AudioDeviceName.RESPEAKER],
+    *,
+    open_stream: Callable[..., MicStream] = MicStream,
+) -> MicStream:
+    """Open the microphone, preferring echo cancellation where *device* supports it.
+
+    A device without echo cancellation (the booth's USB mic) opens raw at its
+    own rate. `processors=[]` is passed explicitly there: `MicStream` reads a
+    missing `processors` as "use my default echo canceller".
 
     No device name hint, matching the companion agent: the SDK picks whichever
     input exposes the six channels its default `EchoCanceller` needs, and the
@@ -151,6 +191,10 @@ def _open_mic_stream(*, open_stream: Callable[..., MicStream] = MicStream) -> Mi
     back to noise removal only, so AI mode still works -- but without echo
     cancellation the robot can hear its own voice and cut itself off.
     """
+    if not device.echo_cancel:
+        mic = open_stream(sample_rate=device.mic_rate, device_name_hint=device.mic_hint, processors=[])
+        mic.open()
+        return mic
     try:
         mic = open_stream()
         mic.open()
@@ -167,28 +211,32 @@ def _open_mic_stream(*, open_stream: Callable[..., MicStream] = MicStream) -> Mi
 
 
 @contextlib.contextmanager
-def _open_mic() -> Iterator[MicStream]:
+def _open_mic(device: AudioDevice) -> Iterator[MicStream]:
     """Open the microphone for one AI session; closed again when the session ends."""
-    mic = _open_mic_stream()
+    mic = _open_mic_stream(device)
     try:
         yield mic
     finally:
         mic.close()
 
 
-def _build_playback() -> Playback:
-    return Playback(device=resolve_alsa_device(AUDIO_DEVICE_HINT, kind="playback"))
+def _build_playback(device: AudioDevice) -> Playback:
+    alsa_device = resolve_alsa_device(device.speaker_hint, kind="playback")
+    _LOG.info("AI speech plays on ALSA device %s", alsa_device or "default")
+    return Playback(device=alsa_device)
 
 
-def _build_ai(session: PilotSession, telemetry: Telemetry, prompts: EditablePrompts) -> AiController:
+def _build_ai(
+    session: PilotSession, telemetry: Telemetry, prompts: EditablePrompts, audio: AudioDevice
+) -> AiController:
     """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop."""
     return AiController(
         session,
         prompts,
         api_key=os.environ.get("OPENAI_API_KEY"),
         telemetry=telemetry,
-        mic_factory=_open_mic,
-        playback_factory=_build_playback,
+        mic_factory=functools.partial(_open_mic, audio),
+        playback_factory=functools.partial(_build_playback, audio),
     )
 
 
@@ -207,6 +255,11 @@ def main(
     servo_port: str | None = typer.Option(
         None, "--servo-port", help="Servo bus serial port, e.g. /dev/ttyACM0 (auto-detected if omitted)."
     ),
+    audio_device: AudioDeviceName = typer.Option(
+        AudioDeviceName.RESPEAKER,
+        "--audio-device",
+        help="AI mode mic and speaker: respeaker (development robot) or booth-usb (exhibition robot).",
+    ),
 ) -> None:
     """Serve Palmimo Controller: a phone/laptop browser drives the robot, views its head
     camera, and switches to AI voice modes, on the same LAN, with no authentication."""
@@ -218,7 +271,7 @@ def main(
     telemetry = Telemetry()
     # One store for both: a prompt saved from the homepage must be the one the next AI mode reads.
     prompts = EditablePrompts(default_prompt_dir())
-    ai = _build_ai(session, telemetry, prompts)
+    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device])
     app_instance = create_app(robot, session, robot_loop, video, ai, prompts, telemetry)
 
     mode = (
