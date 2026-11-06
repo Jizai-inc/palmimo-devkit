@@ -12,7 +12,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from palmimo_controller.ai.controller import AiController
-from palmimo_controller.modes import BundledPrompts
+from palmimo_controller.modes import MAX_PROMPT_CHARS, EditablePrompts, default_prompt_dir
 from palmimo_controller.robot_loop import RobotLoop
 from palmimo_controller.server import (
     _ConnectionRegistry,
@@ -34,10 +34,11 @@ def _no_mic() -> Any:
 def _app(robot: Palmimo, session: PilotSession, robot_loop: RobotLoop, video: VideoStream) -> Any:
     """`create_app` with AI wired but unavailable (no API key), so teleop behaves exactly as before."""
     telemetry = Telemetry(emit=lambda _line: None)
+    prompts = EditablePrompts(default_prompt_dir())
     ai = AiController(
-        session, BundledPrompts(), api_key=None, telemetry=telemetry, mic_factory=_no_mic, playback_factory=_no_mic
+        session, prompts, api_key=None, telemetry=telemetry, mic_factory=_no_mic, playback_factory=_no_mic
     )
-    return create_app(robot, session, robot_loop, video, ai, BundledPrompts(), telemetry)
+    return create_app(robot, session, robot_loop, video, ai, prompts, telemetry)
 
 
 class _FakeServoDriver(ServoDriver):
@@ -559,3 +560,40 @@ def test_ai_messages_from_a_viewer_are_ignored(client_and_session: tuple[TestCli
         ws.send_json({"ai": "start", "mode": "default"})
         ws.receive_json()
         assert session.status().notice is None
+
+
+def test_prompts_endpoint_lists_presets_with_their_default_text(client: TestClient) -> None:
+    body = client.get("/api/prompts").json()
+    assert [entry["id"] for entry in body] == ["default", "kansai"]
+    for entry in body:
+        assert entry["text"] == entry["default_text"]
+        assert entry["custom"] is False
+
+
+def test_saved_prompt_is_listed_until_reset(client: TestClient) -> None:
+    # Without this, the homepage editor could save and still show the old text.
+    saved = client.put("/api/prompts/kansai", json={"text": "  edited  "})
+    assert saved.status_code == 200
+    assert (saved.json()["text"], saved.json()["custom"]) == ("edited", True)
+    kansai = {entry["id"]: entry for entry in client.get("/api/prompts").json()}["kansai"]
+    assert (kansai["text"], kansai["custom"]) == ("edited", True)
+
+    reset = client.delete("/api/prompts/kansai")
+    assert reset.status_code == 200
+    assert reset.json()["custom"] is False
+    assert reset.json()["text"] == reset.json()["default_text"]
+
+
+@pytest.mark.parametrize("method", ["put", "delete"])
+def test_prompt_endpoints_reject_an_unknown_mode(client: TestClient, method: str) -> None:
+    # Without this, a crafted mode id could write or delete a file outside the presets.
+    kwargs: dict[str, Any] = {"json": {"text": "x"}} if method == "put" else {}
+    response = getattr(client, method)("/api/prompts/..%2Fevil", **kwargs)
+    assert response.status_code == 404
+    assert getattr(client, method)("/api/prompts/bogus", **kwargs).status_code == 404
+
+
+@pytest.mark.parametrize("text", ["", "   ", "x" * (MAX_PROMPT_CHARS + 1)])
+def test_save_prompt_rejects_blank_or_too_long_text(client: TestClient, text: str) -> None:
+    assert client.put("/api/prompts/default", json={"text": text}).status_code == 422
+    assert client.get("/api/prompts").json()[0]["custom"] is False

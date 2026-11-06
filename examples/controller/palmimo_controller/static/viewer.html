@@ -16,11 +16,19 @@
       <p id="viewer-caption">You are spectating. Press Start piloting to take control.</p>
       <a id="pilot-link" href="/pilot">Start piloting</a>
       <div id="status-bar"></div>
+
+      <section id="prompt-editor" aria-labelledby="prompt-editor-title">
+        <h2 id="prompt-editor-title">AIモードのプロンプト</h2>
+        <p class="prompt-note">変更は次にそのモードを開始したときに反映されます。</p>
+        <p id="prompt-load-error" class="prompt-error" hidden>プロンプトを読み込めませんでした。ページを再読み込みしてください。</p>
+        <div id="prompt-list"></div>
+      </section>
     </div>
     <div id="disconnected-banner" hidden>
       <p>Disconnected.</p>
       <button id="reload-button" type="button">Reload</button>
     </div>
     <script src="/static/app.js"></script>
+    <script src="/static/prompts.js"></script>
   </body>
 </html>

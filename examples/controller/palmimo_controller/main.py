@@ -28,7 +28,7 @@ from palmimo_sdk import (
 
 from .ai.audio import Playback
 from .ai.controller import AiController
-from .modes import BundledPrompts
+from .modes import EditablePrompts, default_prompt_dir
 from .robot_loop import RobotLoop
 from .server import create_app
 from .session import PilotSession
@@ -180,11 +180,11 @@ def _build_playback() -> Playback:
     return Playback(device=resolve_alsa_device(AUDIO_DEVICE_HINT, kind="playback"))
 
 
-def _build_ai(session: PilotSession, telemetry: Telemetry) -> AiController:
+def _build_ai(session: PilotSession, telemetry: Telemetry, prompts: EditablePrompts) -> AiController:
     """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop."""
     return AiController(
         session,
-        BundledPrompts(),
+        prompts,
         api_key=os.environ.get("OPENAI_API_KEY"),
         telemetry=telemetry,
         mic_factory=_open_mic,
@@ -216,8 +216,10 @@ def main(
     robot_loop = RobotLoop(robot, session, fps=fps)
     video = VideoStream(_build_camera(no_camera))
     telemetry = Telemetry()
-    ai = _build_ai(session, telemetry)
-    app_instance = create_app(robot, session, robot_loop, video, ai, BundledPrompts(), telemetry)
+    # One store for both: a prompt saved from the homepage must be the one the next AI mode reads.
+    prompts = EditablePrompts(default_prompt_dir())
+    ai = _build_ai(session, telemetry, prompts)
+    app_instance = create_app(robot, session, robot_loop, video, ai, prompts, telemetry)
 
     mode = (
         "--dry-run"

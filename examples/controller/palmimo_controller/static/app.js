@@ -31,7 +31,9 @@
 
   // A long press anywhere is a held control, never a request for the
   // browser's context menu (Android surfaces an image save menu otherwise).
+  // Text fields (the homepage prompt editor) keep it, for copy and paste.
   document.addEventListener("contextmenu", function (event) {
+    if (event.target.closest && event.target.closest("textarea, input")) return;
     event.preventDefault();
   });
 

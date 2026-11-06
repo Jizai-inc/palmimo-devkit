@@ -383,6 +383,120 @@ body[data-role="pilot"] #video-layer {
   max-width: fit-content;
 }
 
+/* ---- Viewer page: AI mode prompt editor ---- */
+
+#prompt-editor {
+  margin-top: 2.5em;
+  text-align: left;
+}
+
+#prompt-editor h2 {
+  font-size: 1.05em;
+  margin: 0 0 0.3em;
+}
+
+.prompt-note {
+  margin: 0 0 1em;
+  font-size: 0.85em;
+  color: #aaa;
+}
+
+.prompt-error {
+  color: #ff8a80;
+  font-size: 0.9em;
+}
+
+#prompt-load-error[hidden] {
+  display: none;
+}
+
+.prompt-card {
+  margin-bottom: 0.75em;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.prompt-card summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.7em 0.9em;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.prompt-badge {
+  font-size: 0.75em;
+  font-weight: 600;
+  padding: 0.15em 0.6em;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #ccc;
+}
+
+.prompt-badge.is-custom {
+  background: rgba(79, 124, 255, 0.3);
+  color: #cfdcff;
+}
+
+.prompt-text {
+  display: block;
+  box-sizing: border-box;
+  width: calc(100% - 1.8em);
+  margin: 0 0.9em;
+  padding: 0.6em;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: #1b1b1b;
+  color: #eee;
+  font: inherit;
+  font-size: 0.9em;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.7em 0.9em 0.9em;
+}
+
+.prompt-actions button {
+  border: none;
+  border-radius: 8px;
+  padding: 0.5em 1em;
+  font-size: 0.9em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.prompt-save {
+  background: #4f7cff;
+  color: #fff;
+}
+
+.prompt-reset {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.prompt-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.prompt-status {
+  font-size: 0.85em;
+  color: #9fd59f;
+}
+
+.prompt-status.is-error {
+  color: #ff8a80;
+}
+
 #neck-controls {
   display: flex;
   flex-direction: column;

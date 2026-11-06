@@ -42,9 +42,9 @@ def test_every_js_hidden_element_has_a_css_rule_that_hides_it() -> None:
     # `[hidden] { display: none }` default -- a regression pytest against
     # app.js or style.css alone would never see, since each file is correct
     # in isolation.
-    app_js = (STATIC_DIR / "app.js").read_text()
+    scripts = (STATIC_DIR / "app.js").read_text() + (STATIC_DIR / "prompts.js").read_text()
     style_css = (STATIC_DIR / "style.css").read_text()
-    hidden_by_js = _ids_hidden_via_js(app_js)
+    hidden_by_js = _ids_hidden_via_js(scripts)
     assert hidden_by_js, "expected at least one element hidden via JS"
     assert hidden_by_js <= _ids_with_a_hidden_rule(style_css)
 
@@ -62,3 +62,14 @@ def test_every_gesture_in_app_js_has_a_button_and_is_allowed_server_side() -> No
         assert f'id="{button_id}"' in pilot_html
     keys = [key for _, _, key in entries]
     assert len(keys) == len(set(keys))
+
+
+def test_prompt_editor_script_is_loaded_and_never_writes_markup() -> None:
+    # Without this, prompt text -- free text anyone on the LAN can save --
+    # could be rendered as markup on every spectator's homepage.
+    prompts_js = (STATIC_DIR / "prompts.js").read_text()
+    viewer_html = (STATIC_DIR / "viewer.html").read_text()
+    assert '<script src="/static/prompts.js"></script>' in viewer_html
+    assert 'id="prompt-list"' in viewer_html
+    assert "innerHTML" not in prompts_js
+    assert "insertAdjacentHTML" not in prompts_js

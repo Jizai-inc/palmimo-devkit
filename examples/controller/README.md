@@ -25,12 +25,13 @@ port 8010. Add `--dry-run` to run compute-only with no hardware attached, and
 flag list). Then, from a browser on the same network as the robot:
 
 - `http://<robot-ip>:8010/` -- **viewer**: a spectating page with the video in
-  a framed window and a "Start piloting" link to `/pilot` (disabled while
-  someone else already holds the pilot slot).
+  a framed window, a "Start piloting" link to `/pilot` (disabled while
+  someone else already holds the pilot slot), and below it the editor for
+  the AI mode prompts (see [Editing prompts](#editing-prompts)).
 - `http://<robot-ip>:8010/pilot` -- **pilot**: full-screen video with a d-pad,
-  L/R rotate buttons, Wave/Dance gesture buttons, a neck stick, and a Home
-  link back to `/` to drive the robot. The mode bar at the top shows the
-  current mode and holds the AI mode button.
+  L/R rotate buttons, seven gesture buttons plus the AI mode button, a neck
+  stick, and a Home link back to `/` to drive the robot. The mode bar at the
+  top shows the current mode and the way back to manual control.
 
 Any number of viewers can watch at once; only one pilot can drive at a time.
 
@@ -68,12 +69,26 @@ How a switch works:
   is not billed for a robot that cannot move. The pilot disconnecting stops
   it too: with nobody holding the controls, nobody could tap back.
 - **Prompts are read at mode start**, not at app start, through
-  `modes.PromptSource`. `BundledPrompts` reads the shipped files; a source
-  that fetches edited prompts from Palmimo Portal can replace it, and an edit
-  then applies on the next switch, never to a running session.
+  `modes.PromptSource`. `EditablePrompts` reads an edit saved from the
+  homepage when there is one and the shipped file otherwise, so an edit
+  applies on the next switch, never to a running session. A source that
+  fetches prompts from Palmimo Portal can replace it later.
 
 The model, voice, and language are fixed in `ai/controller.py` (`MODEL`,
 `VOICE`, `LANGUAGE`); the pilot picks a mode, not a model.
+
+### Editing prompts
+
+The homepage (`/`) lists each mode in a prompt section below the status bar.
+Open one, edit the text, and press the save button; the reset button brings
+back the shipped prompt. Edits are saved outside the package, in
+`$XDG_DATA_HOME/palmimo/controller/prompts/<mode>.md` (by default
+`~/.local/share/palmimo/controller/prompts/`), so an app update keeps them.
+The shipped files in `palmimo_controller/modes/` are never changed. Only the
+two presets can be edited; the mode list itself is fixed.
+
+The page uses `GET /api/prompts`, `PUT /api/prompts/<mode>` (body
+`{"text": ...}`, at most 8000 characters) and `DELETE /api/prompts/<mode>`.
 
 ### Telemetry
 
@@ -142,15 +157,16 @@ touch the robot directly. Each cycle:
 
 ### Gestures
 
-The pilot page has two buttons above the neck stick, **Wave** and **Dance**
-(keyboard `1`/`2`), each a large tap target sized like a d-pad cell. Tapping
-one sends an independent `{"play": "wave" | "dance"}` message over
+The pilot page has seven gesture buttons above the neck stick -- **Wave**,
+**Dance**, **Nod**, **Clap**, **Push-up**, **Body tilt** and **Bow**
+(keyboard `1`-`7`) -- in a four-column grid together with the AI mode
+button. Tapping one sends an independent `{"play": <name>}` message over
 `/api/control` -- separate from the per-100ms control frame -- which only the
 current pilot may send; `palmimo_controller.session.PilotSession.play` ignores it
 otherwise.
 
 A play request starts (or replaces) a gesture that then runs for
-`session.GESTURE_PLAY_SECONDS` (5 seconds for both, at the time of writing)
+`session.GESTURE_PLAY_SECONDS` (5 seconds for each, at the time of writing)
 before `effective_input()` stops reporting it and the robot loop falls back
 to move/rotate. `palmimo_sdk` does not publish how long `Palmimo.wave()` or
 `Palmimo.dance()` actually take to play, so this window is a fixed
@@ -322,8 +338,9 @@ viewer page keeps `body` scrollable for its normal document flow.
 
 ## Safety notes
 
-**There is no authentication.** `/api/control` and `/video.mjpeg` are open to
-anyone who can reach the port -- this example is built for a single trusted
+**There is no authentication.** `/api/control`, `/api/prompts` and
+`/video.mjpeg` are open to anyone who can reach the port, so anyone on the
+LAN can also change what the AI modes say -- this example is built for a single trusted
 LAN (e.g. the robot's own Wi-Fi AP or a home network), not for exposing the
 robot over the open internet or an untrusted network. Do not port-forward
 this server. `/api/control` does check the WebSocket's `Origin` header
@@ -350,7 +367,8 @@ this example implements.
 ## Limitations
 
 - AI modes are Japanese-only, and the mode list is the two shipped presets.
-  Editing prompts and adding modes from Palmimo Portal needs a Portal-backed
+  Their prompts are edited on the controller's own homepage; editing them
+  (or adding modes) from Palmimo Portal needs a Portal-backed
   `PromptSource`, which does not exist yet.
 - The pilot page's own labels are English except the mode bar.
 

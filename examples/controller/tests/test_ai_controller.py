@@ -10,6 +10,7 @@ import contextlib
 import json
 import time
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -17,7 +18,7 @@ import pytest
 from palmimo_controller.ai import controller as controller_module
 from palmimo_controller.ai.controller import AiController
 from palmimo_controller.ai.protocol import ClientEvent, ItemCreate, ResponseCreate, SessionUpdate, parse_server_event
-from palmimo_controller.modes import BundledPrompts
+from palmimo_controller.modes import BundledPrompts, EditablePrompts, PromptSource
 from palmimo_controller.session import MODE_AI, MODE_AI_STARTING, MODE_TELEOP, PilotSession
 from palmimo_controller.telemetry import Telemetry
 
@@ -74,7 +75,13 @@ class FakePlayback:
 
 
 class Harness:
-    def __init__(self, *, api_key: str | None = "sk-test", connect_error: BaseException | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str | None = "sk-test",
+        connect_error: BaseException | None = None,
+        prompts: PromptSource | None = None,
+    ) -> None:
         self.session = PilotSession()
         self.session.acquire_pilot("a")
         self.client = FakeClient()
@@ -84,7 +91,7 @@ class Harness:
         self._connect_error = connect_error
         self.ai = AiController(
             self.session,
-            BundledPrompts(),
+            prompts if prompts is not None else BundledPrompts(),
             api_key=api_key,
             telemetry=Telemetry(emit=lambda line: self.events.append(json.loads(line))),
             mic_factory=self._mic,
@@ -124,6 +131,19 @@ async def test_start_goes_live_with_the_mode_prompt() -> None:
     switch = h.switches()[-1]
     assert (switch["from_mode"], switch["to_mode"], switch["ok"]) == ("teleop", "kansai", True)
     assert isinstance(switch["latency_ms"], int)
+    await h.ai.stop()
+
+
+async def test_start_uses_a_prompt_saved_after_the_app_started(tmp_path: Path) -> None:
+    # Without this, a prompt edited on the homepage would need a restart to apply.
+    prompts = EditablePrompts(tmp_path)
+    h = Harness(prompts=prompts)
+    prompts.save("kansai", "edited after startup")
+    assert await h.ai.start("a", "kansai")
+    await _until(lambda: h.session.mode == MODE_AI)
+    update = h.client.sent[0]
+    assert isinstance(update, SessionUpdate)
+    assert update.instructions == "edited after startup"
     await h.ai.stop()
 
 

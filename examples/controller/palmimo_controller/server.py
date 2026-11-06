@@ -22,12 +22,13 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from palmimo_sdk import Palmimo
 
 from .ai.controller import NOTICE_ROBOT_OFFLINE, AiController
 from .control import ALLOWED_GESTURES, ALLOWED_MOVES, ALLOWED_ROTATES, clamp_neck
-from .modes import PromptSource
+from .modes import EditablePrompts
 from .robot_loop import RobotLoop
 from .session import PilotSession
 from .telemetry import Telemetry
@@ -306,13 +307,19 @@ async def _control_connection(
         await registry.remove(websocket)
 
 
+class _PromptBody(BaseModel):
+    """`PUT /api/prompts/{mode_id}` body."""
+
+    text: str
+
+
 def create_app(
     robot: Palmimo,
     session: PilotSession,
     robot_loop: RobotLoop,
     video: VideoStream,
     ai: AiController,
-    prompts: PromptSource,
+    prompts: EditablePrompts,
     telemetry: Telemetry,
 ) -> FastAPI:
     """Assemble the FastAPI app around an already-constructed robot loop and video stream.
@@ -323,7 +330,7 @@ def create_app(
         robot_loop (RobotLoop): Drives `robot` from `session`; started/stopped by the lifespan.
         video (VideoStream): Drives head camera capture; started/stopped by the lifespan.
         ai (AiController): Starts/stops AI modes; stopped by the lifespan before the robot parks.
-        prompts (PromptSource): The AI modes the pilot page lists.
+        prompts (EditablePrompts): The AI modes the pilot page lists, and the prompts the homepage edits.
         telemetry (Telemetry): Receives session start/end events.
 
     Returns:
@@ -386,6 +393,47 @@ def create_app(
             "ai_available": ai.available,
             "modes": [{"id": mode.id, "label": mode.label} for mode in prompts.modes()],
         }
+
+    def _prompt_entry(mode_id: str, label: str) -> dict[str, Any]:
+        return {
+            "id": mode_id,
+            "label": label,
+            "text": prompts.prompt(mode_id),
+            "default_text": prompts.default_prompt(mode_id),
+            "custom": prompts.is_custom(mode_id),
+        }
+
+    def _label(mode_id: str) -> str:
+        for mode in prompts.modes():
+            if mode.id == mode_id:
+                return mode.label
+        raise HTTPException(status_code=404, detail="unknown mode")
+
+    @app.get("/api/prompts")
+    async def list_prompts() -> list[dict[str, Any]]:
+        return [_prompt_entry(mode.id, mode.label) for mode in prompts.modes()]
+
+    @app.put("/api/prompts/{mode_id}")
+    async def save_prompt(mode_id: str, body: _PromptBody) -> dict[str, Any]:
+        label = _label(mode_id)
+        try:
+            prompts.save(mode_id, body.text)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            _LOG.exception("could not save prompt for mode %r", mode_id)
+            raise HTTPException(status_code=500, detail="could not write the prompt file") from exc
+        return _prompt_entry(mode_id, label)
+
+    @app.delete("/api/prompts/{mode_id}")
+    async def reset_prompt(mode_id: str) -> dict[str, Any]:
+        label = _label(mode_id)
+        try:
+            prompts.reset(mode_id)
+        except OSError as exc:
+            _LOG.exception("could not reset prompt for mode %r", mode_id)
+            raise HTTPException(status_code=500, detail="could not remove the prompt file") from exc
+        return _prompt_entry(mode_id, label)
 
     @app.get("/video.mjpeg")
     async def video_stream() -> StreamingResponse:
