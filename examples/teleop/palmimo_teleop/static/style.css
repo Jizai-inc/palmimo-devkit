@@ -282,9 +282,11 @@ body[data-role="pilot"] #video-layer {
   background: rgba(255, 255, 255, 0.5);
 }
 
-/* Five buttons capped so the row is never wider than the d-pad above it
-   (5*8vmin + 4*1.2vmin = 44.8vmin against the d-pad's 45vmin, and
-   5*48px + 4*8px = 272px against its 272px maximum). */
+/* Five buttons sized so the row is never wider than the d-pad above it, at
+   each clamp() bound and in between: 5*26px + 4*4px = 146px against the
+   d-pad's 152px minimum, 5*8vmin + 4*1.2vmin = 44.8vmin against its 45vmin,
+   and 5*48px + 4*8px = 272px against its 272px maximum -- so the row adds no
+   width to the controls' budget above. */
 #speed-buttons {
   display: flex;
   gap: clamp(4px, 1.2vmin, 8px);
@@ -292,7 +294,7 @@ body[data-role="pilot"] #video-layer {
 }
 
 #speed-buttons button {
-  width: clamp(36px, 8vmin, 48px);
+  width: clamp(26px, 8vmin, 48px);
   height: clamp(30px, 7vmin, 40px);
   padding: 0;
   font-size: clamp(11px, 2.6vmin, 15px);
