@@ -110,7 +110,7 @@ takes priority over letting the gesture finish its window.
 ### Speed
 
 A row of buttons under the d-pad selects a speed multiplier -- **1x, 1.5x,
-2x, 2.5x, 3x** (`control.ALLOWED_SPEEDS`) -- applied to walking, rotating,
+2x, 2.5x** (`control.ALLOWED_SPEEDS`) -- applied to walking, rotating,
 wave and dance alike. Tapping one sends an independent `{"speed": <n>}`
 message, which only the current pilot may send and which is dropped unless
 it is one of those values. The selection holds until the pilot picks

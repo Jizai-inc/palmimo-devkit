@@ -515,14 +515,14 @@ def test_play_message_from_a_viewer_is_dropped(
         assert session.effective_input().gesture is None
 
 
-@pytest.mark.parametrize(("raw", "expected"), [(1, 1.0), (1.5, 1.5), (2, 2.0), (3.0, 3.0)])
+@pytest.mark.parametrize(("raw", "expected"), [(1, 1.0), (1.5, 1.5), (2, 2.0), (2.5, 2.5)])
 def test_validate_speed_message_accepts_an_allowed_speed(raw: object, expected: float) -> None:
     # Without this, the pilot page's buttons (which send `2`, not `2.0`, for
     # whole multipliers) could be rejected.
     assert _validate_speed_message({"speed": raw}) == expected
 
 
-@pytest.mark.parametrize("bad_speed", [True, 0.5, 4, 1.25, "2", None, [], float("inf"), 10**400])
+@pytest.mark.parametrize("bad_speed", [True, 0.5, 3, 4, 1.25, "2", None, [], float("inf"), 10**400])
 def test_validate_speed_message_rejects_anything_outside_allowed_speeds(bad_speed: object) -> None:
     # Without this, a client could drive the robot at a speed nobody offered.
     assert _validate_speed_message({"speed": bad_speed}) is None
@@ -552,7 +552,7 @@ def test_speed_message_from_a_viewer_is_dropped(
         pilot.receive_json()
         viewer.send_json({"role": "viewer"})
         viewer.receive_json()
-        viewer.send_json({"speed": 3})
+        viewer.send_json({"speed": 2.5})
         pilot.send_json({"move": "forward", "rotate": 0, "neck": {"pitch": 0.0, "yaw": 0.0}, "seq": 1})
         assert _wait_for(lambda: session.effective_input().move == "forward")
         assert session.effective_input().speed == 1.0

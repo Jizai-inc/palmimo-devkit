@@ -25,7 +25,7 @@ ALLOWED_GESTURES: frozenset[str] = frozenset({"wave", "dance"})
 #: rotating, wave and dance alike. A closed set rather than a free-form
 #: number: each entry is a speed someone chose to offer, and anything else is
 #: rejected by the server's input validation like an unknown gait name.
-ALLOWED_SPEEDS: tuple[float, ...] = (1.0, 1.5, 2.0, 2.5, 3.0)
+ALLOWED_SPEEDS: tuple[float, ...] = (1.0, 1.5, 2.0, 2.5)
 
 #: The multiplier a session starts at and falls back to once no pilot is
 #: driving -- the SDK's own tuned speed.
