@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from palmimo_sdk import Palmimo
 
-from .control import DEFAULT_SPEED, MAX_GAIT_SPEED, resolve_motion
+from .control import DEFAULT_SPEED, GAIT_MOTIONS, LEG_MOTORS, MAX_GAIT_SPEED, resolve_motion
 from .session import PilotSession
 
 
@@ -93,6 +93,17 @@ class RobotLoop:
     (`Palmimo` takes gait speed only as a constructor argument), the wave
     and dance through their own rate properties. Each is the startup value
     times the multiplier, with the gait capped at `control.MAX_GAIT_SPEED`.
+
+    Speeding up the commands alone is not enough for the gait: the driver's
+    time-based Profile_Velocity (each goal reached over a fixed number of
+    milliseconds) acts as a low-pass filter on the leg servos, so a faster
+    gait comes out with a smaller stride and barely more ground speed. While
+    a gait runs, the leg servos' Profile_Velocity is therefore divided by the
+    same factor as the gait speed, which compresses the servo response in
+    time along with the commands and keeps the 1x stride. It is written
+    after `robot.step()`, because `Palmimo` restores the driver default
+    inside `step()` when a gesture ends, and never during a gesture, whose
+    own servo tuning `Palmimo` manages.
     """
 
     def __init__(
@@ -130,6 +141,10 @@ class RobotLoop:
         #: The speed multiplier currently written to `robot`; starts at the
         #: default because that is what `_base_speeds` was read at.
         self._applied_speed = DEFAULT_SPEED
+        #: The leg Profile_Velocity this loop last wrote, or `None` when it
+        #: is not known (before the first write, or after a gesture, whose
+        #: servo tuning `Palmimo` rewrites on its own).
+        self._applied_leg_pv: int | None = None
 
     @property
     def loop_fps(self) -> float:
@@ -173,6 +188,7 @@ class RobotLoop:
                 self._applied_motion = motion
             self.robot.look(pitch=effective.neck_pitch * NECK_PITCH_SIGN, yaw=effective.neck_yaw * NECK_YAW_SIGN)
             self.robot.step()
+            self._sync_leg_profile(motion)
         except Exception:
             self._record_tick_failure()
             return False
@@ -189,6 +205,33 @@ class RobotLoop:
         self.robot.wave_raise_speed = base.wave_raise * multiplier
         self.robot.dance_speed = base.dance * multiplier
         self._applied_speed = multiplier
+
+    def _sync_leg_profile(self, motion: str | None) -> None:
+        """Write the leg Profile_Velocity *motion* calls for, if it changed.
+
+        A gait gets the driver default divided by how much faster than its
+        startup speed the gait now runs (so a capped gait speed is matched
+        too); standing still gets the driver default; a gesture is left to
+        `Palmimo`. A driver without the time-based profile knob (compute-only,
+        or a non-Dynamixel backend) is skipped.
+        """
+        driver = self.robot.driver
+        if driver is None or not hasattr(driver, "set_profile_velocity_units"):
+            return
+        default = getattr(driver, "profile_velocity", None)
+        if not isinstance(default, int):
+            return
+        if motion in GAIT_MOTIONS:
+            ratio = self.robot.engine.gait_speed / self._base_speeds.gait
+            want = max(1, round(default / ratio)) if default > 0 else 0
+        elif motion is None:
+            want = default
+        else:
+            self._applied_leg_pv = None
+            return
+        if want != self._applied_leg_pv:
+            driver.set_profile_velocity_units(want, motors=list(LEG_MOTORS))
+            self._applied_leg_pv = want
 
     def _record_tick_failure(self) -> None:
         with self._ok_lock:
@@ -269,11 +312,14 @@ class RobotLoop:
         Run after the drive loop has already exited, so the settle steps
         never race `tick()` -- paced rather than issued back-to-back, matching
         the "gradually" contract `Palmimo.stop()` promises on real hardware.
-        A raised speed multiplier is put back to the default first, so the
-        robot eases to a stop at its own tuned speed.
+        A raised speed multiplier, and the leg servo profile shortened with
+        it, are put back to the defaults first, so the robot eases to a stop
+        at its own tuned speed.
         """
         if self._applied_speed != DEFAULT_SPEED:
             self._apply_speed(DEFAULT_SPEED)
+        if self._applied_leg_pv is not None:
+            self._sync_leg_profile(None)
         self.robot.stop()
         frame_seconds = 1.0 / self.fps
         for _ in range(int(self.fps * SETTLE_SECONDS)):

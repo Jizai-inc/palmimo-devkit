@@ -36,6 +36,15 @@ DEFAULT_SPEED: float = 1.0
 #: faster than the fastest one the CLI accepts.
 MAX_GAIT_SPEED: float = 0.05
 
+#: Motion names `resolve_motion` can return that are a walking or rotating
+#: gait (as opposed to a gesture) -- the motions whose leg servo profile the
+#: robot loop shortens with the speed multiplier.
+GAIT_MOTIONS: frozenset[str] = ALLOWED_MOVES | {"rotate_left", "rotate_right"}
+
+#: The 18 leg servos, whose Profile_Velocity the robot loop retunes; the neck
+#: is left alone.
+LEG_MOTORS: tuple[str, ...] = tuple(f"leg_{leg}_{axis}" for leg in range(1, 7) for axis in ("yaw", "pitch1", "pitch2"))
+
 #: `Palmimo` neck axes are normalized [-1, 1]; a pilot input past that range
 #: (a malicious or buggy client) is clamped rather than rejected -- there is
 #: no unsafe neck position, unlike an unknown gait name.

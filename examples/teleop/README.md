@@ -126,6 +126,17 @@ tuned `wave_speed` / `wave_intro_speed` / `wave_raise_speed` /
 speed while a gesture plays rescales the rest of its window, so a wave
 slowed down mid-way still finishes.
 
+Faster commands alone do not make the robot walk faster. The driver's
+time-based Profile_Velocity (300 ms per goal by default) low-passes the leg
+servos, so a 3x gait comes out with a much smaller stride: measured on a
+robot on a stand, the leg yaw swing at 3x was 22% of the commanded one
+against 56% at 1x -- about 1.2x the ground speed for 3x the cadence. So
+while a walking or rotating gait runs, the robot loop also divides the 18
+leg servos' Profile_Velocity by the same factor as the gait speed (100 ms
+at 3x), which brought the 3x swing back to 56%. It returns them to the
+driver default when the robot stands still, and leaves them to `Palmimo`
+during a gesture, which manages its own servo tuning.
+
 The multiplier falls back to 1x whenever the robot is not being actively
 piloted -- the deadman expiring, the pilot leaving (the next pilot starts
 at 1x) -- and on shutdown the robot settles to neutral at 1x.
