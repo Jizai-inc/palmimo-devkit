@@ -43,8 +43,8 @@ automatic hand-off, so the next person opens `/pilot` again to claim it fresh.
 
 Every open connection, pilot or viewer, receives the same status broadcast
 twice a second: `pilot_present`, the currently resolved `motion`, the
-measured `loop_fps`, `camera_ok`, `servo_attached` (whether a servo driver
-was attached at startup, as opposed to running compute-only -- see
+applied `speed` multiplier (see [Speed](#speed)), the measured `loop_fps`,
+`camera_ok`, `servo_attached` (whether a servo driver was attached at startup, as opposed to running compute-only -- see
 [Hardware notes](#hardware-notes)), and `robot_ok` (whether the most recent
 robot control cycle completed without raising -- see
 [Servo health](#servo-health)).
@@ -91,8 +91,9 @@ otherwise.
 
 A play request starts (or replaces) a gesture that then runs for
 `session.GESTURE_PLAY_SECONDS` (5 seconds for both, at the time of writing)
-before `effective_input()` stops reporting it and the robot loop falls back
-to move/rotate. `palmimo_sdk` does not publish how long `Palmimo.wave()` or
+divided by the selected [speed](#speed) multiplier before
+`effective_input()` stops reporting it and the robot loop falls back to
+move/rotate. `palmimo_sdk` does not publish how long `Palmimo.wave()` or
 `Palmimo.dance()` actually take to play, so this window is a fixed
 placeholder rather than derived from the SDK -- `Palmimo.wave()` plays once
 and then holds neutral (so outlasting it is harmless), while
@@ -105,6 +106,29 @@ restarting it (tap-to-toggle); tapping the other gesture replaces whichever
 one is running. Sending a non-idle `move`/`rotate` in the regular control
 frame cancels a playing gesture immediately -- the pilot's steering intent
 takes priority over letting the gesture finish its window.
+
+### Speed
+
+A row of buttons under the d-pad selects a speed multiplier -- **1x, 1.5x,
+2x, 2.5x, 3x** (`control.ALLOWED_SPEEDS`) -- applied to walking, rotating,
+wave and dance alike. Tapping one sends an independent `{"speed": <n>}`
+message, which only the current pilot may send and which is dropped unless
+it is one of those values. The selection holds until the pilot picks
+another one; the highlighted button is the multiplier the server reports as
+applied in the status broadcast, not the one last tapped.
+
+The robot loop scales the speeds the robot was started with -- `--gait-speed`
+for walking and rotating (written to `robot.engine.gait_speed`, since
+`Palmimo` takes gait speed only as a constructor argument), and the SDK's
+tuned `wave_speed` / `wave_intro_speed` / `wave_raise_speed` /
+`dance_speed` for the gestures. The multiplied gait speed is capped at
+`--gait-speed`'s own maximum (`control.MAX_GAIT_SPEED`, 0.05). Changing
+speed while a gesture plays rescales the rest of its window, so a wave
+slowed down mid-way still finishes.
+
+The multiplier falls back to 1x whenever the robot is not being actively
+piloted -- the deadman expiring, the pilot leaving (the next pilot starts
+at 1x) -- and on shutdown the robot settles to neutral at 1x.
 
 ### Safety: the deadman timer
 
@@ -225,7 +249,8 @@ If a future neck revision changes either direction, flip the constant there
 anywhere else.
 
 As with any live motion: keep the robot in the air on first run, or after
-changing `--gait-speed`, the same as any other motion in this SDK.
+changing `--gait-speed` or picking a speed multiplier you have not run on
+that robot before, the same as any other motion in this SDK.
 
 ## Layout
 

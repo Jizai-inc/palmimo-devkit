@@ -43,8 +43,19 @@ def _build_argv(manifest: dict[str, Any]) -> list[str]:
     return argv
 
 
+class _DummyEngine:
+    gait_speed = 0.012
+
+
 class _DummyRobot:
+    """Just what `main()` and `RobotLoop`'s constructor read off a robot."""
+
     has_connectable_resource = False
+    engine = _DummyEngine()
+    wave_speed = 1.9
+    wave_intro_speed = 2.3
+    wave_raise_speed = 0.6
+    dance_speed = 0.0149
 
 
 def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -8,15 +8,26 @@ from typing import Any, cast
 import pytest
 
 from palmimo_sdk import Palmimo
+from palmimo_teleop.control import MAX_GAIT_SPEED
 from palmimo_teleop.robot_loop import FAILURE_LOG_INTERVAL_S, NECK_PITCH_SIGN, NECK_YAW_SIGN, RobotLoop
 from palmimo_teleop.session import PilotSession
 
 
-class FakeRobot:
-    """Records every call `RobotLoop` makes, in order."""
+class FakeEngine:
+    def __init__(self, gait_speed: float) -> None:
+        self.gait_speed = gait_speed
 
-    def __init__(self) -> None:
+
+class FakeRobot:
+    """Records every call `RobotLoop` makes, in order, and holds the speed knobs it writes."""
+
+    def __init__(self, *, gait_speed: float = 0.012) -> None:
         self.calls: list[tuple[str, Any]] = []
+        self.engine = FakeEngine(gait_speed)
+        self.wave_speed = 1.9
+        self.wave_intro_speed = 2.3
+        self.wave_raise_speed = 0.6
+        self.dance_speed = 0.0149
 
     def set_motion(self, name: str) -> None:
         self.calls.append(("set_motion", name))
@@ -268,3 +279,84 @@ def test_loop_fps_excludes_failed_ticks() -> None:
     clock.now = 1.1
     loop._update_loop_fps(loop.tick(), clock.now)
     assert loop.loop_fps == 0.0
+
+
+def _speeds(robot: FakeRobot) -> tuple[float, float, float, float, float]:
+    return (
+        robot.engine.gait_speed,
+        robot.wave_speed,
+        robot.wave_intro_speed,
+        robot.wave_raise_speed,
+        robot.dance_speed,
+    )
+
+
+def _piloted_session(clock: FakeClock) -> PilotSession:
+    session = PilotSession(now=clock)
+    session.acquire_pilot("a")
+    session.update_pilot_input("a", move=None, rotate=0, neck_pitch=0.0, neck_yaw=0.0)
+    return session
+
+
+def test_tick_scales_every_speed_knob_by_the_selected_multiplier() -> None:
+    # Without this, the pilot's speed buttons would change nothing on the robot,
+    # or would speed up walking but leave wave and dance at their own rate.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 2.0)
+    loop.tick()
+    assert _speeds(robot) == pytest.approx((0.024, 3.8, 4.6, 1.2, 0.0298))
+
+
+def test_tick_scales_from_the_startup_speeds_rather_than_compounding() -> None:
+    # Without this, stepping 1x -> 2x -> 3x would multiply an already doubled
+    # value and leave the robot at 6x.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    for speed in (2.0, 3.0, 1.0):
+        session.set_speed("a", speed)
+        loop.tick()
+    assert _speeds(robot) == pytest.approx((0.012, 1.9, 2.3, 0.6, 0.0149))
+
+
+def test_tick_caps_the_multiplied_gait_speed_at_the_cli_maximum() -> None:
+    # Without this, a robot started with a fast --gait-speed would walk at a
+    # gait speed the CLI itself refuses once the pilot picks 3x.
+    robot = FakeRobot(gait_speed=0.03)
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    loop.tick()
+    assert robot.engine.gait_speed == MAX_GAIT_SPEED
+
+
+def test_tick_returns_to_the_startup_speeds_when_the_deadman_expires() -> None:
+    # Without this, a pilot whose connection drops would leave the next pilot
+    # (or an unattended robot) at whatever multiplier was last selected.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    loop.tick()
+    clock.now = 1.0
+    loop.tick()
+    assert _speeds(robot) == pytest.approx((0.012, 1.9, 2.3, 0.6, 0.0149))
+
+
+def test_shutdown_settles_at_the_startup_speeds() -> None:
+    # Without this, a robot stopped while at 3x would ease to neutral at 3x
+    # instead of at its own tuned speed.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    loop.tick()
+    loop.shutdown()
+    assert _speeds(robot) == pytest.approx((0.012, 1.9, 2.3, 0.6, 0.0149))

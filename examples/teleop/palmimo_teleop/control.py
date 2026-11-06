@@ -21,6 +21,21 @@ ALLOWED_ROTATES: frozenset[int] = frozenset({-1, 0, 1})
 #: the server's input validation before it ever reaches this module.
 ALLOWED_GESTURES: frozenset[str] = frozenset({"wave", "dance"})
 
+#: Playback speed multipliers the pilot may select, applied to walking,
+#: rotating, wave and dance alike. A closed set rather than a free-form
+#: number: each entry is a speed someone chose to offer, and anything else is
+#: rejected by the server's input validation like an unknown gait name.
+ALLOWED_SPEEDS: tuple[float, ...] = (1.0, 1.5, 2.0, 2.5, 3.0)
+
+#: The multiplier a session starts at and falls back to once no pilot is
+#: driving -- the SDK's own tuned speed.
+DEFAULT_SPEED: float = 1.0
+
+#: Ceiling on the gait phase increment a multiplier may produce, shared with
+#: the `--gait-speed` option's own maximum so a multiplied gait never runs
+#: faster than the fastest one the CLI accepts.
+MAX_GAIT_SPEED: float = 0.05
+
 #: `Palmimo` neck axes are normalized [-1, 1]; a pilot input past that range
 #: (a malicious or buggy client) is clamped rather than rejected -- there is
 #: no unsafe neck position, unlike an unknown gait name.

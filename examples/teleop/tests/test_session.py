@@ -237,3 +237,86 @@ def test_status_reports_resolved_motion() -> None:
     status = session.status()
     assert status.pilot_present is True
     assert status.motion == "rotate_right"
+
+
+def test_set_speed_by_the_pilot_is_reflected_in_effective_input_and_status() -> None:
+    # Without this, the robot loop and the pilot page's highlighted button
+    # would never learn which multiplier the pilot picked.
+    session, _ = _session()
+    session.acquire_pilot("a")
+    _heartbeat(session)
+    assert session.set_speed("a", 2.0) is True
+    assert session.effective_input().speed == 2.0
+    assert session.status().speed == 2.0
+
+
+def test_set_speed_by_a_non_pilot_is_dropped() -> None:
+    # Without this, a viewer could change how fast someone else's robot moves.
+    session, _ = _session()
+    session.acquire_pilot("a")
+    _heartbeat(session)
+    assert session.set_speed("b", 3.0) is False
+    assert session.effective_input().speed == 1.0
+
+
+def test_speed_survives_control_frames_and_gestures() -> None:
+    # Without this, the next 100ms control frame or a gesture tap would quietly
+    # put the robot back to 1x.
+    session, _ = _session()
+    session.acquire_pilot("a")
+    session.set_speed("a", 2.5)
+    _heartbeat(session)
+    session.play("a", "wave")
+    session.update_pilot_input("a", move="forward", rotate=0, neck_pitch=0.0, neck_yaw=0.0)
+    assert session.effective_input().speed == 2.5
+
+
+def test_speed_falls_back_to_default_after_the_deadman_window() -> None:
+    # Without this, a dropped pilot would leave the robot at a raised speed.
+    session, clock = _session()
+    session.acquire_pilot("a")
+    _heartbeat(session)
+    session.set_speed("a", 3.0)
+    clock.advance(DEADMAN_TIMEOUT_S + 0.01)
+    assert session.effective_input().speed == 1.0
+
+
+def test_releasing_the_pilot_resets_the_speed() -> None:
+    # Without this, the next pilot would start at the previous pilot's speed.
+    session, _ = _session()
+    session.acquire_pilot("a")
+    session.set_speed("a", 3.0)
+    session.release_pilot("a")
+    session.acquire_pilot("b")
+    _heartbeat(session, "b")
+    assert session.effective_input().speed == 1.0
+
+
+def test_play_window_shrinks_with_the_speed_multiplier() -> None:
+    # Without this, a dance played at 2x would run twice as many sways as at 1x,
+    # since its window, not the dance itself, is what ends it.
+    session, clock = _session()
+    session.acquire_pilot("a")
+    _heartbeat(session)
+    session.set_speed("a", 2.0)
+    session.play("a", "dance")
+    _keep_deadman_alive_for(session, clock, GESTURE_PLAY_SECONDS["dance"] / 2 - 0.1)
+    assert session.effective_input().gesture == "dance"
+    _keep_deadman_alive_for(session, clock, 0.2)
+    assert session.effective_input().gesture is None
+
+
+def test_set_speed_rescales_the_rest_of_a_playing_gesture() -> None:
+    # Without this, slowing down mid-wave would cut the slowed wave off at the
+    # window its faster start was given.
+    session, clock = _session()
+    session.acquire_pilot("a")
+    _heartbeat(session)
+    session.set_speed("a", 2.0)
+    session.play("a", "wave")  # 2.5 s window at 2x
+    _keep_deadman_alive_for(session, clock, 1.0)  # 1.5 s left at 2x
+    session.set_speed("a", 1.0)  # -> 3.0 s left at 1x
+    _keep_deadman_alive_for(session, clock, 2.9)
+    assert session.effective_input().gesture == "wave"
+    _keep_deadman_alive_for(session, clock, 0.2)
+    assert session.effective_input().gesture is None

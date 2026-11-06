@@ -12,10 +12,11 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from palmimo_sdk import Palmimo
 
-from .control import resolve_motion
+from .control import DEFAULT_SPEED, MAX_GAIT_SPEED, resolve_motion
 from .session import PilotSession
 
 
@@ -43,6 +44,32 @@ NECK_PITCH_SIGN: float = 1.0
 NECK_YAW_SIGN: float = 1.0
 
 
+@dataclass(frozen=True)
+class _BaseSpeeds:
+    """The robot's own speed knobs as found at startup -- what a 1x multiplier means.
+
+    Read once rather than per tick, so each multiplier scales the speeds the
+    robot was built with (`--gait-speed`, the SDK's tuned gesture rates)
+    instead of compounding on a value an earlier multiplier already wrote.
+    """
+
+    gait: float
+    wave: float
+    wave_intro: float
+    wave_raise: float
+    dance: float
+
+    @classmethod
+    def read(cls, robot: Palmimo) -> _BaseSpeeds:
+        return cls(
+            gait=robot.engine.gait_speed,
+            wave=robot.wave_speed,
+            wave_intro=robot.wave_intro_speed,
+            wave_raise=robot.wave_raise_speed,
+            dance=robot.dance_speed,
+        )
+
+
 class RobotLoop:
     """Drives *robot* from *session* at `fps` control cycles per second on a daemon thread.
 
@@ -60,6 +87,12 @@ class RobotLoop:
     `set_motion("wave")` every tick -- as a naive per-tick apply would -- would
     restart wave from its first frame forever instead of letting it play.
     Walking gaits do not reset on reselection, so this changes nothing for them.
+
+    The pilot's speed multiplier is applied the same edge-triggered way,
+    before the motion: walking and rotating through `robot.engine.gait_speed`
+    (`Palmimo` takes gait speed only as a constructor argument), the wave
+    and dance through their own rate properties. Each is the startup value
+    times the multiplier, with the gait capped at `control.MAX_GAIT_SPEED`.
     """
 
     def __init__(
@@ -93,6 +126,10 @@ class RobotLoop:
         #: tick's `robot.stop()` is issued even when the resolved motion is
         #: also `None`.
         self._applied_motion: str | object | None = _UNSET
+        self._base_speeds = _BaseSpeeds.read(robot)
+        #: The speed multiplier currently written to `robot`; starts at the
+        #: default because that is what `_base_speeds` was read at.
+        self._applied_speed = DEFAULT_SPEED
 
     @property
     def loop_fps(self) -> float:
@@ -125,6 +162,8 @@ class RobotLoop:
         """
         try:
             effective = self.session.effective_input()
+            if effective.speed != self._applied_speed:
+                self._apply_speed(effective.speed)
             motion = resolve_motion(effective.move, effective.rotate, effective.gesture)
             if motion != self._applied_motion:
                 if motion is None:
@@ -140,6 +179,16 @@ class RobotLoop:
         with self._ok_lock:
             self._robot_ok = True
         return True
+
+    def _apply_speed(self, multiplier: float) -> None:
+        """Write the startup speeds times *multiplier* to `robot`."""
+        base = self._base_speeds
+        self.robot.engine.gait_speed = min(MAX_GAIT_SPEED, base.gait * multiplier)
+        self.robot.wave_speed = base.wave * multiplier
+        self.robot.wave_intro_speed = base.wave_intro * multiplier
+        self.robot.wave_raise_speed = base.wave_raise * multiplier
+        self.robot.dance_speed = base.dance * multiplier
+        self._applied_speed = multiplier
 
     def _record_tick_failure(self) -> None:
         with self._ok_lock:
@@ -220,7 +269,11 @@ class RobotLoop:
         Run after the drive loop has already exited, so the settle steps
         never race `tick()` -- paced rather than issued back-to-back, matching
         the "gradually" contract `Palmimo.stop()` promises on real hardware.
+        A raised speed multiplier is put back to the default first, so the
+        robot eases to a stop at its own tuned speed.
         """
+        if self._applied_speed != DEFAULT_SPEED:
+            self._apply_speed(DEFAULT_SPEED)
         self.robot.stop()
         frame_seconds = 1.0 / self.fps
         for _ in range(int(self.fps * SETTLE_SECONDS)):

@@ -16,6 +16,7 @@ import uvicorn
 
 from palmimo_sdk import DynamixelDriver, HeadCamera, Palmimo, ServoDriver
 
+from .control import MAX_GAIT_SPEED
 from .robot_loop import RobotLoop
 from .server import create_app
 from .session import PilotSession
@@ -34,9 +35,9 @@ else:
 
 _LOG = logging.getLogger(__name__)
 
-#: Default gait speed applied to every teleop-driven motion. There is no
-#: per-frame speed scaling here (unlike the gamepad example's stick
-#: deflection) -- buttons are on/off, so one fixed speed is the whole knob.
+#: Default gait speed applied to every teleop-driven motion: the 1x that the
+#: pilot page's speed multiplier scales. There is no per-frame speed scaling
+#: (unlike the gamepad example's stick deflection) -- buttons are on/off.
 DEFAULT_GAIT_SPEED: float = 0.012
 
 #: Avoids 8765 (the MCP server) and 80/8080 (Palmimo Portal).
@@ -132,7 +133,7 @@ def main(
     port: int = typer.Option(DEFAULT_PORT, "--port", help="HTTP/WebSocket port to serve on."),
     fps: int = typer.Option(60, "--fps", help="Robot control loop rate in cycles per second.", min=1),
     gait_speed: float = typer.Option(
-        DEFAULT_GAIT_SPEED, "--gait-speed", help="`Palmimo` gait speed.", min=0.001, max=0.05
+        DEFAULT_GAIT_SPEED, "--gait-speed", help="`Palmimo` gait speed.", min=0.001, max=MAX_GAIT_SPEED
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Compute-only: never attach a servo driver."),
     no_camera: bool = typer.Option(False, "--no-camera", help="Never attach the head camera."),

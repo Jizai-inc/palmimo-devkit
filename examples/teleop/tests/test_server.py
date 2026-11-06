@@ -18,6 +18,7 @@ from palmimo_teleop.server import (
     _control_connection,
     _validate_pilot_message,
     _validate_play_message,
+    _validate_speed_message,
     create_app,
 )
 from palmimo_teleop.session import PilotSession
@@ -512,3 +513,54 @@ def test_play_message_from_a_viewer_is_dropped(
         pilot.send_json({"move": "forward", "rotate": 0, "neck": {"pitch": 0.0, "yaw": 0.0}, "seq": 1})
         assert _wait_for(lambda: session.effective_input().move == "forward")
         assert session.effective_input().gesture is None
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(1, 1.0), (1.5, 1.5), (2, 2.0), (3.0, 3.0)])
+def test_validate_speed_message_accepts_an_allowed_speed(raw: object, expected: float) -> None:
+    # Without this, the pilot page's buttons (which send `2`, not `2.0`, for
+    # whole multipliers) could be rejected.
+    assert _validate_speed_message({"speed": raw}) == expected
+
+
+@pytest.mark.parametrize("bad_speed", [True, 0.5, 4, 1.25, "2", None, [], float("inf"), 10**400])
+def test_validate_speed_message_rejects_anything_outside_allowed_speeds(bad_speed: object) -> None:
+    # Without this, a client could drive the robot at a speed nobody offered.
+    assert _validate_speed_message({"speed": bad_speed}) is None
+
+
+def test_speed_message_from_the_pilot_sets_the_speed(
+    client_and_session: tuple[TestClient, PilotSession],
+) -> None:
+    # Without this, tapping a speed button on the pilot page would never
+    # reach the session.
+    client, session = client_and_session
+    with client.websocket_connect("/api/control") as ws:
+        ws.send_json({"role": "pilot"})
+        ws.receive_json()
+        ws.send_json({"move": None, "rotate": 0, "neck": {"pitch": 0.0, "yaw": 0.0}, "seq": 1})
+        ws.send_json({"speed": 2})
+        assert _wait_for(lambda: session.effective_input().speed == 2.0)
+
+
+def test_speed_message_from_a_viewer_is_dropped(
+    client_and_session: tuple[TestClient, PilotSession],
+) -> None:
+    # Without this, a spectator could change how fast someone else's robot moves.
+    client, session = client_and_session
+    with client.websocket_connect("/api/control") as pilot, client.websocket_connect("/api/control") as viewer:
+        pilot.send_json({"role": "pilot"})
+        pilot.receive_json()
+        viewer.send_json({"role": "viewer"})
+        viewer.receive_json()
+        viewer.send_json({"speed": 3})
+        pilot.send_json({"move": "forward", "rotate": 0, "neck": {"pitch": 0.0, "yaw": 0.0}, "seq": 1})
+        assert _wait_for(lambda: session.effective_input().move == "forward")
+        assert session.effective_input().speed == 1.0
+
+
+def test_status_broadcast_reports_the_speed(client: TestClient) -> None:
+    # Without this, the pilot page could not highlight the applied speed.
+    with client.websocket_connect("/api/control") as ws:
+        ws.send_json({"role": "viewer"})
+        ws.receive_json()
+        assert ws.receive_json()["speed"] == 1.0

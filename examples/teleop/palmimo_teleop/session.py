@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
 
-from .control import resolve_motion
+from .control import DEFAULT_SPEED, resolve_motion
 
 
 #: How long the pilot's connection may go without a control frame before the
@@ -21,7 +21,9 @@ from .control import resolve_motion
 DEADMAN_TIMEOUT_S: float = 0.4
 
 #: How long a played gesture (`PilotSession.play`) keeps overriding move/
-#: rotate before falling back to whatever the pilot is currently steering.
+#: rotate before falling back to whatever the pilot is currently steering, at
+#: the default speed -- `PilotSession.play` divides it by the selected speed
+#: multiplier, since a gesture played faster finishes sooner.
 #: `palmimo_sdk` does not expose a wave or dance motion's own playback
 #: length: `Palmimo.wave()` plays once and then holds neutral (so a window
 #: longer than the playthrough is harmless), while `Palmimo.dance()` loops
@@ -39,6 +41,7 @@ class PilotInput:
     gesture: str | None = None
     neck_pitch: float = 0.0
     neck_yaw: float = 0.0
+    speed: float = DEFAULT_SPEED
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,7 @@ class ControlStatus:
 
     pilot_present: bool
     motion: str | None
+    speed: float
 
 
 @dataclass
@@ -61,6 +65,11 @@ class _PilotState:
     #: gesture with a mismatched deadman clock.
     playing_gesture: str | None = None
     gesture_until: float | None = None
+    #: Speed multiplier the pilot selected (`set_speed()`). Like
+    #: `playing_gesture`, it is set by its own message rather than the
+    #: per-frame input, so it is carried over by every replacement of this
+    #: object and only reset when the pilot leaves.
+    speed: float = DEFAULT_SPEED
 
 
 class PilotSession:
@@ -144,6 +153,7 @@ class PilotSession:
             last_input_at=self._now(),
             playing_gesture=None if steering else previous.playing_gesture,
             gesture_until=None if steering else previous.gesture_until,
+            speed=previous.speed,
         )
         return True
 
@@ -153,7 +163,8 @@ class PilotSession:
         Re-playing the gesture that is currently active stops it early
         rather than restarting its window (tap-to-toggle, matching the
         pilot page's click handler); playing a different gesture replaces
-        whichever one is running.
+        whichever one is running. The window is `GESTURE_PLAY_SECONDS`
+        divided by the selected speed multiplier.
 
         Args:
             client_id (Hashable): Must match the current pilot holder.
@@ -172,12 +183,46 @@ class PilotSession:
         if active and state.playing_gesture == name:
             playing_gesture, gesture_until = None, None
         else:
-            playing_gesture, gesture_until = name, now + GESTURE_PLAY_SECONDS[name]
+            playing_gesture, gesture_until = name, now + GESTURE_PLAY_SECONDS[name] / state.speed
         self._state = _PilotState(
             input=state.input,
             last_input_at=state.last_input_at,
             playing_gesture=playing_gesture,
             gesture_until=gesture_until,
+            speed=state.speed,
+        )
+        return True
+
+    def set_speed(self, client_id: Hashable, speed: float) -> bool:
+        """Select the speed multiplier for the current pilot.
+
+        A gesture already playing keeps going at the new speed, so the rest
+        of its window is rescaled to match: switching from 1x to 2x halfway
+        through a dance ends it after half the remaining time, and switching
+        down stretches it, rather than cutting a slowed wave off mid-stroke.
+
+        Args:
+            client_id (Hashable): Must match the current pilot holder.
+            speed (float): One of `control.ALLOWED_SPEEDS`; already
+                validated by the caller.
+
+        Returns:
+            bool: `False` (dropped, no state changed) if *client_id* is not
+                the current pilot.
+        """
+        if self._pilot_id != client_id:
+            return False
+        state = self._state
+        now = self._now()
+        gesture_until = state.gesture_until
+        if gesture_until is not None and now < gesture_until:
+            gesture_until = now + (gesture_until - now) * state.speed / speed
+        self._state = _PilotState(
+            input=state.input,
+            last_input_at=state.last_input_at,
+            playing_gesture=state.playing_gesture,
+            gesture_until=gesture_until,
+            speed=speed,
         )
         return True
 
@@ -188,9 +233,9 @@ class PilotSession:
     def effective_input(self) -> PilotInput:
         """Resolve what `robot_loop.RobotLoop` should apply right now.
 
-        Move/rotate/gesture/neck all collapse to inert (translation,
-        rotation, gesture off, neck centered) when there is no pilot or the
-        deadman has expired. The neck used to hold its last-known target
+        Move/rotate/gesture/neck/speed all collapse to inert (translation,
+        rotation, gesture off, neck centered, default speed) when there is
+        no pilot or the deadman has expired. The neck used to hold its last-known target
         through a deadman expiry on the theory that holding gaze is never
         unsafe; a physical robot proved otherwise -- holding the neck at an
         extreme (e.g. fully up) is a known cause of neck-servo overheating,
@@ -218,6 +263,7 @@ class PilotSession:
             gesture=gesture,
             neck_pitch=current.neck_pitch,
             neck_yaw=current.neck_yaw,
+            speed=state.speed,
         )
 
     def status(self) -> ControlStatus:
@@ -226,4 +272,5 @@ class PilotSession:
         return ControlStatus(
             pilot_present=self.pilot_present,
             motion=resolve_motion(effective.move, effective.rotate, effective.gesture),
+            speed=effective.speed,
         )
