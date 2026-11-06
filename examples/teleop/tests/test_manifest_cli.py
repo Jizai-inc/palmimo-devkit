@@ -45,6 +45,7 @@ def _build_argv(manifest: dict[str, Any]) -> list[str]:
 
 class _DummyRobot:
     has_connectable_resource = False
+    driver = None
 
 
 def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
