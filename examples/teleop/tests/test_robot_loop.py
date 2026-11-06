@@ -26,7 +26,12 @@ class FakeDriver:
     def __init__(self, calls: list[tuple[str, Any]]) -> None:
         self._calls = calls
 
+    fail_next_writes = 0
+
     def set_profile_velocity_units(self, value: int, motors: list[str] | None = None) -> None:
+        if self.fail_next_writes:
+            self.fail_next_writes -= 1
+            raise ConnectionError("no status packet")
         self._calls.append(("profile_velocity", (value, tuple(motors) if motors else None)))
 
 
@@ -495,3 +500,78 @@ def test_shutdown_restores_the_default_leg_profile() -> None:
     loop.tick()
     loop.shutdown()
     assert _profile_writes(robot)[-1] == (300, LEG_MOTORS)
+
+
+def test_switching_from_a_fast_gait_to_dance_restores_the_leg_profile_before_step() -> None:
+    # Without this, a dance after walking at 3x would run with the shortened
+    # leg profile, since `Palmimo` applies no servo tuning of its own to a dance.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    loop.tick()
+    robot.calls.clear()
+    session.play("a", "dance")
+    _drive(session)
+    loop.tick()
+    names = [name for name, _ in robot.calls]
+    assert _profile_writes(robot) == [(300, LEG_MOTORS)]
+    assert names.index("profile_velocity") < names.index("step")
+
+
+def test_shutdown_during_a_dance_leaves_no_shortened_leg_profile() -> None:
+    # Without this, a server stopped mid-dance after a 3x walk would settle and
+    # park with the shortened profile still on the legs.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    loop.tick()
+    session.play("a", "dance")
+    _drive(session)
+    loop.tick()
+    loop.shutdown()
+    assert _profile_writes(robot)[-1] == (300, LEG_MOTORS)
+
+
+def test_a_failed_leg_profile_write_does_not_fail_the_cycle_and_is_retried() -> None:
+    # Without this, one dropped bus reply would flash the pilot's servo-fault
+    # banner and, if never retried, leave the gait on the slow profile.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    assert robot.driver is not None
+    robot.driver.fail_next_writes = 1
+    assert loop.tick() is True
+    assert loop.robot_ok is True
+    assert _profile_writes(robot) == []
+    loop.tick()
+    assert _profile_writes(robot) == [(100, LEG_MOTORS)]
+
+
+def test_a_gesture_is_not_written_to_again_after_its_first_cycle() -> None:
+    # Without this, a retry during a wave would overwrite the crisp arm profile
+    # `Palmimo` applied on the wave's first step.
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = _piloted_session(clock)
+    loop = _loop(robot, session)
+    session.set_speed("a", 3.0)
+    _drive(session, move="forward")
+    loop.tick()
+    assert robot.driver is not None
+    robot.driver.fail_next_writes = 1
+    session.play("a", "wave")
+    _drive(session)
+    loop.tick()
+    robot.calls.clear()
+    loop.tick()
+    loop.tick()
+    assert _profile_writes(robot) == []

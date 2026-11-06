@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from palmimo_sdk import Palmimo
 
@@ -102,8 +103,12 @@ class RobotLoop:
     same factor as the gait speed, which compresses the servo response in
     time along with the commands and keeps the 1x stride. It is written
     after `robot.step()`, because `Palmimo` restores the driver default
-    inside `step()` when a gesture ends, and never during a gesture, whose
-    own servo tuning `Palmimo` manages.
+    inside `step()` when a gesture ends. Switching to a gesture puts the legs
+    back to the driver default *before* `step()` instead -- `Palmimo` retunes
+    the servos for a wave inside that `step()` but leaves them as they are
+    for a dance -- and nothing is written while the gesture plays. These
+    writes are best-effort: a dropped bus reply is logged at a throttled
+    rate and retried next cycle rather than failing the cycle.
     """
 
     def __init__(
@@ -145,6 +150,7 @@ class RobotLoop:
         #: is not known (before the first write, or after a gesture, whose
         #: servo tuning `Palmimo` rewrites on its own).
         self._applied_leg_pv: int | None = None
+        self._last_profile_log_at: float | None = None
 
     @property
     def loop_fps(self) -> float:
@@ -186,9 +192,13 @@ class RobotLoop:
                 else:
                     self.robot.set_motion(motion)
                 self._applied_motion = motion
+            gait_or_idle = motion is None or motion in GAIT_MOTIONS
+            if not gait_or_idle:
+                self._release_leg_profile()
             self.robot.look(pitch=effective.neck_pitch * NECK_PITCH_SIGN, yaw=effective.neck_yaw * NECK_YAW_SIGN)
             self.robot.step()
-            self._sync_leg_profile(motion)
+            if gait_or_idle:
+                self._sync_leg_profile(motion)
         except Exception:
             self._record_tick_failure()
             return False
@@ -206,32 +216,62 @@ class RobotLoop:
         self.robot.dance_speed = base.dance * multiplier
         self._applied_speed = multiplier
 
+    def _profile_driver(self) -> tuple[Any, int] | None:
+        """The driver and its default Profile_Velocity, or `None` if it has no
+        time-based profile knob (compute-only, or a non-Dynamixel backend)."""
+        driver = self.robot.driver
+        if driver is None or not hasattr(driver, "set_profile_velocity_units"):
+            return None
+        default = getattr(driver, "profile_velocity", None)
+        if not isinstance(default, int):
+            return None
+        return driver, default
+
     def _sync_leg_profile(self, motion: str | None) -> None:
-        """Write the leg Profile_Velocity *motion* calls for, if it changed.
+        """Write the leg Profile_Velocity a gait (*motion*) or standing still (`None`) calls for.
 
         A gait gets the driver default divided by how much faster than its
         startup speed the gait now runs (so a capped gait speed is matched
-        too); standing still gets the driver default; a gesture is left to
-        `Palmimo`. A driver without the time-based profile knob (compute-only,
-        or a non-Dynamixel backend) is skipped.
+        too); standing still gets the driver default. A failed write leaves
+        `_applied_leg_pv` unchanged, so the next cycle retries it.
         """
-        driver = self.robot.driver
-        if driver is None or not hasattr(driver, "set_profile_velocity_units"):
+        found = self._profile_driver()
+        if found is None:
             return
-        default = getattr(driver, "profile_velocity", None)
-        if not isinstance(default, int):
-            return
+        driver, default = found
         if motion in GAIT_MOTIONS:
             ratio = self.robot.engine.gait_speed / self._base_speeds.gait
             want = max(1, round(default / ratio)) if default > 0 else 0
-        elif motion is None:
-            want = default
         else:
-            self._applied_leg_pv = None
-            return
-        if want != self._applied_leg_pv:
-            driver.set_profile_velocity_units(want, motors=list(LEG_MOTORS))
+            want = default
+        if want != self._applied_leg_pv and self._write_leg_profile(driver, want):
             self._applied_leg_pv = want
+
+    def _release_leg_profile(self) -> None:
+        """Before a gesture's `step()`, put a shortened leg profile back to the driver default.
+
+        Tried once, not retried: by the next cycle `Palmimo` has applied a
+        wave's own servo tuning, which a second write would overwrite.
+        """
+        found = self._profile_driver()
+        if found is None:
+            return
+        driver, default = found
+        if self._applied_leg_pv not in (None, default):
+            self._write_leg_profile(driver, default)
+        self._applied_leg_pv = None
+
+    def _write_leg_profile(self, driver: Any, value: int) -> bool:
+        """Write *value* to the leg servos' Profile_Velocity; `False` (logged, throttled) if it failed."""
+        try:
+            driver.set_profile_velocity_units(value, motors=list(LEG_MOTORS))
+        except Exception:
+            now = self._now()
+            if self._last_profile_log_at is None or now - self._last_profile_log_at >= FAILURE_LOG_INTERVAL_S:
+                _LOG.warning("leg Profile_Velocity write failed; retrying next cycle", exc_info=True)
+                self._last_profile_log_at = now
+            return False
+        return True
 
     def _record_tick_failure(self) -> None:
         with self._ok_lock:

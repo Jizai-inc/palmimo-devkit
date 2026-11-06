@@ -134,8 +134,10 @@ against 56% at 1x -- about 1.2x the ground speed for 3x the cadence. So
 while a walking or rotating gait runs, the robot loop also divides the 18
 leg servos' Profile_Velocity by the same factor as the gait speed (100 ms
 at 3x), which brought the 3x swing back to 56%. It returns them to the
-driver default when the robot stands still, and leaves them to `Palmimo`
-during a gesture, which manages its own servo tuning.
+driver default when the robot stands still or switches to a gesture, and
+writes nothing while the gesture plays (`Palmimo` retunes the servos for a
+wave itself). A dropped bus reply on one of these writes is retried next
+cycle instead of failing it.
 
 The multiplier falls back to 1x whenever the robot is not being actively
 piloted -- the deadman expiring, the pilot leaving (the next pilot starts
