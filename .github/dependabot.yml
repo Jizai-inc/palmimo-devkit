@@ -10,6 +10,12 @@
 # ecosystem to keep the queue readable; a major bump comes on its own, because
 # it is the one that needs reading. github-actions is the exception again --
 # see the comment on its group.
+#
+# Every entry waits three days after a release before proposing it, which
+# gives a version that is yanked or found malicious soon after publishing
+# time to be caught before it reaches a pull request. Three days is also Dependabot's built-in default;
+# it is written out so the policy does not change if that default does.
+# Security updates ignore this cooldown and still open immediately.
 version: 2
 updates:
   # The actions .github/workflows/ pins by commit SHA.
@@ -24,6 +30,8 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
     groups:
       # No update-types filter here, unlike the other groups: every action is
       # pinned by commit SHA with the tag in a trailing comment, so a bump at
@@ -48,6 +56,8 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
     groups:
       python:
         patterns:
@@ -69,6 +79,8 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
     groups:
       python:
         patterns:
@@ -88,6 +100,8 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
     groups:
       python:
         patterns:
@@ -107,6 +121,8 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
     groups:
       python:
         patterns:
@@ -136,6 +152,8 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
     groups:
       python:
         patterns:
@@ -156,6 +174,8 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    cooldown:
+      default-days: 3
     groups:
       docs-site:
         patterns:
