@@ -17,6 +17,9 @@ dependencies = [
     # piper-plus 2.0 renamed its import package from `piper` to `piper_plus`,
     # and palmimo-sdk 0.1.x still imports `piper`, so 2.x looks uninstalled.
     "piper-plus>=1.13,<2",
+    # nltk 3.10.4 refuses data in a group-writable directory, and the app
+    # service's umask leaves palmimo-sdk 0.1.x's nltk_data cache group-writable.
+    "nltk>=3.9,<3.10.4",
     # AI mode: OpenAI speech-to-text and chat (ai/llm.py), Silero VAD
     # inference (ai/vad.py), and resampling the booth's 48 kHz mic (ai/audio.py).
     "openai>=1.40",
