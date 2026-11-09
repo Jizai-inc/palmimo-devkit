@@ -43,23 +43,35 @@
     // arrive over an unauthenticated LAN WebSocket, so nothing from that
     // payload may be interpreted as markup.
     statusBar.replaceChildren();
-    const addCell = function (text, className) {
-      const span = document.createElement("span");
-      span.textContent = text;
-      if (className) span.className = className;
-      statusBar.appendChild(span);
+    // One chip per fact: a muted label and its value. A health chip
+    // (`ok` true/false) is colored and carries a dot, so a fault stands out.
+    const addChip = function (label, value, ok) {
+      const chip = document.createElement("span");
+      chip.className = "status-chip";
+      if (ok !== undefined) {
+        chip.classList.add(ok ? "status-ok" : "status-bad");
+        const dot = document.createElement("span");
+        dot.className = "status-dot";
+        dot.setAttribute("aria-hidden", "true");
+        chip.appendChild(dot);
+      }
+      if (label) {
+        const name = document.createElement("span");
+        name.className = "status-label";
+        name.textContent = label;
+        chip.appendChild(name);
+      }
+      chip.appendChild(document.createTextNode(value));
+      statusBar.appendChild(chip);
     };
-    const okOrBad = function (ok) {
-      return ok ? "status-ok" : "status-bad";
-    };
-    addCell(status.pilot_present ? "pilot: connected" : "pilot: none");
-    addCell("mode: " + (status.mode === "teleop" ? "teleop" : status.ai_mode || status.mode));
-    addCell("motion: " + (status.motion || "idle"));
-    addCell("speed: " + status.speed + "x");
-    addCell("fps: " + status.loop_fps.toFixed(1));
-    addCell("bus: " + (status.servo_attached ? "attached" : "compute-only"), okOrBad(status.servo_attached));
-    addCell("camera: " + (status.camera_ok ? "ok" : "unavailable"), okOrBad(status.camera_ok));
-    addCell("servo: " + (status.robot_ok === false ? "fault" : "ok"), okOrBad(status.robot_ok !== false));
+    addChip("操縦者", status.pilot_present ? "操作中" : "なし");
+    addChip("モード", status.mode === "teleop" ? "手動操作" : "AI：" + (status.ai_mode || status.mode));
+    addChip("動作", status.motion || "待機中");
+    addChip("速度", status.speed + "x");
+    addChip("", status.loop_fps.toFixed(1) + " fps");
+    addChip("サーボバス", status.servo_attached ? "接続" : "未接続", status.servo_attached);
+    addChip("カメラ", status.camera_ok ? "正常" : "使用不可", status.camera_ok);
+    addChip("サーボ", status.robot_ok === false ? "異常" : "正常", status.robot_ok !== false);
   }
 
   // The pilot page dropped its own #status-bar, so a compute-only or
@@ -85,8 +97,8 @@
     const caption = document.getElementById("viewer-caption");
     if (caption) {
       caption.textContent = disabled
-        ? "Someone is piloting right now -- you can start once they leave."
-        : "You are spectating. Press Start piloting to take control.";
+        ? "ほかの人が操作中です。終わると操作できるようになります。"
+        : "見学中です。操作するには「操作を開始」を押してください。";
     }
   }
 
@@ -96,8 +108,12 @@
   function renderSpeedButtons(status) {
     const buttons = document.querySelectorAll("#speed-buttons button");
     buttons.forEach(function (button) {
-      button.classList.toggle("selected", Number(button.dataset.speed) === status.speed);
+      const selected = Number(button.dataset.speed) === status.speed;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-checked", selected ? "true" : "false");
     });
+    const indicator = document.getElementById("speed-indicator");
+    if (indicator) indicator.textContent = "速度 " + status.speed + "x";
   }
 
   function preventDefault(event) {

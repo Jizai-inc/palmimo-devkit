@@ -38,11 +38,19 @@
     label.textContent = entry.label;
     const badge = document.createElement("span");
     badge.className = "prompt-badge";
-    summary.append(label, badge);
+    const hint = document.createElement("span");
+    hint.className = "prompt-hint";
+    hint.textContent = "編集";
+    summary.append(label, badge, hint);
+    card.addEventListener("toggle", function () {
+      hint.textContent = card.open ? "閉じる" : "編集";
+    });
 
+    const body = document.createElement("div");
+    body.className = "prompt-body";
     const textarea = document.createElement("textarea");
     textarea.className = "prompt-text";
-    textarea.rows = 12;
+    textarea.rows = 10;
     textarea.spellcheck = false;
     textarea.setAttribute("aria-label", entry.label + " のプロンプト");
 
@@ -61,12 +69,16 @@
     status.setAttribute("role", "status");
     actions.append(saveButton, resetButton, status);
 
-    card.append(summary, textarea, actions);
+    body.append(textarea, actions);
+    card.append(summary, body);
 
     function show(current) {
       textarea.value = current.text;
-      badge.textContent = current.custom ? "カスタム" : "デフォルト";
-      badge.classList.toggle("is-custom", current.custom);
+      // The custom mode exists to be rewritten, so its badge invites that
+      // until it has been; every mode shows when it runs an edit.
+      const freeForm = entry.id === "custom";
+      badge.textContent = current.custom ? "編集済み" : freeForm ? "自由に編集" : "デフォルト";
+      badge.classList.toggle("is-custom", current.custom || freeForm);
       resetButton.disabled = !current.custom;
     }
 

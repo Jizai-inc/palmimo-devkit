@@ -1,42 +1,59 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <title>Palmimo Controller -- Viewer</title>
+    <title>Palmimo Controller</title>
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body data-role="viewer">
     <div id="viewer-page">
-      <h1 id="viewer-title">Palmimo Controller &mdash; Spectating</h1>
-      <div id="video-frame">
-        <img id="video-layer" alt="Palmimo head camera feed" />
-      </div>
-      <p id="viewer-caption">You are spectating. Press Start piloting to take control.</p>
-      <a id="pilot-link" href="/pilot">Start piloting</a>
-      <div id="status-bar"></div>
-
-      <section id="voice-picker" aria-labelledby="voice-picker-title">
-        <h2 id="voice-picker-title">AIモードの声</h2>
-        <p class="prompt-note">変更は次にAIモードを開始したときに反映されます。</p>
-        <p id="voice-load-error" class="prompt-error" hidden>声の設定を読み込めませんでした。ページを再読み込みしてください。</p>
-        <div class="voice-row">
-          <select id="voice-select" aria-labelledby="voice-picker-title" disabled></select>
-          <span id="voice-status" class="prompt-status" role="status"></span>
+      <header id="viewer-header">
+        <div id="viewer-heading">
+          <h1 id="viewer-title">Palmimo Controller</h1>
+          <p id="viewer-caption">見学中です。操作するには「操作を開始」を押してください。</p>
         </div>
-      </section>
+        <a id="pilot-link" href="/pilot">
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
+          操作を開始
+        </a>
+      </header>
 
-      <section id="prompt-editor" aria-labelledby="prompt-editor-title">
-        <h2 id="prompt-editor-title">AIモードのプロンプト</h2>
-        <p class="prompt-note">変更は次にそのモードを開始したときに反映されます。</p>
-        <p id="prompt-load-error" class="prompt-error" hidden>プロンプトを読み込めませんでした。ページを再読み込みしてください。</p>
-        <div id="prompt-list"></div>
-      </section>
+      <div id="viewer-columns">
+        <section id="viewer-main" aria-label="カメラと状態">
+          <div id="video-frame" role="img" aria-label="Palmimoの頭部カメラ映像">
+            <img id="video-layer" alt="" />
+            <span id="video-tag">頭部カメラ</span>
+          </div>
+          <div id="status-bar" role="status"></div>
+        </section>
+
+        <aside id="viewer-settings">
+          <section id="voice-picker" class="settings-card" aria-labelledby="voice-picker-title">
+            <div class="settings-head">
+              <h2 id="voice-picker-title">AIの声</h2>
+              <p class="settings-note">次にAIモードを開始したときに反映されます。</p>
+            </div>
+            <p id="voice-load-error" class="settings-error" hidden>声の設定を読み込めませんでした。ページを再読み込みしてください。</p>
+            <div id="voice-list" role="radiogroup" aria-labelledby="voice-picker-title"></div>
+            <p id="voice-status" class="settings-status" role="status"></p>
+          </section>
+
+          <section id="prompt-editor" class="settings-card" aria-labelledby="prompt-editor-title">
+            <div class="settings-head">
+              <h2 id="prompt-editor-title">AIモード</h2>
+              <p class="settings-note">キャラクターと話し方を決めるプロンプトです。変更は次にそのモードを開始したときに反映されます。</p>
+            </div>
+            <p id="prompt-load-error" class="settings-error" hidden>プロンプトを読み込めませんでした。ページを再読み込みしてください。</p>
+            <div id="prompt-list"></div>
+          </section>
+        </aside>
+      </div>
     </div>
     <div id="disconnected-banner" hidden>
-      <p>Disconnected.</p>
-      <button id="reload-button" type="button">Reload</button>
+      <p>接続が切れました。</p>
+      <button id="reload-button" type="button">再読み込み</button>
     </div>
     <script src="/static/app.js"></script>
     <script src="/static/prompts.js"></script>

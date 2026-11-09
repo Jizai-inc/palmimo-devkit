@@ -114,23 +114,49 @@ body[data-role="pilot"] #video-layer {
 #status-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 1em;
-  padding: 0.5em 0.75em;
-  font-size: 0.85em;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
+  gap: 8px;
 }
 
-#status-bar span {
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: #1b1d23;
+  border: 1px solid #2a2d35;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
+.status-label {
+  color: #9aa0ac;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
 .status-ok {
-  color: #7ee787;
+  color: #8fe0a8;
+  background: rgba(76, 175, 110, 0.14);
+  border-color: rgba(76, 175, 110, 0.4);
 }
 
 .status-bad {
-  color: #ff7b72;
+  color: #ffb3ad;
+  background: rgba(255, 107, 97, 0.14);
+  border-color: rgba(255, 107, 97, 0.45);
+}
+
+.status-ok .status-label,
+.status-bad .status-label {
+  color: inherit;
+  opacity: 0.8;
 }
 
 #disconnected-banner {
@@ -282,31 +308,54 @@ body[data-role="pilot"] #video-layer {
   background: rgba(255, 255, 255, 0.5);
 }
 
-/* Four buttons sized so the row is never wider than the d-pad above it, at
-   each clamp() bound and in between: 4*26px + 3*4px = 116px against the
-   d-pad's 152px minimum, 4*8vmin + 3*1.2vmin = 35.6vmin against its 45vmin,
-   and 4*48px + 3*8px = 216px against its 272px maximum -- so the row adds no
+/* Speed buttons match the gesture buttons' look (square, same corner and
+   fill) and are sized so the row is never wider than the d-pad above it, at
+   each clamp() bound and in between: 4*34px + 3*4px = 148px against the
+   d-pad's 152px minimum, 4*10vmin + 3*1.2vmin = 43.6vmin against its 45vmin,
+   and 4*62px + 3*8px = 272px against its 272px maximum -- so the row adds no
    width to the controls' budget above. */
-#speed-buttons {
+#speed-control {
   display: flex;
-  gap: clamp(4px, 1.2vmin, 8px);
+  flex-direction: column;
+  gap: clamp(3px, 1vmin, 6px);
   margin-top: clamp(6px, 2vmin, 14px);
 }
 
+#speed-label {
+  font-size: clamp(10px, 2.2vmin, 13px);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #c9cdd6;
+}
+
+#speed-buttons {
+  display: flex;
+  gap: clamp(4px, 1.2vmin, 8px);
+}
+
 #speed-buttons button {
-  width: clamp(26px, 8vmin, 48px);
-  height: clamp(30px, 7vmin, 40px);
+  width: clamp(34px, 10vmin, 62px);
+  height: clamp(34px, 10vmin, 62px);
   padding: 0;
-  font-size: clamp(11px, 2.6vmin, 15px);
-  border-radius: 8px;
-  border: none;
+  font-size: clamp(12px, 3vmin, 18px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-radius: 10px;
+  border: 2px solid transparent;
   background: rgba(255, 255, 255, 0.18);
   color: #fff;
 }
 
+#speed-buttons button:active {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+/* The applied speed, as the server reports it: the AI accent plus a white
+   ring, so it reads as chosen even at a glance from the side. */
 #speed-buttons button.selected {
-  background: rgba(255, 200, 80, 0.75);
-  color: #000;
+  background: #4f7cff;
+  border-color: #fff;
+  box-shadow: 0 0 0 3px rgba(79, 124, 255, 0.45);
 }
 
 /* Rotate sits in the grid's top corners for layout purposes, but is nudged
@@ -348,26 +397,104 @@ body[data-role="pilot"] #video-layer {
   display: none;
 }
 
-/* ---- Viewer page: a normal scrollable document, not an overlay. ---- */
+/* ---- Viewer page (home): a normal scrollable document, not an overlay. ----
+   Camera and status on the left, AI settings on the right; on a narrow
+   screen the two columns stack. */
+
+body[data-role="viewer"] {
+  background: #121317;
+  color: #ecedf0;
+  font-size: 15px;
+}
 
 #viewer-page {
-  max-width: 40em;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 1.5em 1em 3em;
-  text-align: center;
+  padding: 28px max(16px, env(safe-area-inset-right, 0px)) 48px max(16px, env(safe-area-inset-left, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+#viewer-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+#viewer-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 #viewer-title {
-  font-size: 1.3em;
-  margin: 0.2em 0 1em;
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+#viewer-caption {
+  margin: 0;
+  font-size: 13px;
+  color: #9aa0ac;
+}
+
+#pilot-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 22px;
+  border-radius: 10px;
+  background: #4f7cff;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+#pilot-link:hover {
+  background: #6a90ff;
+}
+
+#pilot-link[aria-disabled="true"] {
+  background: rgba(255, 255, 255, 0.12);
+  color: #8a8f99;
+  pointer-events: none;
+}
+
+#viewer-columns {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+#viewer-main {
+  flex: 999 1 520px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#viewer-settings {
+  flex: 1 1 360px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 #video-frame {
+  position: relative;
+  width: 100%;
   max-width: 100%;
   aspect-ratio: 4 / 3;
-  margin: 0 auto;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 10px;
+  border: 1px solid #2a2d35;
+  border-radius: 14px;
   background: #000;
   overflow: hidden;
 }
@@ -382,132 +509,192 @@ body[data-role="pilot"] #video-layer {
   pointer-events: none;
 }
 
-#viewer-caption {
-  margin: 1.2em 0 0.8em;
-  font-size: 0.95em;
-  color: #ccc;
+#video-tag {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #c9cdd6;
+  font-size: 12px;
+  font-weight: 500;
 }
 
-#pilot-link {
-  display: inline-block;
-  padding: 0.7em 1.4em;
-  border-radius: 10px;
-  background: #2e7d32;
-  color: #fff;
-  text-decoration: none;
-  font-weight: bold;
-}
-
-#pilot-link[aria-disabled="true"] {
-  background: rgba(255, 255, 255, 0.15);
-  color: #999;
-  pointer-events: none;
-}
-
-#viewer-page #status-bar {
-  justify-content: center;
-  margin: 1.5em auto 0;
-  max-width: fit-content;
-}
-
-/* ---- Viewer page: AI voice picker and mode prompt editor ---- */
-
-#voice-picker,
-#prompt-editor {
-  margin-top: 2.5em;
-  text-align: left;
-}
-
-#voice-picker h2,
-#prompt-editor h2 {
-  font-size: 1.05em;
-  margin: 0 0 0.3em;
-}
-
-#voice-load-error[hidden] {
-  display: none;
-}
-
-.voice-row {
+.settings-card {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.6em;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid #2a2d35;
+  border-radius: 14px;
+  background: #1a1c22;
 }
 
-#voice-select {
-  min-width: 12em;
-  padding: 0.5em 0.6em;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  background: #1b1b1b;
-  color: #eee;
-  font: inherit;
-  font-size: 0.95em;
+.settings-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-#voice-select:disabled {
-  opacity: 0.45;
+.settings-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
 }
 
-.prompt-note {
-  margin: 0 0 1em;
-  font-size: 0.85em;
-  color: #aaa;
+.settings-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #9aa0ac;
 }
 
-.prompt-error {
+.settings-error {
+  margin: 0;
+  font-size: 13px;
   color: #ff8a80;
-  font-size: 0.9em;
 }
 
+#voice-load-error[hidden],
 #prompt-load-error[hidden] {
   display: none;
 }
 
-.prompt-card {
-  margin-bottom: 0.75em;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+.settings-status,
+.prompt-status {
+  margin: 0;
+  min-height: 1.4em;
+  font-size: 12px;
+  color: #8fe0a8;
+}
+
+.settings-status.is-error,
+.prompt-status.is-error {
+  color: #ff8a80;
+}
+
+#voice-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#voice-list.is-busy {
+  opacity: 0.6;
+}
+
+.voice-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #2a2d35;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
+  background: #15171c;
+  color: #d5d8df;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.voice-option:hover {
+  border-color: #474c58;
+}
+
+.voice-option.is-selected {
+  border: 1.5px solid #4f7cff;
+  background: rgba(79, 124, 255, 0.18);
+  color: #fff;
+  font-weight: 700;
+}
+
+.voice-default {
+  font-size: 11px;
+  font-weight: 400;
+  color: #9aa0ac;
+}
+
+.voice-check {
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#prompt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prompt-card {
+  border: 1px solid #2a2d35;
+  border-radius: 10px;
+  background: #15171c;
+  overflow: hidden;
 }
 
 .prompt-card summary {
   display: flex;
   align-items: center;
-  gap: 0.6em;
-  padding: 0.7em 0.9em;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 14px;
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 700;
+  list-style: none;
+}
+
+.prompt-card summary::-webkit-details-marker {
+  display: none;
 }
 
 .prompt-badge {
-  font-size: 0.75em;
-  font-weight: 600;
-  padding: 0.15em 0.6em;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #ccc;
+  background: #262931;
+  color: #b4b9c3;
 }
 
 .prompt-badge.is-custom {
-  background: rgba(79, 124, 255, 0.3);
-  color: #cfdcff;
+  background: rgba(79, 124, 255, 0.22);
+  color: #c9d7ff;
+}
+
+.prompt-hint {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: #9aa0ac;
+}
+
+.prompt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 14px 14px;
 }
 
 .prompt-text {
   display: block;
-  box-sizing: border-box;
-  width: calc(100% - 1.8em);
-  margin: 0 0.9em;
-  padding: 0.6em;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #343843;
   border-radius: 8px;
-  background: #1b1b1b;
-  color: #eee;
+  background: #0f1013;
+  color: #ecedf0;
   font: inherit;
-  font-size: 0.9em;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.6;
   resize: vertical;
 }
 
@@ -515,27 +702,29 @@ body[data-role="pilot"] #video-layer {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.6em;
-  padding: 0.7em 0.9em 0.9em;
+  gap: 8px;
 }
 
 .prompt-actions button {
-  border: none;
+  min-height: 40px;
+  padding: 0 18px;
   border-radius: 8px;
-  padding: 0.5em 1em;
-  font-size: 0.9em;
-  font-weight: 600;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
   cursor: pointer;
 }
 
 .prompt-save {
+  border: none;
   background: #4f7cff;
   color: #fff;
 }
 
 .prompt-reset {
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
+  border: 1px solid #343843;
+  background: transparent;
+  color: #ecedf0;
 }
 
 .prompt-actions button:disabled {
@@ -543,13 +732,12 @@ body[data-role="pilot"] #video-layer {
   cursor: default;
 }
 
-.prompt-status {
-  font-size: 0.85em;
-  color: #9fd59f;
-}
-
-.prompt-status.is-error {
-  color: #ff8a80;
+.voice-option:focus-visible,
+.prompt-card summary:focus-visible,
+.prompt-actions button:focus-visible,
+#pilot-link:focus-visible {
+  outline: 2px solid #8fb0ff;
+  outline-offset: 2px;
 }
 
 #neck-controls {
@@ -656,6 +844,15 @@ body[data-role="pilot"] #video-layer {
 #teleop-button {
   background: #fff;
   color: #111;
+}
+
+#speed-indicator {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(79, 124, 255, 0.85);
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 body.ai-active #mode-indicator {

@@ -10,7 +10,7 @@
   <body data-role="pilot">
     <div id="pilot-stage">
       <div id="pilot-video-frame">
-        <img id="video-layer" alt="Palmimo head camera feed" />
+        <img id="video-layer" alt="" />
       </div>
 
       <div id="controls">
@@ -26,11 +26,14 @@
             <button id="dpad-backward" type="button">&#8595;</button>
             <span></span>
           </div>
-          <div id="speed-buttons" role="group" aria-label="Speed">
-            <button type="button" data-speed="1" class="selected">1x</button>
-            <button type="button" data-speed="1.5">1.5x</button>
-            <button type="button" data-speed="2">2x</button>
-            <button type="button" data-speed="2.5">2.5x</button>
+          <div id="speed-control">
+            <span id="speed-label">歩く速さ</span>
+            <div id="speed-buttons" role="radiogroup" aria-labelledby="speed-label">
+              <button type="button" role="radio" aria-checked="true" data-speed="1" class="selected">1x</button>
+              <button type="button" role="radio" aria-checked="false" data-speed="1.5">1.5x</button>
+              <button type="button" role="radio" aria-checked="false" data-speed="2">2x</button>
+              <button type="button" role="radio" aria-checked="false" data-speed="2.5">2.5x</button>
+            </div>
           </div>
         </div>
 
@@ -56,6 +59,7 @@
     <div id="mode-bar">
       <span id="mode-spinner" aria-hidden="true"></span>
       <span id="mode-indicator" role="status">手動操作</span>
+      <span id="speed-indicator">速度 1x</span>
       <button id="teleop-button" type="button" hidden>手動操作に戻る</button>
     </div>
     <div id="mode-picker" hidden>

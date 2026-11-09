@@ -79,6 +79,6 @@ def test_voice_picker_script_is_loaded_and_never_writes_markup() -> None:
     voice_js = (STATIC_DIR / "voice.js").read_text()
     viewer_html = (STATIC_DIR / "viewer.html").read_text()
     assert '<script src="/static/voice.js"></script>' in viewer_html
-    assert 'id="voice-select"' in viewer_html
+    assert 'id="voice-list"' in viewer_html
     assert "innerHTML" not in voice_js
     assert "insertAdjacentHTML" not in voice_js

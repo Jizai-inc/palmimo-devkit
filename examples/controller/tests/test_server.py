@@ -670,3 +670,11 @@ def test_saved_voice_is_returned_from_then_on(client: TestClient) -> None:
 def test_save_voice_rejects_an_unknown_voice(client: TestClient) -> None:
     assert client.put("/api/voice", json={"voice": "nobody"}).status_code == 422
     assert client.get("/api/voice").json()["voice"] == "coral"
+
+
+@pytest.mark.parametrize("path", ["/", "/pilot", "/static/style.css", "/static/app.js"])
+def test_pages_and_assets_are_revalidated_on_every_load(client: TestClient, path: str) -> None:
+    # Without this, a phone kept showing the old look after an app update.
+    response = client.get(path)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"

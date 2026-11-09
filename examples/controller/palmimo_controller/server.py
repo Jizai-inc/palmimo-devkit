@@ -20,7 +20,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -336,6 +336,22 @@ async def _control_connection(
         await registry.remove(websocket)
 
 
+#: Browsers may reuse a page or stylesheet without asking (heuristic caching
+#: from `Last-Modified`), so after an app update a phone kept showing the old
+#: look. `no-cache` makes them check every time; an unchanged file still costs
+#: only a 304.
+_REVALIDATE = {"Cache-Control": "no-cache"}
+
+
+class _RevalidatedStaticFiles(StaticFiles):
+    """`StaticFiles` whose responses tell the browser to check for a newer version on every load."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers.update(_REVALIDATE)
+        return response
+
+
 class _PromptBody(BaseModel):
     """`PUT /api/prompts/{mode_id}` body."""
 
@@ -416,15 +432,15 @@ def create_app(
                     _LOG.error("loop thread still running; leaving the servo port open")
 
     app = FastAPI(lifespan=lifespan)
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", _RevalidatedStaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/")
     async def viewer_page() -> FileResponse:
-        return FileResponse(STATIC_DIR / "viewer.html")
+        return FileResponse(STATIC_DIR / "viewer.html", headers=_REVALIDATE)
 
     @app.get("/pilot")
     async def pilot_page() -> FileResponse:
-        return FileResponse(STATIC_DIR / "pilot.html")
+        return FileResponse(STATIC_DIR / "pilot.html", headers=_REVALIDATE)
 
     @app.get("/api/modes")
     async def list_modes() -> dict[str, Any]:
