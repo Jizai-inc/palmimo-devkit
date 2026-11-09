@@ -9,6 +9,8 @@
       "params.gait_speed": "歩く速さです。値を大きくすると速くなります。",
       "params.audio_device": "AI会話モードで使うマイクとスピーカーです。開発用ロボット（ReSpeaker 4 Mic Array）はrespeaker、展示用ロボット（プッシュトークのUSBマイクとUSBスピーカー）はbooth-usbを選びます。booth-usbでは話す間マイクのボタンを押し続けてください。",
       "params.no_camera": "頭部カメラの映像配信を無効にします。",
+      "params.no_face": "顔ディスプレイが接続されていても表情を表示しません。",
+      "params.no_reflexes": "AIモード中に、手を振る人へ手を振り返したり顔の方を見たりしません。",
       "params.dry_run": "サーボに接続せず、計算だけを行います。"
     }
   }

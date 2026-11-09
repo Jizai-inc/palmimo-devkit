@@ -11,10 +11,12 @@ import contextlib
 import functools
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import cast
 
 import typer
 import uvicorn
@@ -22,15 +24,19 @@ import uvicorn
 from palmimo_sdk import (
     Denoiser,
     DynamixelDriver,
+    FaceDisplay,
     HeadCamera,
     MicStream,
     Palmimo,
     ServoDriver,
-    resolve_alsa_device,
+    Speaker,
+    SpeakerConfig,
+    find_face_port,
 )
 
-from .ai.audio import Playback
-from .ai.controller import AiController
+from .ai.controller import AiController, OpenMic, OpenVoice
+from .ai.llm import OpenAiLlm
+from .ai.reflexes import Detectors, Reflexes
 from .modes import EditablePrompts, default_prompt_dir
 from .robot_loop import RobotLoop
 from .server import create_app
@@ -55,6 +61,9 @@ _LOG = logging.getLogger(__name__)
 #: per-frame speed scaling here (unlike the gamepad example's stick
 #: deflection) -- buttons are on/off, so one fixed speed is the whole knob.
 DEFAULT_GAIT_SPEED: float = 0.012
+
+#: Language the robot listens and speaks in.
+LANGUAGE = "ja"
 
 #: Avoids 8765 (the MCP server), 80/8080 (Palmimo Portal), and 8000 (the
 #: teleop app), so both apps can be installed on one robot.
@@ -155,10 +164,55 @@ def _build_servo_driver(
     return None
 
 
-def _build_robot(*, dry_run: bool, gait_speed: float, fps: int, servo_port: str | None) -> Palmimo:
-    """Build the `Palmimo` facade: compute-only under `--dry-run`, else a probed `DynamixelDriver`."""
+def _probe_face(port: str) -> FaceDisplay | None:
+    """Open and close a `FaceDisplay` on *port*; return a fresh one if that worked.
+
+    Mirrors `_probe_servo_driver`: the open that stays up for the run is
+    `Palmimo.connect()`'s, from the server lifespan.
+    """
+    face = FaceDisplay(port=port)
+    try:
+        face.connect()
+        face.disconnect()
+    except Exception as exc:  # busy port, timeout, reservation held by another app
+        _LOG.warning("face display on %s did not open (%s); running without a face", port, exc)
+        return None
+    return FaceDisplay(port=port)
+
+
+def _build_face(
+    *,
+    no_face: bool,
+    find_port: Callable[[], str | None] = find_face_port,
+    probe: Callable[[str], FaceDisplay | None] = _probe_face,
+) -> FaceDisplay | None:
+    """Build a `FaceDisplay` only when one is plugged in and opens.
+
+    `Palmimo.connect()` opens every attached resource, so a face that is
+    missing or will not open would stop the whole server from starting.
+    Without a face the controller runs as before, with no expressions.
+    """
+    if no_face:
+        return None
+    try:
+        port = find_port()
+    except Exception as exc:  # pyserial missing or the port scan failing
+        _LOG.warning("face display detection failed (%s); running without a face", exc)
+        return None
+    if port is None:
+        print("face display not found -- running without expressions")
+        return None
+    return probe(port)
+
+
+def _build_robot(
+    *, dry_run: bool, gait_speed: float, fps: int, servo_port: str | None, no_face: bool = False
+) -> Palmimo:
+    """Build the `Palmimo` facade: compute-only under `--dry-run`, else a probed `DynamixelDriver`
+    and, when one is plugged in, the face display."""
     driver = None if dry_run else _build_servo_driver(servo_port)
-    return Palmimo(gait_speed=gait_speed, fps=fps, driver=driver)
+    display = None if dry_run else _build_face(no_face=no_face)
+    return Palmimo(gait_speed=gait_speed, fps=fps, driver=driver, display=display)
 
 
 def _build_camera(no_camera: bool) -> HeadCamera | None:
@@ -178,7 +232,7 @@ def _open_mic_stream(
     device: AudioDevice = AUDIO_DEVICES[AudioDeviceName.RESPEAKER],
     *,
     open_stream: Callable[..., MicStream] = MicStream,
-) -> MicStream:
+) -> OpenMic:
     """Open the microphone, preferring echo cancellation where *device* supports it.
 
     A device without echo cancellation (the booth's USB mic) opens raw at its
@@ -188,55 +242,113 @@ def _open_mic_stream(
     No device name hint, matching the companion agent: the SDK picks whichever
     input exposes the six channels its default `EchoCanceller` needs, and the
     board's name varies between firmware builds. If no such input exists, fall
-    back to noise removal only, so AI mode still works -- but without echo
-    cancellation the robot can hear its own voice and cut itself off.
+    back to noise removal only, so AI mode still works. The returned
+    `echo_cancelled` says which happened: without it the listener must ignore
+    the mic while the robot talks, or the robot hears itself.
     """
     if not device.echo_cancel:
         mic = open_stream(sample_rate=device.mic_rate, device_name_hint=device.mic_hint, processors=[])
         mic.open()
-        return mic
+        return OpenMic(mic, echo_cancelled=False)
     try:
         mic = open_stream()
         mic.open()
-        return mic
+        return OpenMic(mic, echo_cancelled=True)
     except RuntimeError as exc:
         _LOG.warning(
             "echo-cancelled capture unavailable (%s); using noise removal only, "
-            "so the robot may hear and interrupt its own voice",
+            "so the robot will not hear visitors while it talks",
             exc,
         )
     mic = open_stream(processors=[Denoiser()])
     mic.open()
-    return mic
+    return OpenMic(mic, echo_cancelled=False)
 
 
 @contextlib.contextmanager
-def _open_mic(device: AudioDevice) -> Iterator[MicStream]:
-    """Open the microphone for one AI session; closed again when the session ends."""
-    mic = _open_mic_stream(device)
+def _open_mic(device: AudioDevice) -> Iterator[OpenMic]:
+    """Open the microphone for one AI mode; closed again when the mode ends."""
+    opened = _open_mic_stream(device)
+    stream = cast(MicStream, opened.stream)
     try:
-        yield mic
+        yield opened
     finally:
-        mic.close()
+        stream.close()
 
 
-def _build_playback(device: AudioDevice) -> Playback:
-    alsa_device = resolve_alsa_device(device.speaker_hint, kind="playback")
-    _LOG.info("AI speech plays on ALSA device %s", alsa_device or "default")
-    return Playback(device=alsa_device)
+@contextlib.contextmanager
+def _open_voice(device: AudioDevice) -> Iterator[OpenVoice]:
+    """Load the Piper voice and the Silero VAD segmenter for one AI mode.
+
+    Both download their models on first use, which is why `AiController`
+    opens this outside its start timeout.
+    """
+    from .ai.vad import SileroVad, UtteranceSegmenter
+
+    speaker = Speaker(SpeakerConfig(lang=LANGUAGE, device_name_hint=device.speaker_hint))
+    speaker.open()
+    try:
+        segmenter = UtteranceSegmenter(SileroVad.load())
+        _LOG.info("AI speech plays on the device matching %r", device.speaker_hint)
+        yield OpenVoice(speaker, segmenter)
+    finally:
+        speaker.stop()
+        speaker.close()
+
+
+class _CachedDetectors:
+    """Builds the wave and face detectors once per process and hands the same pair to every AI session.
+
+    Loading imports MediaPipe and reads (on first run, downloads) its models,
+    which takes seconds; a second AI session must not pay that again. A failed
+    load is not cached, so a robot that was offline at its first AI session
+    gets reflexes once the download works.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._detectors: Detectors | None = None
+
+    def __call__(self) -> Detectors:
+        with self._lock:
+            if self._detectors is None:
+                from .ai.vision import FaceLocator, WaveDetector
+
+                self._detectors = Detectors(wave=WaveDetector(), face=FaceLocator())
+            return self._detectors
+
+
+def _build_reflexes_factory(
+    session: PilotSession, video: VideoStream, telemetry: Telemetry, *, enabled: bool
+) -> Callable[[], Reflexes] | None:
+    """Build the per-session reflexes factory, or `None` when reflexes are off or there is no camera."""
+    if not enabled:
+        return None
+    detectors = _CachedDetectors()
+
+    def factory() -> Reflexes:
+        return Reflexes(session, video.latest_frame, detectors, telemetry=telemetry)
+
+    return factory
 
 
 def _build_ai(
-    session: PilotSession, telemetry: Telemetry, prompts: EditablePrompts, audio: AudioDevice
+    session: PilotSession,
+    telemetry: Telemetry,
+    prompts: EditablePrompts,
+    audio: AudioDevice,
+    reflexes_factory: Callable[[], Reflexes] | None = None,
 ) -> AiController:
     """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop."""
+    api_key = os.environ.get("OPENAI_API_KEY") or None
     return AiController(
         session,
         prompts,
-        api_key=os.environ.get("OPENAI_API_KEY"),
+        llm=OpenAiLlm(api_key, language=LANGUAGE) if api_key is not None else None,
         telemetry=telemetry,
         mic_factory=functools.partial(_open_mic, audio),
-        playback_factory=functools.partial(_build_playback, audio),
+        voice_factory=functools.partial(_open_voice, audio),
+        reflexes_factory=reflexes_factory,
     )
 
 
@@ -252,6 +364,10 @@ def main(
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Compute-only: never attach a servo driver."),
     no_camera: bool = typer.Option(False, "--no-camera", help="Never attach the head camera."),
+    no_face: bool = typer.Option(False, "--no-face", help="Never attach the face display."),
+    no_reflexes: bool = typer.Option(
+        False, "--no-reflexes", help="In AI modes, do not wave back at visitors or glance at faces."
+    ),
     servo_port: str | None = typer.Option(
         None, "--servo-port", help="Servo bus serial port, e.g. /dev/ttyACM0 (auto-detected if omitted)."
     ),
@@ -264,21 +380,18 @@ def main(
     """Serve Palmimo Controller: a phone/laptop browser drives the robot, views its head
     camera, and switches to AI voice modes, on the same LAN, with no authentication."""
     logging.basicConfig(level=logging.INFO)
-    robot = _build_robot(dry_run=dry_run, gait_speed=gait_speed, fps=fps, servo_port=servo_port)
+    robot = _build_robot(dry_run=dry_run, gait_speed=gait_speed, fps=fps, servo_port=servo_port, no_face=no_face)
     session = PilotSession()
     robot_loop = RobotLoop(robot, session, fps=fps)
     video = VideoStream(_build_camera(no_camera))
     telemetry = Telemetry()
     # One store for both: a prompt saved from the homepage must be the one the next AI mode reads.
     prompts = EditablePrompts(default_prompt_dir())
-    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device])
+    reflexes = _build_reflexes_factory(session, video, telemetry, enabled=not (no_reflexes or no_camera))
+    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes)
     app_instance = create_app(robot, session, robot_loop, video, ai, prompts, telemetry)
 
-    mode = (
-        "--dry-run"
-        if dry_run
-        else ("compute-only (no servo bus found)" if not robot.has_connectable_resource else "live")
-    )
+    mode = "--dry-run" if dry_run else ("compute-only (no servo bus found)" if robot.driver is None else "live")
     ai_state = "AI modes available" if ai.available else "AI modes off: OPENAI_API_KEY not set"
     print(
         f"Palmimo Controller starting on http://0.0.0.0:{port} ({mode}; {ai_state}). Open /pilot to drive, / to view.",

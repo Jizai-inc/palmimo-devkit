@@ -16,7 +16,7 @@ from collections.abc import Callable
 from palmimo_sdk import Palmimo
 
 from .control import resolve_motion
-from .session import PilotSession
+from .session import IDLE_FACE_CUE, PilotSession
 
 
 _LOG = logging.getLogger(__name__)
@@ -93,6 +93,11 @@ class RobotLoop:
         #: tick's `robot.stop()` is issued even when the resolved motion is
         #: also `None`.
         self._applied_motion: str | object | None = _UNSET
+        #: The face cue key applied last, so each expression is sent once.
+        #: Starts at the idle key so the first tick leaves the boot-wake
+        #: animation `Palmimo.connect()` plays alone.
+        self._applied_face_key: str = IDLE_FACE_CUE.key
+        self._last_face_failure_log_at: float | None = None
 
     @property
     def loop_fps(self) -> float:
@@ -133,6 +138,7 @@ class RobotLoop:
                     self.robot.set_motion(motion)
                 self._applied_motion = motion
             self.robot.look(pitch=effective.neck_pitch * NECK_PITCH_SIGN, yaw=effective.neck_yaw * NECK_YAW_SIGN)
+            self._apply_face()
             self.robot.step()
         except Exception:
             self._record_tick_failure()
@@ -140,6 +146,32 @@ class RobotLoop:
         with self._ok_lock:
             self._robot_ok = True
         return True
+
+    def _apply_face(self) -> None:
+        """Send the session's face cue to the face display when it changes.
+
+        A face failure is logged (throttled) and swallowed, never raised into
+        `tick()`: `robot_ok` speaks for the servo bus, and a flaky face must
+        not end an AI session as "robot offline". The key is recorded either
+        way, so a failing face is not retried every cycle.
+        """
+        display = self.robot.display
+        if display is None:
+            return
+        cue = self.session.face_cue()
+        if cue.key == self._applied_face_key:
+            return
+        self._applied_face_key = cue.key
+        try:
+            if cue.expression is None:
+                display.idle()
+            else:
+                display.set_expression(cue.expression, cue.hold_ms)
+        except Exception:
+            now = self._now()
+            if self._last_face_failure_log_at is None or now - self._last_face_failure_log_at >= FAILURE_LOG_INTERVAL_S:
+                _LOG.warning("face display update failed", exc_info=True)
+                self._last_face_failure_log_at = now
 
     def _record_tick_failure(self) -> None:
         with self._ok_lock:

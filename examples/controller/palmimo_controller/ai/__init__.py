@@ -1,1 +1,1 @@
-"""AI mode: one OpenAI Realtime voice session at a time, driving the robot through the pilot session."""
+"""AI mode: listen on the robot, answer through the OpenAI API, speak with Piper, and drive the robot through the pilot session."""

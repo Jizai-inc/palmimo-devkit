@@ -1,10 +1,12 @@
 """Behavior of `palmimo_controller.main._build_servo_driver`'s startup probe retry -- no real
 hardware, no real sleep."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from palmimo_controller import main
 from palmimo_controller.main import PROBE_RETRY_ATTEMPTS, _build_servo_driver
 
 
@@ -53,3 +55,33 @@ def test_build_servo_driver_propagates_reservation_errors(error_name: str) -> No
         pytest.raises(error_type),
     ):
         _build_servo_driver("fake", sleep=lambda _seconds: None)
+
+
+def test_build_face_skips_detection_when_disabled() -> None:
+    def find_port() -> str | None:
+        raise AssertionError("must not scan with --no-face")
+
+    assert main._build_face(no_face=True, find_port=find_port) is None
+
+
+def test_build_face_runs_without_a_face_when_none_is_plugged_in() -> None:
+    assert main._build_face(no_face=False, find_port=lambda: None) is None
+
+
+def test_build_face_runs_without_a_face_when_detection_fails() -> None:
+    def find_port() -> str | None:
+        raise OSError("no serial stack")
+
+    assert main._build_face(no_face=False, find_port=find_port) is None
+
+
+def test_build_face_attaches_the_probed_face() -> None:
+    sentinel = object()
+    probed: list[str] = []
+
+    def probe(port: str) -> Any:  # stands in for a FaceDisplay
+        probed.append(port)
+        return sentinel
+
+    assert main._build_face(no_face=False, find_port=lambda: "/dev/ttyACM1", probe=probe) is sentinel
+    assert probed == ["/dev/ttyACM1"]

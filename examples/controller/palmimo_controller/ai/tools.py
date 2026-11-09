@@ -30,10 +30,8 @@ _SECONDS_SCHEMA: dict[str, Any] = {
     "description": f"How long to keep moving, in seconds (at most {AI_INTENT_MAX_SECONDS:g}).",
 }
 
-#: Tool definitions in the Realtime API's flat `{"type": "function", "name": ...}` shape.
-TOOL_DEFINITIONS: list[dict[str, Any]] = [
+_FUNCTIONS: list[dict[str, Any]] = [
     {
-        "type": "function",
         "name": "walk",
         "description": "Walk in a direction for a few seconds, then stop.",
         "parameters": {
@@ -46,7 +44,6 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
-        "type": "function",
         "name": "turn",
         "description": "Turn in place to the left or right for a few seconds, then stop.",
         "parameters": {
@@ -59,7 +56,6 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
-        "type": "function",
         "name": "gesture",
         "description": (
             "Play a gesture: wave hello, a short dance, nod yes, clap, do push-ups, tilt the body (curious), or bow."
@@ -71,7 +67,6 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
-        "type": "function",
         "name": "look",
         "description": (
             "Point the head for a few seconds, then it recenters. pitch and yaw run from -1 to 1; 0, 0 is straight ahead."
@@ -86,12 +81,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
-        "type": "function",
         "name": "stop",
         "description": "Stop moving and stand still.",
         "parameters": {"type": "object", "properties": {}},
     },
 ]
+
+#: The motion tools in Chat Completions' `{"type": "function", "function": {...}}` shape.
+TOOL_DEFINITIONS: list[dict[str, Any]] = [{"type": "function", "function": function} for function in _FUNCTIONS]
 
 
 def _seconds(args: dict[str, Any]) -> float:

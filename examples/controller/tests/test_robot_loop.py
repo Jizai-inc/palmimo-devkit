@@ -8,15 +8,16 @@ from typing import Any, cast
 import pytest
 
 from palmimo_controller.robot_loop import FAILURE_LOG_INTERVAL_S, NECK_PITCH_SIGN, NECK_YAW_SIGN, RobotLoop
-from palmimo_controller.session import PilotSession
+from palmimo_controller.session import STARTING_FACE_SECONDS, STARTING_FACES, PilotSession
 from palmimo_sdk import Palmimo
 
 
 class FakeRobot:
     """Records every call `RobotLoop` makes, in order."""
 
-    def __init__(self) -> None:
+    def __init__(self, display: Any = None) -> None:
         self.calls: list[tuple[str, Any]] = []
+        self.display = display
 
     def set_motion(self, name: str) -> None:
         self.calls.append(("set_motion", name))
@@ -37,6 +38,26 @@ class FailingRobot(FakeRobot):
 
     def step(self) -> dict[str, int]:
         raise RuntimeError("servo bus fault")
+
+
+class FakeFace:
+    """Records every face command, optionally raising like a flaky serial line."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.calls: list[tuple[str, int] | str] = []
+        self.fail = fail
+
+    def set_expression(self, name: str, hold_ms: int = 0) -> str:
+        if self.fail:
+            raise RuntimeError("face serial error")
+        self.calls.append((name, hold_ms))
+        return "OK"
+
+    def idle(self) -> str:
+        if self.fail:
+            raise RuntimeError("face serial error")
+        self.calls.append("IDLE")
+        return "OK"
 
 
 class FakeClock:
@@ -268,3 +289,50 @@ def test_loop_fps_excludes_failed_ticks() -> None:
     clock.now = 1.1
     loop._update_loop_fps(loop.tick(), clock.now)
     assert loop.loop_fps == 0.0
+
+
+def _ai_session(clock: FakeClock) -> PilotSession:
+    session = PilotSession(now=clock)
+    session.acquire_pilot("a")
+    assert session.begin_ai("a", "default")
+    return session
+
+
+def test_tick_sends_each_face_cue_once_while_ai_starts() -> None:
+    clock = FakeClock()
+    face = FakeFace()
+    session = _ai_session(clock)
+    loop = RobotLoop(_robot(FakeRobot(face)), session, now=clock, sleep=_no_sleep)
+    loop.tick()
+    loop.tick()
+    clock.now = STARTING_FACE_SECONDS
+    loop.tick()
+    assert face.calls == [(STARTING_FACES[0], 0), (STARTING_FACES[1], 0)]
+
+
+def test_tick_returns_the_face_to_idle_when_ai_stops() -> None:
+    clock = FakeClock()
+    face = FakeFace()
+    session = _ai_session(clock)
+    loop = RobotLoop(_robot(FakeRobot(face)), session, now=clock, sleep=_no_sleep)
+    loop.tick()
+    session.end_ai()
+    loop.tick()
+    assert face.calls[-1] == "IDLE"
+
+
+def test_tick_leaves_the_boot_face_alone_in_plain_teleop() -> None:
+    face = FakeFace()
+    loop = _loop(FakeRobot(face), PilotSession(now=FakeClock()))
+    loop.tick()
+    assert face.calls == []
+
+
+def test_face_failure_does_not_fail_the_tick() -> None:
+    # A flaky face must not read as a servo fault: that would end AI as "robot offline".
+    clock = FakeClock()
+    robot = FakeRobot(FakeFace(fail=True))
+    loop = RobotLoop(_robot(robot), _ai_session(clock), now=clock, sleep=_no_sleep)
+    assert loop.tick() is True
+    assert loop.robot_ok is True
+    assert ("step", None) in robot.calls

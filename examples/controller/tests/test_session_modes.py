@@ -2,9 +2,16 @@
 
 from palmimo_controller.session import (
     AI_INTENT_MAX_SECONDS,
+    AI_START_NOD_SECONDS,
+    CUE_FACE_HOLD_MS,
+    FAILED_FACE,
+    IDLE_FACE_CUE,
+    LIVE_FACE,
     MODE_AI,
     MODE_AI_STARTING,
     MODE_TELEOP,
+    STARTING_FACE_SECONDS,
+    STARTING_FACES,
     PilotInput,
     PilotSession,
 )
@@ -59,8 +66,9 @@ def test_effective_input_holds_still_while_ai_starts() -> None:
 
 
 def test_effective_input_ignores_pilot_input_in_ai_mode() -> None:
-    session, _ = _pilot_session()
+    session, clock = _pilot_session()
     _live_ai(session)
+    clock.now = AI_START_NOD_SECONDS
     session.update_pilot_input("a", move="forward", rotate=0, neck_pitch=0.0, neck_yaw=0.0)
     assert session.effective_input() == PilotInput()
 
@@ -112,3 +120,79 @@ def test_status_reports_the_live_ai_mode() -> None:
     _live_ai(session)
     status = session.status()
     assert (status.mode, status.ai_mode) == (MODE_AI, "default")
+
+
+def test_ai_going_live_nods_once() -> None:
+    session, clock = _pilot_session()
+    _live_ai(session)
+    assert session.effective_input() == PilotInput(gesture="nod")
+    clock.now = AI_START_NOD_SECONDS
+    assert session.effective_input() == PilotInput()
+
+
+def test_face_cue_cycles_while_ai_starts() -> None:
+    session, clock = _pilot_session()
+    session.begin_ai("a", "default")
+    seen = []
+    for step in range(len(STARTING_FACES) + 1):
+        # Mid-step, so float rounding at a step boundary cannot pick the previous face.
+        clock.now = (step + 0.5) * STARTING_FACE_SECONDS
+        cue = session.face_cue()
+        seen.append((cue.key, cue.expression))
+    assert [expression for _, expression in seen] == [*STARTING_FACES, STARTING_FACES[0]]
+    assert len({key for key, _ in seen}) == len(seen)
+
+
+def test_face_cue_is_happy_when_ai_is_live() -> None:
+    session, _ = _pilot_session()
+    _live_ai(session)
+    cue = session.face_cue()
+    assert (cue.expression, cue.hold_ms) == (LIVE_FACE, CUE_FACE_HOLD_MS)
+
+
+def test_face_cue_is_sad_after_a_failed_start_and_differs_per_failure() -> None:
+    session, clock = _pilot_session()
+    session.begin_ai("a", "default")
+    session.end_ai("network")
+    first = session.face_cue()
+    assert (first.expression, first.hold_ms) == (FAILED_FACE, CUE_FACE_HOLD_MS)
+    clock.now = 1.0
+    session.begin_ai("a", "default")
+    session.end_ai("network")
+    assert session.face_cue().key != first.key
+
+
+def test_face_cue_is_idle_in_plain_teleop() -> None:
+    session, _ = _pilot_session()
+    assert session.face_cue() == IDLE_FACE_CUE
+    _live_ai(session)
+    session.end_ai()
+    assert session.face_cue() == IDLE_FACE_CUE
+
+
+def test_gaze_points_the_neck_between_ai_intents() -> None:
+    session, clock = _pilot_session()
+    _live_ai(session)
+    clock.now = AI_START_NOD_SECONDS
+    assert session.set_gaze(0.2, -0.4)
+    assert session.effective_input() == PilotInput(neck_pitch=0.2, neck_yaw=-0.4)
+    session.clear_gaze()
+    assert session.effective_input() == PilotInput()
+
+
+def test_ai_intent_wins_over_a_gaze() -> None:
+    session, clock = _pilot_session()
+    _live_ai(session)
+    clock.now = AI_START_NOD_SECONDS
+    session.set_gaze(0.2, -0.4)
+    session.set_ai_intent(PilotInput(move="forward"), 1.0)
+    assert session.ai_busy
+    assert session.effective_input() == PilotInput(move="forward")
+
+
+def test_gaze_is_ignored_outside_a_live_ai_mode() -> None:
+    session, _ = _pilot_session()
+    assert session.set_gaze(0.2, 0.2) is False
+    session.begin_ai("a", "default")
+    assert session.set_gaze(0.2, 0.2) is False
+    assert session.effective_input() == PilotInput()

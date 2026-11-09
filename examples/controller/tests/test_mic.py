@@ -21,8 +21,10 @@ class FakeStream:
 
 
 def test_open_mic_stream_prefers_the_default_echo_canceller() -> None:
-    stream: Any = _open_mic_stream(open_stream=cast(Any, FakeStream))
+    opened = _open_mic_stream(open_stream=cast(Any, FakeStream))
+    stream: Any = opened.stream
     assert stream.opened and stream.processors is None
+    assert opened.echo_cancelled is True
 
 
 def test_open_mic_stream_falls_back_to_noise_removal_without_a_six_channel_input() -> None:
@@ -30,15 +32,20 @@ def test_open_mic_stream_falls_back_to_noise_removal_without_a_six_channel_input
     def open_stream(**kwargs: Any) -> FakeStream:
         return FakeStream(**kwargs, fail="processors" not in kwargs)
 
-    stream: Any = _open_mic_stream(open_stream=cast(Any, open_stream))
+    opened = _open_mic_stream(open_stream=cast(Any, open_stream))
+    stream: Any = opened.stream
     assert stream.opened
     assert stream.processors is not None and isinstance(stream.processors[0], Denoiser)
+    # The listener must then ignore the mic while the robot talks, or it hears itself.
+    assert opened.echo_cancelled is False
 
 
 def test_open_mic_stream_opens_the_booth_usb_mic_raw_at_48k() -> None:
     # Without this, the booth robot would open the default input with an echo
     # canceller its USB mic cannot feed, and AI mode would hear nothing.
-    stream: Any = _open_mic_stream(AUDIO_DEVICES[AudioDeviceName.BOOTH_USB], open_stream=cast(Any, FakeStream))
+    opened = _open_mic_stream(AUDIO_DEVICES[AudioDeviceName.BOOTH_USB], open_stream=cast(Any, FakeStream))
+    stream: Any = opened.stream
+    assert opened.echo_cancelled is False
     assert stream.opened
     assert stream.processors == []
     assert stream.kwargs == {"sample_rate": 48000, "device_name_hint": "USB PnP"}

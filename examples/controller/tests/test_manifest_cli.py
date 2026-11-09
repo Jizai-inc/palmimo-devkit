@@ -45,6 +45,7 @@ def _build_argv(manifest: dict[str, Any]) -> list[str]:
 
 class _DummyRobot:
     has_connectable_resource = False
+    driver = None
 
 
 def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,11 +53,18 @@ def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.Monk
     argv = _build_argv(manifest)
     captured: dict[str, object] = {}
 
-    def fake_build_robot(*, dry_run: bool, gait_speed: float, fps: int, servo_port: str | None) -> _DummyRobot:
+    def fake_build_robot(
+        *, dry_run: bool, gait_speed: float, fps: int, servo_port: str | None, no_face: bool
+    ) -> _DummyRobot:
         captured["dry_run"] = dry_run
+        captured["no_face"] = no_face
         captured["gait_speed"] = gait_speed
         captured["fps"] = fps
         return _DummyRobot()
+
+    def fake_build_reflexes(session: object, video: object, telemetry: object, *, enabled: bool) -> None:
+        captured["reflexes"] = enabled
+        return None
 
     def fake_build_camera(no_camera: bool) -> None:
         captured["no_camera"] = no_camera
@@ -68,6 +76,7 @@ def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(main_module, "_build_robot", fake_build_robot)
     monkeypatch.setattr(main_module, "_build_camera", fake_build_camera)
+    monkeypatch.setattr(main_module, "_build_reflexes_factory", fake_build_reflexes)
     monkeypatch.setattr(main_module.uvicorn, "run", fake_uvicorn_run)
 
     result = CliRunner().invoke(main_module.app, argv)
@@ -77,6 +86,8 @@ def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.Monk
     assert manifest["params"]["gait_speed"]["default"] == pytest.approx(main_module.DEFAULT_GAIT_SPEED)
     assert captured["port"] == main_module.DEFAULT_PORT
     assert captured["fps"] == manifest["params"]["fps"]["default"]
+    assert captured["no_face"] == manifest["params"]["no_face"]["default"]
+    assert captured["reflexes"] is not manifest["params"]["no_reflexes"]["default"]
     assert captured["gait_speed"] == pytest.approx(main_module.DEFAULT_GAIT_SPEED)
     assert captured["dry_run"] is False
     assert captured["no_camera"] is False

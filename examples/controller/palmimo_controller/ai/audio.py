@@ -1,385 +1,157 @@
-"""Microphone in, spoken audio out: the two directions of the Realtime call.
+"""Microphone in, synthesized speech out: the two audio ends of an AI mode.
 
-:class:`MicrophoneFeed` reads capture chunks and appends them to the API's
-input buffer; :class:`Playback` plays the model's own audio through
-``aplay`` and can be killed mid-sentence, which is what lets a switch back to
-teleop silence the robot at once.
+`Listener` runs on its own thread: it reads mic chunks, cuts them into
+utterances, and decides what the robot may hear while it is talking.
+`Voice` wraps the SDK's `Speaker` so that thread and the event loop can both
+ask whether the robot is speaking.
 """
 
 from __future__ import annotations
 
-import asyncio
-import base64
-import contextlib
 import math
-import queue
-import subprocess
-import sys
 import threading
 import time
+from collections.abc import Callable
 from typing import Any, Protocol
 
 import numpy as np
 from scipy.signal import resample_poly
 
-from .client import RealtimeClientLike
-from .protocol import AudioAppend
+from .vad import SAMPLE_RATE, Int16Array
 
 
-#: The capture pipeline is pinned to 16 kHz by the canceller and the voice
-#: detector upstream; the Realtime API speaks 24 kHz. Every chunk is
-#: resampled 3/2 on the way out.
-CAPTURE_RATE = 16000
-API_RATE = 24000
-
-#: MicrophoneFeed reads with a bounded blocking call rather than an unbounded
-#: one so cancellation is noticed promptly: the executor thread reading
-#: chunks.get() cannot itself be cancelled, so without a timeout it would sit
-#: blocked on the queue for up to the rest of the session after this
-#: service's own task is cancelled -- an orphaned thread, not a leaked one
-#: (it still exits once the stream closes), but one that outlives the
-#: service unnecessarily. This is not a stop-flag poll: cancellation still ends the task.
+#: A bounded read, so a stop request is noticed within this long even when the mic is silent.
 _MIC_READ_TIMEOUT_S = 0.2
+
+#: Without echo cancellation the room still rings briefly after playback ends;
+#: listening again any sooner lets the robot hear the end of its own sentence.
+_ECHO_TAIL_S = 0.4
 
 
 class MicStreamLike(Protocol):
-    """The subset of :class:`~palmimo_sdk.io.mic_stream.MicStream` this service needs."""
+    """The part of `palmimo_sdk.MicStream` an AI mode reads."""
 
     sample_rate: int
 
     def stream(self) -> Any: ...
 
 
-class MicrophoneFeed:
-    """Reads capture chunks, resamples them to `API_RATE`, and appends them to the API's input buffer.
-
-    The capture rate is the mic's own: 16 kHz for the ReSpeaker array, 48 kHz
-    for the booth's USB mic, which opens at no lower rate.
-    """
-
-    name = "microphone"
-
-    def __init__(self, mic: MicStreamLike, client: RealtimeClientLike) -> None:
-        self._mic = mic
-        self._client = client
-        common = math.gcd(API_RATE, mic.sample_rate)
-        self._up, self._down = API_RATE // common, mic.sample_rate // common
-
-    async def run(self) -> None:
-        loop = asyncio.get_running_loop()
-        with self._mic.stream() as chunks:
-            while True:
-                chunk = await loop.run_in_executor(None, chunks.get, _MIC_READ_TIMEOUT_S)
-                if chunk is None:
-                    continue
-                resampled = resample_poly(np.asarray(chunk, dtype=np.float32), self._up, self._down)
-                pcm = np.clip(resampled, -32768, 32767).astype(np.int16).tobytes()
-                await self._client.send(AudioAppend(audio_b64=base64.b64encode(pcm).decode()))
+class SpeechHandleLike(Protocol):
+    def is_alive(self) -> bool: ...
 
 
-def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
-    """:meth:`Playback.interrupt`'s off-loop teardown: kill, close stdin, bounded reap.
+class SpeakerLike(Protocol):
+    """The part of `palmimo_sdk.Speaker` an AI mode uses. `say` never blocks."""
 
-    Run on a dedicated thread by :meth:`Playback.interrupt`, never on the
-    caller's own thread -- see that method's docstring for why. ``kill()``
-    runs before ``stdin.close()`` for the same reason :meth:`Playback.close`
-    orders them that way (see its docstring): a writer thread wedged inside
-    a blocking ``stdin.write()`` holds that stdin object's own internal
-    lock, so closing it first could block this thread indefinitely; killing
-    first makes the wedged write fail (EPIPE) and release that lock.
-    ``kill()`` only sends the signal; without reaping, the process stays a
-    zombie until something waits on it. The reap is bounded so an
-    already-dead/unresponsive process cannot leave this background thread
-    stuck forever (harmless on its own since it is never joined by this
-    function -- see :meth:`Playback.close` for how it is still supervised --
-    but pointless to let run past the process actually being gone).
-    """
-    with contextlib.suppress(Exception):
-        process.kill()
-    with contextlib.suppress(Exception):
-        if process.stdin is not None:
-            process.stdin.close()
-    with contextlib.suppress(Exception):
-        process.wait(timeout=1)
+    def say(self, text: str) -> SpeechHandleLike: ...
+
+    def stop(self) -> None: ...
+
+    def close(self) -> None: ...
 
 
-class Playback:
-    """A raw-PCM ``aplay`` pipe that can be dropped mid-sentence, fed off a writer thread.
+class SegmenterLike(Protocol):
+    """The part of `vad.UtteranceSegmenter` the listener drives."""
 
-    ``write()`` only enqueues -- the actual ``stdin.write()``/``flush()`` (and
-    any other blocking work) happen on a dedicated writer thread, because
-    ALSA backpressure on a blocking write would otherwise stall the caller,
-    which in practice is the event loop :class:`~.controller.AiController` runs on
-    -- exactly the moment barge-in needs the loop free to react. Interrupting
-    means killing the process: ALSA has already buffered what was written to
-    it, so asking it to stop at the end of the current chunk would not stop
-    it in time to be barge-in. The kill/reap is itself dispatched to a
-    throwaway thread (see :func:`_kill_and_reap`) for the same reason --
-    :meth:`interrupt` is called synchronously from the event loop, and a
-    blocking ``process.wait()`` there would reintroduce the exact stall this
-    class exists to avoid.
+    @property
+    def speaking(self) -> bool: ...
 
-    ``write()``, :meth:`interrupt`, and :meth:`close` are only ever meant to
-    be called from a single thread -- the event loop's, via
-    :class:`~.controller.AiController` -- never from each other and never concurrently with themselves. That
-    serialization is load-bearing: it is what lets ``close()`` discard the
-    queue and enqueue its sentinel without racing a concurrent ``write()``,
-    and what lets ``interrupt()`` bump the generation counter and clear the
-    queue as one atomic-from-the-caller's-view step. The writer thread is the
-    only other thread that touches this instance's internals, and only the
-    parts documented as such below.
+    def feed(self, chunk: Int16Array) -> Int16Array | None: ...
 
-    ``device`` is a resolved ALSA device string (``plughw:CARD=...``) for
-    ``aplay -D``; ``None`` spawns ``aplay`` without one and takes ALSA's
-    default. It is resolved by the caller rather than here because this class
-    is constructed once a session is already up, by which point the device
-    listing is settled -- unlike :class:`~palmimo_sdk.io.speaker.Speaker`,
-    which is built before the USB device is necessarily attached and so has to
-    resolve lazily.
-    """
+    def reset(self) -> None: ...
 
-    #: Least time between two playback warnings. The first failure warns at
-    #: once; after that, staying quiet for a while avoids flooding stderr with
-    #: one line per chunk while still leaving a trail if the condition never
-    #: clears.
-    _WARN_INTERVAL_S = 30.0
 
-    def __init__(self, device: str | None = None) -> None:
-        self._device = device
-        self._process: subprocess.Popen[bytes] | None = None
-        self._process_lock = threading.Lock()
-        #: Guarded by ``_process_lock`` alongside ``_process``: once set,
-        #: `_ensure_process` must never spawn a new ``aplay`` again, even if
-        #: the writer thread is still draining a straggler chunk.
-        self._closed = False
-        #: Bumped by `interrupt`, guarded by ``_process_lock``. The writer
-        #: snapshots this value right after dequeuing a chunk;
-        #: `_ensure_process` refuses to spawn or reuse a process for a
-        #: stale generation, so a chunk that was already in flight when an
-        #: interrupt fired -- pre-barge-in audio -- cannot start (or write
-        #: to) a fresh ``aplay`` after the fact.
-        self._generation = 0
-        #: (thread, process) pairs for kill/reap work `interrupt` handed off
-        #: to a background thread that has not finished yet -- guarded by
-        #: ``_process_lock``, self-pruning as each thread completes (see
-        #: `_kill_and_reap_tracked`). Lets `close` supervise a process
-        #: `interrupt` is still tearing down instead of treating
-        #: ``_process is None`` as nothing left to reap.
-        self._pending_kills: list[tuple[threading.Thread, subprocess.Popen[bytes]]] = []
-        self._queue: queue.Queue[bytes | None] = queue.Queue()
-        self._writer: threading.Thread | None = None
-        #: Failed writes this session, touched only on the writer thread.
-        self._write_failures = 0
-        #: When the writer last warned, on the monotonic clock; writer thread only.
-        self._last_warning: float | None = None
+def to_pipeline_rate(chunk: Any, rate: int) -> Int16Array:
+    """Return *chunk* as int16 at `SAMPLE_RATE`; the booth's USB mic captures at 48 kHz."""
+    samples = np.asarray(chunk)
+    if rate == SAMPLE_RATE:
+        return samples.astype(np.int16, copy=False)
+    common = math.gcd(SAMPLE_RATE, rate)
+    resampled = resample_poly(samples.astype(np.float32), SAMPLE_RATE // common, rate // common)
+    return np.clip(resampled, -32768, 32767).astype(np.int16)
 
-    def _ensure_writer(self) -> None:
-        if self._writer is None or not self._writer.is_alive():
-            self._writer = threading.Thread(target=self._drain, name="playback-writer", daemon=True)
-            self._writer.start()
 
-    def _ensure_process(self, generation: int) -> subprocess.Popen[bytes] | None:
-        """Return the live ``aplay`` process for *generation*, starting one if needed -- or ``None`` if stale/closed.
+class Voice:
+    """The robot's speaker, plus whether it is talking right now. Safe to call from any thread."""
 
-        *generation* is the interrupt generation the writer captured right
-        after dequeuing the chunk this call is for. Returns ``None`` --
-        instead of spawning or handing back a process to write to -- once
-        :meth:`close` has run, or once :meth:`interrupt` has moved the
-        session past the generation this chunk belongs to: an interrupt
-        that fires while a chunk is between the queue and the pipe must
-        still be able to drop it, not let it start (or write to) a process
-        the interrupt already considers gone.
-        """
-        with self._process_lock:
-            if self._closed or generation != self._generation:
-                return None
-            if self._process is None or self._process.poll() is not None:
-                device = ["-D", self._device] if self._device else []
-                self._process = subprocess.Popen(
-                    ["aplay", "-q", *device, "-t", "raw", "-f", "S16_LE", "-r", str(API_RATE), "-c", "1"],
-                    stdin=subprocess.PIPE,
-                )
-            return self._process
+    def __init__(self, speaker: SpeakerLike, *, now: Callable[[], float] = time.monotonic) -> None:
+        self._speaker = speaker
+        self._now = now
+        self._lock = threading.Lock()
+        self._handle: SpeechHandleLike | None = None
+        self._quiet_since: float | None = None
 
-    def _record_write_failure(self) -> None:
-        """Count a playback failure and warn the operator, at most once per ``_WARN_INTERVAL_S``.
-
-        Only called for failures not explained by an in-flight
-        :meth:`interrupt` -- barge-in killing the process mid-write is
-        expected and must not look like a dead audio device (see
-        :meth:`_drain`'s ``stale`` check).
-        """
-        self._write_failures += 1
-        now = time.monotonic()
-        if self._last_warning is not None and now - self._last_warning < self._WARN_INTERVAL_S:
-            return
-        self._last_warning = now
-        print(
-            f"!! playback write failed ({self._write_failures} so far) -- "
-            "check the ALSA default output device and whether it is held "
-            "by another process; the robot may be silent",
-            file=sys.stderr,
-            flush=True,
-        )
-
-    def _drain(self) -> None:
-        """Writer-thread body: write queued chunks until the ``close()`` sentinel.
-
-        Outlives any one ``aplay`` process: :meth:`interrupt` may kill the
-        current one mid-session, and the next queued chunk simply starts a
-        new one via :meth:`_ensure_process` -- unless :meth:`close` has
-        already run, or :meth:`interrupt` has moved on since this chunk was
-        dequeued (see the ``generation`` snapshot below), in which case the
-        chunk is dropped instead.
-
-        A failed write is recorded rather than crashing this thread: an
-        uncaught exception here would kill the thread silently, and the next
-        ``write()`` would just start a fresh one with no trace of the old one.
-        """
-        while True:
-            pcm = self._queue.get()
-            if pcm is None:  # sentinel: close() is stopping this thread for good
-                return
-            with self._process_lock:
-                generation = self._generation
-            process = self._ensure_process(generation)
-            if process is None or process.stdin is None:
-                continue
-            try:
-                process.stdin.write(pcm)
-                process.stdin.flush()
-            except Exception:
-                with self._process_lock:
-                    stale = process is not self._process or generation != self._generation
-                if not stale:
-                    self._record_write_failure()
-                # else: interrupt() already reclaimed this chunk's process --
-                # an expected teardown, not a playback failure worth a warning.
-
-    def write(self, pcm: bytes) -> None:
-        """Enqueue *pcm* for the writer thread. Never blocks -- safe to call from the event loop.
-
-        A no-op once :meth:`close` has run: handing a chunk to a stopped
-        writer would either resurrect a writer thread that will never be
-        told to exit again, or queue behind a sentinel that already made the
-        writer exit -- either way the chunk would never be dropped cleanly.
-        See the class docstring for why this check does not need its own
-        lock around the queue.
-        """
-        with self._process_lock:
-            if self._closed:
-                return
-        self._ensure_writer()
-        self._queue.put_nowait(pcm)
-
-    def _kill_and_reap_tracked(self, process: subprocess.Popen[bytes]) -> None:
-        """:meth:`interrupt`'s off-loop teardown, self-pruning from ``_pending_kills`` when done."""
-        try:
-            _kill_and_reap(process)
-        finally:
-            with self._process_lock:
-                self._pending_kills = [
-                    (thread, proc) for thread, proc in self._pending_kills if thread is not threading.current_thread()
-                ]
+    def say(self, text: str) -> None:
+        with self._lock:
+            self._handle = self._speaker.say(text)
 
     def interrupt(self) -> None:
-        """Drop whatever is queued and kill playback instantly, without blocking the caller.
+        """Cut the robot off mid-sentence."""
+        with self._lock:
+            self._handle = None
+            self._quiet_since = self._now()
+        self._speaker.stop()
 
-        Called synchronously from the event loop (:class:`~.controller.AiController`),
-        so the queue is cleared with non-blocking gets and the actual kill/reap
-        is handed to :func:`_kill_and_reap` on its own thread -- see the class
-        docstring. Bumping ``_generation`` here, under the same lock that
-        clears ``_process``, is what makes a chunk the writer had already
-        dequeued before this call -- pre-barge-in audio still in flight
-        between the queue and the pipe -- get dropped instead of starting
-        (or writing to) a fresh ``aplay`` afterwards: see
-        :meth:`_ensure_process` and :meth:`_drain`. The kill thread is
-        tracked in ``_pending_kills`` so :meth:`close`, if it runs right
-        after, can still supervise it instead of treating ``_process is
-        None`` as "nothing left to reap."
-        """
-        with contextlib.suppress(queue.Empty):
-            while True:
-                self._queue.get_nowait()
-        with self._process_lock:
-            process, self._process = self._process, None
-            self._generation += 1
-        if process is None:
-            return
-        thread = threading.Thread(target=self._kill_and_reap_tracked, args=(process,), daemon=True)
-        with self._process_lock:
-            self._pending_kills.append((thread, process))
-        thread.start()
+    def speaking(self, *, tail: float = 0.0) -> bool:
+        """Whether speech is playing, or ended less than *tail* seconds ago."""
+        with self._lock:
+            if self._handle is not None and not self._handle.is_alive():
+                self._handle = None
+                self._quiet_since = self._now()
+            if self._handle is not None:
+                return True
+            return self._quiet_since is not None and self._now() - self._quiet_since < tail
 
     def close(self) -> None:
-        """Stop the writer thread and reap the current process. Allowed to block: this runs once, at session end.
+        self._speaker.stop()
+        self._speaker.close()
 
-        The queue is discarded (not drained through the writer) before the
-        stop sentinel is enqueued, so the writer sees the sentinel next and
-        exits promptly instead of working through however much audio is
-        still backed up -- by session end the motions have already been
-        parked, so finishing a whole queued reply is not owed; audio already
-        sitting in ``aplay``'s own buffer may still finish playing out, only
-        what was queued but not yet written is dropped. ``_closed`` is set
-        first so a chunk the writer had already dequeued before ``close()``
-        ran is dropped by :meth:`_ensure_process` rather than spawning a
-        fresh ``aplay`` that would outlive this call.
 
-        ``process.kill()`` runs before ``process.stdin.close()``. Reversing
-        that order can hang this call indefinitely: a writer thread wedged
-        inside a blocking ``stdin.write()`` (ALSA backpressure -- the same
-        condition that makes the writer join below time out) holds that
-        stdin object's own internal lock, so closing it first blocks this
-        call until the write itself returns -- which, for a genuinely
-        wedged write, never happens on its own. Killing first makes the
-        wedged write fail (EPIPE) and release that lock, so the
-        ``stdin.close()`` that follows is no longer waiting on anything. The
-        same reasoning applies to :func:`_kill_and_reap` on the
-        :meth:`interrupt` path.
+class Listener:
+    """Mic → utterances, on a worker thread, handing each one to *on_utterance*.
 
-        Any kill/reap thread still running from a recent :meth:`interrupt`
-        is joined here too (bounded): a process ``interrupt()`` handed off
-        right before ``close()`` ran must not be abandoned just because
-        ``_process`` was already ``None`` by the time this method looked at
-        it. If that join still times out, the process is killed directly --
-        the tracked entry holds the ``Popen`` itself, so this does not need
-        the other thread to finish. A ``wait()`` that times out on this
-        call's own process is followed by a ``kill()`` and one more bounded
-        ``wait()`` rather than giving up -- so a live ``aplay`` is never
-        abandoned on the way out.
-        """
-        with self._process_lock:
-            self._closed = True
-        if self._writer is not None:
-            with contextlib.suppress(queue.Empty):
-                while True:
-                    self._queue.get_nowait()
-            self._queue.put(None)  # sentinel: stop the writer thread
-            self._writer.join(timeout=5)
-        with self._process_lock:
-            process, self._process = self._process, None
-            pending = list(self._pending_kills)
-        for thread, pending_process in pending:
-            thread.join(timeout=2)
-            if thread.is_alive():
-                with contextlib.suppress(Exception):
-                    pending_process.kill()
-                with contextlib.suppress(Exception):
-                    pending_process.wait(timeout=2)
-        if process is None:
+    With echo cancellation, speech that starts while the robot talks cuts it
+    off (barge-in). Without it the robot would hear itself, so the mic is
+    ignored until the robot has finished talking.
+    """
+
+    def __init__(
+        self,
+        mic: MicStreamLike,
+        segmenter: SegmenterLike,
+        voice: Voice,
+        on_utterance: Callable[[Int16Array], None],
+        *,
+        barge_in: bool,
+    ) -> None:
+        self._mic = mic
+        self._segmenter = segmenter
+        self._voice = voice
+        self._on_utterance = on_utterance
+        self._barge_in = barge_in
+        self._stop = threading.Event()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def run(self) -> None:
+        with self._mic.stream() as chunks:
+            while not self._stop.is_set():
+                chunk = chunks.get(_MIC_READ_TIMEOUT_S)
+                if chunk is None:
+                    continue
+                self._hear(to_pipeline_rate(chunk, self._mic.sample_rate))
+
+    def _hear(self, pcm: Int16Array) -> None:
+        if not self._barge_in and self._voice.speaking(tail=_ECHO_TAIL_S):
+            self._segmenter.reset()
             return
-        with contextlib.suppress(Exception):
-            process.kill()
-        with contextlib.suppress(Exception):
-            if process.stdin is not None:
-                process.stdin.close()
-        try:
-            process.wait(timeout=5)
-        except Exception:
-            with contextlib.suppress(Exception):
-                process.kill()
-            with contextlib.suppress(Exception):
-                process.wait(timeout=5)
+        was_speaking = self._segmenter.speaking
+        utterance = self._segmenter.feed(pcm)
+        if self._barge_in and not was_speaking and self._segmenter.speaking and self._voice.speaking():
+            self._voice.interrupt()
+        if utterance is not None:
+            self._on_utterance(utterance)
 
 
-__all__ = ["API_RATE", "CAPTURE_RATE", "MicStreamLike", "MicrophoneFeed", "Playback"]
+__all__ = ["Listener", "MicStreamLike", "SegmenterLike", "SpeakerLike", "Voice", "to_pipeline_rate"]

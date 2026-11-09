@@ -4,22 +4,31 @@ version = "0.1.0"
 description = "Palmimo Controller: browser teleop with one-tap switch to preset AI voice modes (OpenAI Realtime)"
 authors = [{ name = "Jizai Inc.", email = "noreply@jizai.ai" }]
 license = "Apache-2.0"
-requires-python = ">=3.12"
+# mediapipe==0.10.18 (see its dependency comment below) publishes cp312
+# wheels only, so this project cannot install on 3.13.
+requires-python = ">=3.12,<3.13"
 dependencies = [
     # Pinned to the 0.1 line of the released PyPI package: this example is a
     # standalone uv project (like a third-party Palmimo app), not a workspace
     # member, so it resolves the SDK from PyPI rather than from ../../packages.
-    # `voice` is MicStream, the microphone AI mode streams to the Realtime API.
-    "palmimo-sdk[hardware,vision,voice]>=0.1.3,<0.2",
-    # AI mode only: the Realtime websocket, its typed wire models, and the
-    # 16 kHz -> 24 kHz resampling between the mic and the API.
-    "websockets>=14",
-    "pydantic>=2",
+    # `voice` is MicStream, the microphone AI mode listens on; `speech` is
+    # Piper, the voice it answers in.
+    "palmimo-sdk[face,hardware,speech,vision,voice]>=0.1.3,<0.2",
+    # AI mode: OpenAI speech-to-text and chat (ai/llm.py), Silero VAD
+    # inference (ai/vad.py), and resampling the booth's 48 kHz mic (ai/audio.py).
+    "openai>=1.40",
+    "onnxruntime>=1.17",
     "numpy>=1.24",
     "scipy>=1.11",
+    # The prompt editor's request bodies (server.py).
+    "pydantic>=2",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "typer>=0.12",
+    # AI mode reflexes (palmimo_controller.ai.vision: wave-back and face
+    # glances). Pinned to the companion agent's version: newer releases
+    # changed the Tasks API this uses (HandLandmarker / FaceDetector options).
+    "mediapipe==0.10.18",
 ]
 
 [project.urls]

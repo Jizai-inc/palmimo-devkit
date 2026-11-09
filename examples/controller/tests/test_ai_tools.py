@@ -5,7 +5,7 @@ import json
 import pytest
 
 from palmimo_controller.ai.tools import TOOL_DEFINITIONS, run_tool
-from palmimo_controller.session import PilotInput, PilotSession
+from palmimo_controller.session import AI_START_NOD_SECONDS, PilotInput, PilotSession
 
 
 class FakeClock:
@@ -22,6 +22,8 @@ def _ai_session() -> tuple[PilotSession, FakeClock]:
     session.acquire_pilot("a")
     session.begin_ai("a", "default")
     session.ai_started()
+    # Let the go-live nod finish, so each test sees only its own tool call.
+    clock.now = AI_START_NOD_SECONDS
     return session, clock
 
 
@@ -68,5 +70,5 @@ def test_run_tool_refuses_when_ai_mode_has_ended() -> None:
 
 
 def test_every_tool_definition_is_runnable() -> None:
-    names = {definition["name"] for definition in TOOL_DEFINITIONS}
+    names = {definition["function"]["name"] for definition in TOOL_DEFINITIONS}
     assert names == {"walk", "turn", "gesture", "look", "stop"}

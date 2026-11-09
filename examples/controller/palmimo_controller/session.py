@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Hashable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .control import resolve_motion
 
@@ -49,6 +49,22 @@ MODE_AI = "ai"
 #: A model that asks to walk "for a while" must not walk off a table.
 AI_INTENT_MAX_SECONDS: float = 5.0
 
+#: How long the nod that greets a live AI session plays before the robot holds still.
+#: Covers one nod (~1.5 s); the AI's first motion intent replaces it early.
+AI_START_NOD_SECONDS: float = 2.0
+
+#: Face expressions the robot cycles through while an AI session connects,
+#: so a visitor sees it "thinking" instead of a frozen face.
+STARTING_FACES: tuple[str, ...] = ("THINKING", "IDEA", "SMILE")
+#: How long each `STARTING_FACES` expression shows before the next.
+STARTING_FACE_SECONDS: float = 0.7
+#: Face shown when the AI session goes live, then the firmware returns to IDLE.
+LIVE_FACE: str = "HAPPY"
+#: Face shown when an AI session ends with a notice (it failed or was cut off).
+FAILED_FACE: str = "SAD"
+#: How long `LIVE_FACE` / `FAILED_FACE` hold before the firmware returns to IDLE.
+CUE_FACE_HOLD_MS: int = 2000
+
 
 @dataclass(frozen=True)
 class PilotInput:
@@ -73,6 +89,25 @@ class ControlStatus:
 
 
 @dataclass(frozen=True)
+class FaceCue:
+    """What the robot's face should show right now.
+
+    `robot_loop.RobotLoop` applies a cue only when *key* changes, so one
+    expression is sent once rather than on every control cycle.
+    """
+
+    key: str
+    #: Expression name, or `None` for the neutral IDLE face.
+    expression: str | None = None
+    #: `0` holds until the next cue; above `0` the firmware returns to IDLE after it.
+    hold_ms: int = 0
+
+
+#: The neutral face: teleop with nothing to report.
+IDLE_FACE_CUE = FaceCue(key="idle")
+
+
+@dataclass(frozen=True)
 class _ModeState:
     """Who drives the robot. Replaced wholesale, like `_PilotState`."""
 
@@ -83,6 +118,10 @@ class _ModeState:
     notice: str | None = None
     ai_input: PilotInput = field(default_factory=PilotInput)
     ai_until: float | None = None
+    #: When this mode state began, for the time-based face cue. `None` before any switch.
+    since: float | None = None
+    #: Neck target `(pitch, yaw)` a reflex glance holds while no AI intent is running.
+    gaze: tuple[float, float] | None = None
 
 
 @dataclass
@@ -140,18 +179,29 @@ class PilotSession:
         """
         if self._pilot_id != client_id or self._mode.mode != MODE_TELEOP:
             return False
-        self._mode = _ModeState(mode=MODE_AI_STARTING, ai_mode=name)
+        self._mode = _ModeState(mode=MODE_AI_STARTING, ai_mode=name, since=self._now())
         return True
 
     def ai_started(self) -> None:
-        """Mark the AI session as live. A no-op unless a switch is in progress."""
+        """Mark the AI session as live and greet it with one nod. A no-op unless a switch is in progress.
+
+        The nod goes through the AI intent path, so it plays through
+        `Palmimo.step()` like any gesture, and the AI's first motion replaces it.
+        """
         current = self._mode
         if current.mode == MODE_AI_STARTING:
-            self._mode = _ModeState(mode=MODE_AI, ai_mode=current.ai_mode)
+            now = self._now()
+            self._mode = _ModeState(
+                mode=MODE_AI,
+                ai_mode=current.ai_mode,
+                ai_input=PilotInput(gesture="nod"),
+                ai_until=now + AI_START_NOD_SECONDS,
+                since=now,
+            )
 
     def end_ai(self, notice: str | None = None) -> None:
         """Return to teleop, dropping any AI motion intent, with an optional message for the pilot."""
-        self._mode = _ModeState(notice=notice)
+        self._mode = _ModeState(notice=notice, since=self._now())
 
     def set_ai_intent(self, intent: PilotInput, seconds: float) -> bool:
         """Have the robot follow *intent* for up to *seconds* (capped at `AI_INTENT_MAX_SECONDS`).
@@ -163,8 +213,62 @@ class PilotSession:
         if current.mode != MODE_AI:
             return False
         duration = max(0.0, min(seconds, AI_INTENT_MAX_SECONDS))
-        self._mode = _ModeState(mode=MODE_AI, ai_mode=current.ai_mode, ai_input=intent, ai_until=self._now() + duration)
+        self._mode = _ModeState(
+            mode=MODE_AI,
+            ai_mode=current.ai_mode,
+            ai_input=intent,
+            ai_until=self._now() + duration,
+            since=current.since,
+        )
         return True
+
+    @property
+    def ai_busy(self) -> bool:
+        """Whether an AI motion intent (a tool call, the go-live nod, a reflex wave) is still running."""
+        mode = self._mode
+        return mode.mode == MODE_AI and mode.ai_until is not None and self._now() < mode.ai_until
+
+    def set_gaze(self, pitch: float, yaw: float) -> bool:
+        """Point the neck at *pitch*/*yaw* while no AI intent runs (a reflex glance).
+
+        An AI intent always wins over the gaze, so a glance never overrides
+        something the model asked for.
+
+        Returns:
+            bool: `False` (ignored) unless an AI mode is running.
+        """
+        current = self._mode
+        if current.mode != MODE_AI:
+            return False
+        self._mode = replace(current, gaze=(pitch, yaw))
+        return True
+
+    def clear_gaze(self) -> None:
+        """End a reflex glance; the neck recenters unless an AI intent drives it."""
+        current = self._mode
+        if current.gaze is not None:
+            self._mode = replace(current, gaze=None)
+
+    def face_cue(self) -> FaceCue:
+        """What the face should show for the current mode.
+
+        While an AI session connects, the face cycles through `STARTING_FACES`;
+        each step has its own key, so the robot loop sends every step once.
+        A live session shows `LIVE_FACE`, a session that ended with a notice
+        shows `FAILED_FACE`, and plain teleop is the neutral IDLE face.
+        """
+        mode = self._mode
+        if mode.mode == MODE_AI_STARTING:
+            elapsed = 0.0 if mode.since is None else max(0.0, self._now() - mode.since)
+            step = int(elapsed / STARTING_FACE_SECONDS)
+            return FaceCue(key=f"starting:{step}", expression=STARTING_FACES[step % len(STARTING_FACES)])
+        # `since` keeps the key distinct per switch: two failed starts in a row
+        # must each show the face, not leave the second one unsent.
+        if mode.mode == MODE_AI:
+            return FaceCue(key=f"live:{mode.since}", expression=LIVE_FACE, hold_ms=CUE_FACE_HOLD_MS)
+        if mode.notice is not None:
+            return FaceCue(key=f"failed:{mode.since}", expression=FAILED_FACE, hold_ms=CUE_FACE_HOLD_MS)
+        return IDLE_FACE_CUE
 
     @property
     def pilot_present(self) -> bool:
@@ -275,7 +379,8 @@ class PilotSession:
 
         In an AI mode the pilot's input is ignored: the robot holds still
         while the AI session connects, then follows the AI's latest intent
-        until that intent's time runs out.
+        until that intent's time runs out. Between intents, a reflex glance's
+        gaze (`set_gaze`) points the neck; otherwise the robot holds still.
 
         In teleop, move/rotate/gesture/neck all collapse to inert (translation,
         rotation, gesture off, neck centered) when there is no pilot or the
@@ -298,9 +403,11 @@ class PilotSession:
         if mode.mode == MODE_AI_STARTING:
             return PilotInput()
         if mode.mode == MODE_AI:
-            if mode.ai_until is None or self._now() >= mode.ai_until:
-                return PilotInput()
-            return mode.ai_input
+            if mode.ai_until is not None and self._now() < mode.ai_until:
+                return mode.ai_input
+            if mode.gaze is not None:
+                return PilotInput(neck_pitch=mode.gaze[0], neck_yaw=mode.gaze[1])
+            return PilotInput()
         state = self._state
         current = state.input
         if not self.pilot_present or self._deadman_expired(state):

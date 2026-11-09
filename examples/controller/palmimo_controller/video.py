@@ -119,6 +119,17 @@ class VideoStream:
         with self._lock:
             return self._camera_ok
 
+    def latest_frame(self) -> Any | None:
+        """The camera's newest raw frame, for the AI reflexes, or `None` with no working camera.
+
+        Blocks up to one capture interval. `HeadCamera.latest()` serves every
+        reader from its one background drain, so this adds no capture work.
+        """
+        camera = self._camera
+        if camera is None or not self._available:
+            return None
+        return camera.latest(timeout=self._capture_interval)
+
     def latest_jpeg(self) -> bytes | None:
         """The newest encoded frame, or `None` before the first successful capture (or with no camera)."""
         with self._lock:

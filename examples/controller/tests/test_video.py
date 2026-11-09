@@ -219,3 +219,18 @@ def test_no_failure_is_logged_while_the_first_frame_is_still_arriving(caplog: py
             assert len(caplog.records) == 1  # still no frame after the grace period: reported
         finally:
             video.stop()
+
+
+def test_latest_frame_reads_the_raw_frame_once_the_camera_is_open() -> None:
+    stream = VideoStream(_camera(FakeCamera(["raw"])), encode=_fake_encode, sleep=_no_sleep)
+    assert stream.latest_frame() is None
+    stream.start()
+    try:
+        assert stream.latest_frame() == "raw"
+    finally:
+        stream.stop()
+    assert stream.latest_frame() is None
+
+
+def test_latest_frame_is_none_without_a_camera() -> None:
+    assert VideoStream(None).latest_frame() is None

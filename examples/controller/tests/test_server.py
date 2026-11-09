@@ -35,9 +35,7 @@ def _app(robot: Palmimo, session: PilotSession, robot_loop: RobotLoop, video: Vi
     """`create_app` with AI wired but unavailable (no API key), so teleop behaves exactly as before."""
     telemetry = Telemetry(emit=lambda _line: None)
     prompts = EditablePrompts(default_prompt_dir())
-    ai = AiController(
-        session, prompts, api_key=None, telemetry=telemetry, mic_factory=_no_mic, playback_factory=_no_mic
-    )
+    ai = AiController(session, prompts, llm=None, telemetry=telemetry, mic_factory=_no_mic, voice_factory=_no_mic)
     return create_app(robot, session, robot_loop, video, ai, prompts, telemetry)
 
 

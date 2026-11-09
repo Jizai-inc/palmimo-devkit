@@ -55,7 +55,16 @@ How a switch works:
   that drives `Palmimo`, in every mode. An AI mode only changes which input
   `PilotSession.effective_input()` returns: the pilot's d-pad in teleop,
   nothing while the AI session connects, and the AI's latest motion intent
-  once it is live.
+  once it is live. Going live starts with one nod
+  (`session.AI_START_NOD_SECONDS`), which the AI's first motion replaces.
+- **The switch shows its progress.** The pilot page shows a spinner from the
+  tap until the session is live. When a face display is attached, the face
+  cycles through `session.STARTING_FACES` (thinking, idea, smile) while the
+  session connects, shows a happy face when it goes live, and a sad face when
+  a switch fails, before returning to its neutral face.
+  `PilotSession.face_cue()` decides the face, and `RobotLoop` sends it only
+  when it changes. A face that stops answering is logged and skipped; it never
+  counts as a servo fault, so it cannot end an AI session.
 - **The AI moves the robot through tools** (`ai/tools.py`): `walk`, `turn`,
   `gesture`, `look`, and `stop`. Each records an intent with a time limit of
   at most `session.AI_INTENT_MAX_SECONDS` (5 s), after which the robot stands
@@ -276,6 +285,7 @@ uv run --with-editable ../../packages/palmimo_sdk python -m palmimo_controller.m
 | `--gait-speed` | `0.012` | `Palmimo` gait speed applied to every teleop-driven motion (0.001-0.05) |
 | `--dry-run` | off | Compute-only: never attach a servo driver |
 | `--no-camera` | off | Never attach the head camera |
+| `--no-face` | off | Never attach the face display. Without this flag, a face display is attached only when one is plugged in and opens, so a robot without a face still starts |
 | `--servo-port` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0`; ignored under `--dry-run` |
 | `--audio-device` | `respeaker` | AI mode mic and speaker. `respeaker`: a development robot's ReSpeaker 4 Mic Array, with echo cancellation. `booth-usb`: an exhibition robot's push-to-talk USB mic ("USB PnP", 48 kHz, no echo cancellation; hold its button while talking) and USB speaker ("Composite") |
 

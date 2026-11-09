@@ -337,6 +337,8 @@
   // The server owns the mode; this page only asks for a switch and renders
   // whatever the next status broadcast says. `switchPending` blocks a second
   // tap until that broadcast arrives, and the server ignores one anyway.
+  // A tapped AI mode shows its starting state at once rather than after the
+  // next broadcast, so the pilot sees the tap land.
 
   const modeIndicator = document.getElementById("mode-indicator");
   const aiButton = document.getElementById("ai-button");
@@ -349,11 +351,55 @@
   let aiAvailable = false;
   let currentMode = "teleop";
   let switchPending = false;
+  let pendingTimer = null;
+  let liveFlashTimer = null;
+  let lastStatus = null;
+
+  // A switch that fails at once (no key, no prompt) never changes the
+  // broadcast mode, so the pending state also ends on its own.
+  const SWITCH_PENDING_MS = 2500;
+  const LIVE_FLASH_MS = 1200;
+
+  function setPending(pending) {
+    switchPending = pending;
+    clearTimeout(pendingTimer);
+    if (pending) {
+      pendingTimer = setTimeout(function () {
+        switchPending = false;
+        if (lastStatus) onStatus(lastStatus);
+      }, SWITCH_PENDING_MS);
+    }
+  }
 
   function sendAi(message) {
     if (socket.readyState !== WebSocket.OPEN) return;
-    switchPending = true;
+    setPending(true);
     socket.send(JSON.stringify(message));
+  }
+
+  function renderMode(mode, name) {
+    const inTeleop = mode === "teleop";
+    const starting = mode === "ai_starting";
+    if (inTeleop) {
+      modeIndicator.textContent = "手動操作";
+    } else if (starting) {
+      modeIndicator.textContent = "AI起動中：" + name;
+    } else {
+      modeIndicator.textContent = "AI：" + name;
+    }
+    document.body.classList.toggle("ai-active", !inTeleop);
+    document.body.classList.toggle("ai-starting", starting);
+    aiButton.hidden = !inTeleop;
+    teleopButton.hidden = inTeleop;
+    if (!inTeleop) modePicker.hidden = true;
+  }
+
+  function flashLive() {
+    document.body.classList.add("ai-live-flash");
+    clearTimeout(liveFlashTimer);
+    liveFlashTimer = setTimeout(function () {
+      document.body.classList.remove("ai-live-flash");
+    }, LIVE_FLASH_MS);
   }
 
   function renderModeList(modes) {
@@ -367,6 +413,10 @@
         modePicker.hidden = true;
         if (switchPending || currentMode !== "teleop") return;
         sendAi({ ai: "start", mode: mode.id });
+        if (switchPending) {
+          noticeBanner.hidden = true;
+          renderMode("ai_starting", mode.label);
+        }
       });
       modeList.appendChild(button);
     });
@@ -401,22 +451,16 @@
   });
 
   onStatus = function (status) {
-    if (status.mode !== currentMode) switchPending = false;
+    lastStatus = status;
+    const previousMode = currentMode;
+    if (status.mode !== currentMode) setPending(false);
     currentMode = status.mode;
     aiAvailable = status.ai_available;
+    // Keep the optimistic starting state until the server's mode moves.
+    if (switchPending) return;
     const inTeleop = status.mode === "teleop";
-    const name = modeLabels[status.ai_mode] || status.ai_mode || "";
-    if (inTeleop) {
-      modeIndicator.textContent = "手動操作";
-    } else if (status.mode === "ai_starting") {
-      modeIndicator.textContent = "AI起動中：" + name;
-    } else {
-      modeIndicator.textContent = "AI：" + name;
-    }
-    document.body.classList.toggle("ai-active", !inTeleop);
-    aiButton.hidden = !inTeleop;
-    teleopButton.hidden = inTeleop;
-    if (!inTeleop) modePicker.hidden = true;
+    renderMode(status.mode, modeLabels[status.ai_mode] || status.ai_mode || "");
+    if (status.mode === "ai" && previousMode !== "ai") flashLive();
     if (status.notice && inTeleop) {
       noticeBanner.textContent = status.notice;
       noticeBanner.hidden = false;

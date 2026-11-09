@@ -1,45 +1,59 @@
-"""AiController: starts and stops one OpenAI Realtime session for an AI mode.
+"""AiController: runs one AI mode at a time as a listen → transcribe → chat → speak loop.
+
+Speech is cut into utterances on the robot (Silero VAD), transcribed and
+answered over the OpenAI API, and spoken locally with Piper. A reply's tool
+calls become motion intents in `session.PilotSession`.
 
 Runs on the server's event loop, the same loop the WebSocket handler writes
 `session.PilotSession` from, so the session keeps a single writer. The robot
 connection belongs to `robot_loop.RobotLoop` and is never touched here:
 switching modes only changes which input the robot loop reads.
 
-Any failure (no key, rejected key, quota, network, a slow start) ends the AI
-session, puts the session back in teleop with a plain-language notice, and
-leaves the robot connected.
+A failure that retrying cannot fix (no key, rejected key, quota, mic, voice)
+ends the mode, puts the session back in teleop with a plain-language notice,
+and leaves the robot connected. A turn that fails on the network is dropped
+and the mode keeps listening, unless several fail in a row.
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
+import collections
 import contextlib
 import logging
 import time
 from collections.abc import Callable, Hashable
-from contextlib import AbstractAsyncContextManager, AbstractContextManager
-from typing import Any, Protocol
+from contextlib import AbstractContextManager
+from typing import Any, NamedTuple, Protocol, TypeVar
+
+from palmimo_sdk.audio import int16_to_wav
 
 from ..modes import PromptSource
 from ..session import PilotSession
 from ..telemetry import Telemetry
-from . import protocol
-from .audio import API_RATE, MicrophoneFeed, MicStreamLike
-from .client import RealtimeClient, RealtimeClientLike
-from .protocol import ItemCreate, ResponseCreate, SessionUpdate
+from .audio import Listener, MicStreamLike, SegmenterLike, SpeakerLike, Voice
+from .filters import is_noise
+from .llm import LlmError, LlmLike
 from .tools import TOOL_DEFINITIONS, run_tool
+from .vad import SAMPLE_RATE, Int16Array
 
 
 _LOG = logging.getLogger(__name__)
 
-#: Realtime model and voice. Fixed in code: the pilot picks a mode, not a model.
-MODEL = "gpt-realtime-2.1"
-VOICE = "coral"
-LANGUAGE = "ja"
-
-#: Longest a switch to AI may take before it is abandoned (PRD target: 3 s).
+#: Longest the API check at a switch to AI may take before it is abandoned.
 START_TIMEOUT_S: float = 8.0
+
+#: Chat calls per utterance. The last one is offered no tools, so it has to answer in words.
+MAX_CHAT_ROUNDS = 3
+
+#: Exchanges kept as context. Older ones are dropped; the whole history is dropped when the mode ends.
+HISTORY_TURNS = 8
+
+#: Network failures in a row that end the mode rather than dropping one more turn.
+MAX_TRANSIENT_FAILURES = 3
+
+#: Utterances waiting for a reply. When full, the oldest is dropped: the newest is what the visitor waits on.
+_UTTERANCE_QUEUE_MAX = 3
 
 # Messages the pilot sees when AI stops. Shown on the pilot page as-is.
 NOTICE_NO_KEY = "AIは使用できません：ポータルでAPIキーを設定してください"
@@ -49,12 +63,33 @@ NOTICE_NETWORK = "AIとの接続が切れました。手動操作に戻りまし
 NOTICE_TIMEOUT = "AIの起動に時間がかかりすぎました。もう一度お試しください"
 NOTICE_NO_PROMPT = "このモードは読み込めませんでした"
 NOTICE_MIC = "マイクを開けませんでした。手動操作に戻りました"
+NOTICE_VOICE = "音声の準備ができませんでした。手動操作に戻りました"
 NOTICE_ROBOT_OFFLINE = "ロボットとの接続に問題があるため、AIを停止しました"
 NOTICE_FAILED = "AIでエラーが発生しました。手動操作に戻りました"
 
-#: Realtime `error` codes that mean the key cannot work, so retrying is pointless.
-_QUOTA_CODES = frozenset({"insufficient_quota"})
-_KEY_CODES = frozenset({"invalid_api_key"})
+_NOTICE_FOR_KIND = {"auth": NOTICE_BAD_KEY, "quota": NOTICE_QUOTA, "model": NOTICE_FAILED, "transient": NOTICE_NETWORK}
+
+_T = TypeVar("_T")
+
+
+class OpenMic(NamedTuple):
+    """An open microphone, and whether its capture cancels the robot's own voice."""
+
+    stream: MicStreamLike
+    echo_cancelled: bool
+
+
+class OpenVoice(NamedTuple):
+    """A loaded speech synthesizer and utterance segmenter."""
+
+    speaker: SpeakerLike
+    segmenter: SegmenterLike
+
+
+class ReflexesLike(Protocol):
+    """The part of `reflexes.Reflexes` the controller runs."""
+
+    async def run(self) -> None: ...
 
 
 class _AiStopped(Exception):  # noqa: N818 -- control flow carrying the pilot's notice
@@ -64,70 +99,79 @@ class _AiStopped(Exception):  # noqa: N818 -- control flow carrying the pilot's 
         self.reason = reason
 
 
-class PlaybackLike(Protocol):
-    """The subset of `audio.Playback` the controller needs."""
-
-    def write(self, pcm: bytes) -> None: ...
-
-    def interrupt(self) -> None: ...
-
-    def close(self) -> None: ...
-
-
-Connect = Callable[..., AbstractAsyncContextManager[RealtimeClientLike]]
-
-
 def _classify(exc: BaseException) -> tuple[str, str]:
     """Map a failure to `(notice for the pilot, short reason for telemetry)`."""
     if isinstance(exc, _AiStopped):
         return exc.notice, exc.reason
+    if isinstance(exc, LlmError):
+        return _NOTICE_FOR_KIND[exc.kind], str(exc)
     if isinstance(exc, TimeoutError):
         return NOTICE_TIMEOUT, "start_timeout"
-    status = getattr(getattr(exc, "response", None), "status_code", None)
-    if status in (401, 403):
-        return NOTICE_BAD_KEY, f"http_{status}"
-    if status == 429:
-        return NOTICE_QUOTA, "http_429"
-    if isinstance(exc, OSError) or type(exc).__name__.startswith("ConnectionClosed"):
-        return NOTICE_NETWORK, "network"
     return NOTICE_FAILED, type(exc).__name__
 
 
+class History:
+    """The mode's prompt plus its last few exchanges, in Chat Completions message form.
+
+    An exchange is a visitor's utterance and everything said and done in reply,
+    dropped as a unit so a tool result never outlives the call it answers.
+    """
+
+    def __init__(self, prompt: str, *, max_turns: int = HISTORY_TURNS) -> None:
+        self._system = {"role": "system", "content": prompt}
+        self._turns: collections.deque[list[dict[str, Any]]] = collections.deque(maxlen=max_turns)
+
+    def begin(self, text: str) -> None:
+        self._turns.append([{"role": "user", "content": text}])
+
+    def add(self, message: dict[str, Any]) -> None:
+        self._turns[-1].append(message)
+
+    def messages(self) -> list[dict[str, Any]]:
+        return [self._system, *(message for turn in self._turns for message in turn)]
+
+
+def _offer(queue: asyncio.Queue[Int16Array], utterance: Int16Array) -> None:
+    if queue.full():
+        queue.get_nowait()
+    queue.put_nowait(utterance)
+
+
 class AiController:
-    """Owns at most one running AI session at a time."""
+    """Owns at most one running AI mode at a time."""
 
     def __init__(
         self,
         session: PilotSession,
         prompts: PromptSource,
         *,
-        api_key: str | None,
+        llm: LlmLike | None,
         telemetry: Telemetry,
-        mic_factory: Callable[[], AbstractContextManager[MicStreamLike]],
-        playback_factory: Callable[[], PlaybackLike],
-        connect: Connect = RealtimeClient.connect,
+        mic_factory: Callable[[], AbstractContextManager[OpenMic]],
+        voice_factory: Callable[[], AbstractContextManager[OpenVoice]],
         start_timeout: float = START_TIMEOUT_S,
         now: Callable[[], float] = time.monotonic,
+        reflexes_factory: Callable[[], ReflexesLike] | None = None,
     ) -> None:
         self._session = session
         self._prompts = prompts
-        self._api_key = api_key or None
+        self._llm = llm
         self._telemetry = telemetry
         self._mic_factory = mic_factory
-        self._playback_factory = playback_factory
-        self._connect = connect
+        self._voice_factory = voice_factory
         self._start_timeout = start_timeout
         self._now = now
+        self._reflexes_factory = reflexes_factory
         self._task: asyncio.Task[None] | None = None
 
     @property
     def available(self) -> bool:
         """Whether an API key is configured. Teleop never depends on this."""
-        return self._api_key is not None
+        return self._llm is not None
 
     @property
     def running(self) -> bool:
-        """Whether an AI session task is in flight (starting or live)."""
+        """Whether an AI mode task is in flight (starting or live)."""
         return self._task is not None and not self._task.done()
 
     async def start(self, client_id: Hashable, mode_id: str) -> bool:
@@ -135,12 +179,12 @@ class AiController:
 
         Returns:
             bool: `False` if the switch was ignored (not the pilot, or a
-                switch already in progress) or failed before connecting.
+                switch already in progress) or failed before it began.
         """
         previous = self._session.mode
         if not self._session.begin_ai(client_id, mode_id):
             return False
-        if self._api_key is None:
+        if self._llm is None:
             self._fail(previous, mode_id, NOTICE_NO_KEY, "no_api_key", latency_ms=0)
             return False
         try:
@@ -149,11 +193,11 @@ class AiController:
             _LOG.exception("could not load prompt for mode %r", mode_id)
             self._fail(previous, mode_id, NOTICE_NO_PROMPT, "prompt_unavailable", latency_ms=0)
             return False
-        self._task = asyncio.create_task(self._run(mode_id, prompt, self._now()), name=f"ai-mode-{mode_id}")
+        self._task = asyncio.create_task(self._run(self._llm, mode_id, prompt, self._now()), name=f"ai-mode-{mode_id}")
         return True
 
     async def stop(self, *, notice: str | None = None, reason: str = "user") -> None:
-        """End the AI session (if any) and return to teleop. Safe to call at any time."""
+        """End the AI mode (if any) and return to teleop. Safe to call at any time."""
         task, self._task = self._task, None
         from_mode = self._session.ai_mode
         if task is not None and not task.done():
@@ -170,26 +214,18 @@ class AiController:
             "mode_switch", from_mode=from_mode, to_mode=mode_id, ok=False, latency_ms=latency_ms, error=reason
         )
 
-    async def _run(self, mode_id: str, prompt: str, started_at: float) -> None:
+    async def _run(self, llm: LlmLike, mode_id: str, prompt: str, started_at: float) -> None:
         live = False
-        playback: PlaybackLike | None = None
+        voice: Voice | None = None
         try:
             async with contextlib.AsyncExitStack() as stack:
-                # Outside the start timeout: the first open downloads the echo
-                # canceller's model files, which is not a slow OpenAI start.
-                mic = await self._open_mic(stack)
+                # Outside the start timeout: the first open of each downloads
+                # model files, which is not a slow OpenAI start.
+                mic = await self._enter(stack, self._mic_factory(), NOTICE_MIC, "mic_unavailable")
+                loaded = await self._enter(stack, self._voice_factory(), NOTICE_VOICE, "voice_unavailable")
+                voice = Voice(loaded.speaker)
                 async with asyncio.timeout(self._start_timeout):
-                    client = await stack.enter_async_context(self._connect(model=MODEL, api_key=self._api_key))
-                    await client.send(
-                        SessionUpdate(
-                            instructions=prompt,
-                            tools=TOOL_DEFINITIONS,
-                            voice=VOICE,
-                            rate=API_RATE,
-                            transcription_language=LANGUAGE,
-                        )
-                    )
-                    playback = self._playback_factory()
+                    await llm.check()
                 self._session.ai_started()
                 live = True
                 self._telemetry.event(
@@ -199,12 +235,26 @@ class AiController:
                     ok=True,
                     latency_ms=round((self._now() - started_at) * 1000),
                 )
+                utterances: asyncio.Queue[Int16Array] = asyncio.Queue(maxsize=_UTTERANCE_QUEUE_MAX)
+                loop = asyncio.get_running_loop()
+
+                def heard(utterance: Int16Array) -> None:
+                    with contextlib.suppress(RuntimeError):  # the loop is already closed on shutdown
+                        loop.call_soon_threadsafe(_offer, utterances, utterance)
+
+                listener = Listener(mic.stream, loaded.segmenter, voice, heard, barge_in=mic.echo_cancelled)
+                # Runs before the mic closes (the stack unwinds in reverse), so the thread exits first.
+                stack.callback(listener.stop)
                 async with asyncio.TaskGroup() as group:
-                    group.create_task(MicrophoneFeed(mic, client).run())
-                    group.create_task(self._route(client, playback))
+                    group.create_task(asyncio.to_thread(listener.run))
+                    group.create_task(self._converse(llm, utterances, voice, History(prompt)))
+                    if self._reflexes_factory is not None:
+                        # Reflexes.run() only ever ends by cancellation, so it
+                        # cannot take the mode down with it.
+                        group.create_task(self._reflexes_factory().run())
         except Exception as exc:
-            # The TaskGroup wraps a service's failure in an ExceptionGroup;
-            # the first one is what ended the session.
+            # The TaskGroup wraps a task's failure in an ExceptionGroup;
+            # the first one is what ended the mode.
             failure: BaseException = exc.exceptions[0] if isinstance(exc, ExceptionGroup) and exc.exceptions else exc
             notice, reason = _classify(failure)
             _LOG.warning("AI mode %r stopped: %s", mode_id, reason, exc_info=failure)
@@ -217,73 +267,77 @@ class AiController:
             if self._task is asyncio.current_task():
                 self._task = None
         finally:
-            if playback is not None:
-                playback.interrupt()
-                await asyncio.to_thread(playback.close)
+            if voice is not None:
+                voice.interrupt()
 
-    async def _open_mic(self, stack: contextlib.AsyncExitStack) -> MicStreamLike:
-        """Open the mic on a worker thread and register its close on *stack*.
+    async def _enter(
+        self, stack: contextlib.AsyncExitStack, manager: AbstractContextManager[_T], notice: str, reason: str
+    ) -> _T:
+        """Enter *manager* on a worker thread and register its exit on *stack*.
 
         Opening blocks (device setup, and a model download on first use), so
         it must not run on the event loop, which also serves every pilot and
         viewer connection. If the switch is cancelled while the open is still
-        running, the mic is closed as soon as the open finishes.
+        running, the resource is closed as soon as the open finishes.
         """
-        manager = self._mic_factory()
         opening = asyncio.ensure_future(asyncio.to_thread(manager.__enter__))
         try:
-            mic = await asyncio.shield(opening)
+            value = await asyncio.shield(opening)
         except Exception as exc:
-            raise _AiStopped(NOTICE_MIC, "mic_unavailable") from exc
+            raise _AiStopped(notice, reason) from exc
         except asyncio.CancelledError:
 
-            def close_when_open(future: asyncio.Future[MicStreamLike]) -> None:
+            def close_when_open(future: asyncio.Future[_T]) -> None:
                 if not future.cancelled() and future.exception() is None:
                     manager.__exit__(None, None, None)
 
             opening.add_done_callback(close_when_open)
             raise
         stack.push(manager.__exit__)
-        return mic
+        return value
 
-    async def _route(self, client: RealtimeClientLike, playback: PlaybackLike) -> None:
-        async for event in client.events():
-            await self._dispatch(client, playback, event)
-        raise _AiStopped(NOTICE_NETWORK, "socket_closed")
-
-    async def _dispatch(
-        self, client: RealtimeClientLike, playback: PlaybackLike, event: protocol.ServerEvent | protocol.Unknown
+    async def _converse(
+        self, llm: LlmLike, utterances: asyncio.Queue[Int16Array], voice: Voice, history: History
     ) -> None:
-        match event:
-            case protocol.AudioDelta():
-                playback.write(base64.b64decode(event.delta))
-            case protocol.SpeechStarted():
-                # The visitor started talking: stop speaking over them.
-                _LOG.info("AI: heard speech")
-                playback.interrupt()
-            # Logged as lengths only, never the words: visitors did not agree
-            # to have what they say kept in the robot's journal.
-            case protocol.TranscriptCompleted():
-                _LOG.info("AI: visitor speech understood (%d chars)", len(event.transcript))
-            case protocol.TranscriptDone():
-                _LOG.info("AI: replied with speech (%d chars)", len(event.transcript))
-            case protocol.ResponseDone():
-                calls = event.response.function_calls
-                for call in calls:
-                    output = run_tool(self._session, call.name, call.arguments)
-                    await client.send(ItemCreate.function_call_output(call.call_id, output))
-                if calls:
-                    await client.send(ResponseCreate())
-            case protocol.ErrorEvent():
-                self._raise_if_fatal(event.error)
+        failures = 0
+        while True:
+            utterance = await utterances.get()
+            try:
+                await self._answer(llm, utterance, voice, history)
+            except LlmError as exc:
+                if exc.kind != "transient":
+                    raise
+                failures += 1
+                _LOG.warning("AI: turn dropped (%s, %d in a row)", exc, failures)
+                self._telemetry.event("ai_turn_failed", error=str(exc), in_a_row=failures)
+                if failures >= MAX_TRANSIENT_FAILURES:
+                    raise
+            else:
+                failures = 0
 
-    def _raise_if_fatal(self, error: dict[str, Any]) -> None:
-        code = error.get("code")
-        if code in _QUOTA_CODES:
-            raise _AiStopped(NOTICE_QUOTA, str(code))
-        if code in _KEY_CODES:
-            raise _AiStopped(NOTICE_BAD_KEY, str(code))
-        _LOG.warning("Realtime API error: %s", error)
+    async def _answer(self, llm: LlmLike, utterance: Int16Array, voice: Voice, history: History) -> None:
+        text = await llm.transcribe(int16_to_wav(utterance, SAMPLE_RATE))
+        # Logged as lengths only, never the words: visitors did not agree
+        # to have what they say kept in the robot's journal.
+        if is_noise(text):
+            _LOG.info("AI: ignored noise (%d chars)", len(text))
+            return
+        _LOG.info("AI: visitor speech understood (%d chars)", len(text))
+        history.begin(text)
+        for round_ in range(MAX_CHAT_ROUNDS):
+            tools = TOOL_DEFINITIONS if round_ < MAX_CHAT_ROUNDS - 1 else None
+            reply = await llm.chat(history.messages(), tools=tools)
+            history.add(reply.message)
+            if reply.text:
+                voice.say(reply.text)
+                _LOG.info("AI: replied with speech (%d chars)", len(reply.text))
+            for call in reply.tool_calls:
+                output = run_tool(self._session, call.name, call.arguments)
+                history.add({"role": "tool", "tool_call_id": call.id, "content": output})
+            # Once something was said, the tool results only need to be on
+            # record: asking the model again would make it talk twice.
+            if reply.text or not reply.tool_calls:
+                return
 
 
-__all__ = ["MODEL", "AiController", "PlaybackLike"]
+__all__ = ["AiController", "History", "OpenMic", "OpenVoice", "ReflexesLike"]
