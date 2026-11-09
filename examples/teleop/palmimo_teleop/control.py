@@ -21,8 +21,8 @@ ALLOWED_ROTATES: frozenset[int] = frozenset({-1, 0, 1})
 #: the server's input validation before it ever reaches this module.
 ALLOWED_GESTURES: frozenset[str] = frozenset({"wave", "dance"})
 
-#: Playback speed multipliers the pilot may select, applied to walking,
-#: rotating, wave and dance alike. A closed set rather than a free-form
+#: Speed multipliers the pilot may select, applied to walking and rotating
+#: only (wave and dance always play at their own speed). A closed set rather than a free-form
 #: number: each entry is a speed someone chose to offer, and anything else is
 #: rejected by the server's input validation like an unknown gait name.
 ALLOWED_SPEEDS: tuple[float, ...] = (1.0, 1.5, 2.0, 2.5)

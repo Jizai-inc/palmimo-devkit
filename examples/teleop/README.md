@@ -43,7 +43,8 @@ automatic hand-off, so the next person opens `/pilot` again to claim it fresh.
 
 Every open connection, pilot or viewer, receives the same status broadcast
 twice a second: `pilot_present`, the currently resolved `motion`, the
-applied `speed` multiplier (see [Speed](#speed)), the measured `loop_fps`,
+selected `speed` multiplier and the `applied_speed` the gait really runs at
+(see [Speed](#speed)), the measured `loop_fps`,
 `camera_ok`, `servo_attached` (whether a servo driver was attached at startup, as opposed to running compute-only -- see
 [Hardware notes](#hardware-notes)), and `robot_ok` (whether the most recent
 robot control cycle completed without raising -- see
@@ -114,25 +115,45 @@ rotating only; wave and dance always play at their own speed. Tapping one sends 
 message, which only the current pilot may send and which is dropped unless
 it is one of those values. The selection holds until the pilot picks
 another one; the highlighted button is the multiplier the server reports as
-applied in the status broadcast, not the one last tapped.
+selected in the status broadcast, not the one last tapped.
 
 The robot loop scales the gait speed the robot was started with
 (`--gait-speed`), written to `robot.engine.gait_speed` since `Palmimo` takes
 gait speed only as a constructor argument. The multiplied gait speed is
-capped at `--gait-speed`'s own maximum (`control.MAX_GAIT_SPEED`, 0.05).
+capped at `--gait-speed`'s own maximum (`control.MAX_GAIT_SPEED`, 0.05), so
+with a fast `--gait-speed` a multiplier can run slower than selected (with
+`--gait-speed 0.05`, every multiplier runs at 1x). The status broadcast
+therefore reports both: `speed` (selected) and `applied_speed` (what the gait
+really runs at). When they differ, the selected button is drawn striped and
+the viewer's status bar reads e.g. `speed: 2.5x (capped, runs 1.67x)`.
 
 Faster commands alone do not make the robot walk faster. The driver's
 time-based Profile_Velocity (300 ms per goal by default) low-passes the leg
-servos, so a 3x gait comes out with a much smaller stride: measured on a
-robot on a stand, the leg yaw swing at 3x was 22% of the commanded one
-against 56% at 1x -- about 1.2x the ground speed for 3x the cadence. So
-while a walking or rotating gait runs, the robot loop also divides the 18
-leg servos' Profile_Velocity by the same factor as the gait speed (100 ms
-at 3x), which brought the 3x swing back to 56%. It returns them to the
-driver default when the robot stands still or switches to a gesture, and
-writes nothing while the gesture plays (`Palmimo` retunes the servos for a
-wave itself). A dropped bus reply on one of these writes is retried next
-cycle instead of failing it.
+servos, so a fast gait comes out with a much smaller stride. These numbers
+were measured at 3x, before the multiplier was capped at 2.5x, on a robot on
+a stand: the leg yaw swing at 3x was 22% of the commanded one against 56% at
+1x -- about 1.2x the ground speed for 3x the cadence. So while a walking or
+rotating gait runs, the robot loop also divides the 18 leg servos'
+Profile_Velocity by the same factor as the gait speed (100 ms at that 3x,
+120 ms at 2.5x), which brought the 3x swing back to 56%; 2.5x has not been
+measured separately. It returns them to the driver default when the robot
+stands still or switches to a gesture, and writes nothing while a wave plays
+(`Palmimo` retunes the servos for a wave itself).
+
+These writes never fail a control cycle. The loop remembers which legs it
+confirmed at which value, so a write that fails partway marks the legs it
+may have missed as dirty instead of assuming them written. Dirty legs are
+retried at once when the motion or speed changes, otherwise on a back-off
+(`LEG_PROFILE_RETRY_BASE_S` 0.1 s doubling to `LEG_PROFILE_RETRY_MAX_S` 1 s)
+so a misbehaving bus does not cost every cycle 18 write timeouts. A dance
+gets no servo tuning from `Palmimo`, so its dirty legs are retried during
+the dance. A wave's legs are handed to `Palmimo` after one restore attempt
+on its first cycle (a later write would overwrite the wave's arm profile),
+and since `Palmimo`'s own wave writes can fail too, every leg is rewritten
+when the wave ends. Shutdown's settle retries the restore up to
+`LEG_PROFILE_SETTLE_ATTEMPTS` (5) times, 0.1 s apart; if the legs are still
+not back at the default it logs an error and disconnects (torque off)
+anyway, and the next start rewrites every leg.
 
 The multiplier falls back to 1x whenever the robot is not being actively
 piloted -- the deadman expiring, the pilot leaving (the next pilot starts

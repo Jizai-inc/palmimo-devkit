@@ -309,6 +309,16 @@ body[data-role="pilot"] #video-layer {
   color: #000;
 }
 
+/* Selected but held back by the gait speed ceiling: striped, so it does not
+   read as the full multiplier being applied. */
+#speed-buttons button.selected.capped {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 200, 80, 0.75) 0 6px,
+    rgba(255, 255, 255, 0.25) 6px 12px
+  );
+}
+
 /* Rotate sits in the grid's top corners for layout purposes, but is nudged
    diagonally outward and made circular so it doesn't read as a 5th/6th
    d-pad direction. */

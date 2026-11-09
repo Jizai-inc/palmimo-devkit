@@ -21,7 +21,7 @@ from palmimo_teleop.server import (
     _validate_speed_message,
     create_app,
 )
-from palmimo_teleop.session import PilotSession
+from palmimo_teleop.session import ControlStatus, PilotSession
 from palmimo_teleop.video import VideoStream
 
 
@@ -564,3 +564,30 @@ def test_status_broadcast_reports_the_speed(client: TestClient) -> None:
         ws.send_json({"role": "viewer"})
         ws.receive_json()
         assert ws.receive_json()["speed"] == 1.0
+
+
+class _SpeedSession(PilotSession):
+    """A session whose status always reports *speed* selected, free of the deadman clock."""
+
+    def __init__(self, speed: float) -> None:
+        super().__init__()
+        self._fixed_speed = speed
+
+    def status(self) -> ControlStatus:
+        return ControlStatus(pilot_present=True, motion=None, speed=self._fixed_speed)
+
+
+@pytest.mark.parametrize(("gait_speed", "applied"), [(0.012, 2.5), (0.05, 1.0)])
+def test_status_broadcast_separates_the_selected_and_applied_speed(gait_speed: float, applied: float) -> None:
+    # Without this, a robot started at the gait speed ceiling would show 2.5x
+    # selected and applied while it really runs at 1x.
+    robot = Palmimo(driver=None, gait_speed=gait_speed)
+    session = _SpeedSession(2.5)
+    robot_loop = RobotLoop(robot, session, fps=30)
+    app = create_app(robot, session, robot_loop, VideoStream(None))
+    with TestClient(app) as test_client, test_client.websocket_connect("/api/control") as ws:
+        ws.send_json({"role": "viewer"})
+        ws.receive_json()
+        payload = ws.receive_json()
+    assert payload["speed"] == 2.5
+    assert payload["applied_speed"] == pytest.approx(applied)

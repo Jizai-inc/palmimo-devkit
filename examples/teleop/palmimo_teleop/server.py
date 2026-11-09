@@ -409,7 +409,11 @@ async def _broadcast_loop(
                 {
                     "pilot_present": status.pilot_present,
                     "motion": status.motion,
+                    # `speed` is the multiplier selected (what the buttons
+                    # highlight); `applied_speed` is what the gait really runs
+                    # at, lower when `control.MAX_GAIT_SPEED` caps it.
                     "speed": status.speed,
+                    "applied_speed": robot_loop.applied_multiplier(status.speed),
                     "loop_fps": robot_loop.loop_fps,
                     "camera_ok": video.camera_ok,
                     "robot_ok": robot_loop.robot_ok,

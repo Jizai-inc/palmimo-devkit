@@ -37,6 +37,33 @@ SETTLE_SECONDS: float = 1.0
 #: this rate instead of once per control cycle (up to 60/s).
 FAILURE_LOG_INTERVAL_S: float = 5.0
 
+#: First wait before retrying a failed leg Profile_Velocity write, doubled
+#: after each further consecutive failure up to `LEG_PROFILE_RETRY_MAX_S`.
+#: Kept apart from `FAILURE_LOG_INTERVAL_S` (which only throttles the log):
+#: a flaky bus must not cost every 60 fps cycle up to 18 write timeouts, yet a
+#: restore must still get several tries inside the one-second settle.
+LEG_PROFILE_RETRY_BASE_S: float = 0.1
+LEG_PROFILE_RETRY_MAX_S: float = 1.0
+
+#: Upper bound on leg Profile_Velocity restore attempts during `_settle()`,
+#: spaced `LEG_PROFILE_RETRY_BASE_S` apart. If the legs are still not back at
+#: the driver default after these, settle finishes anyway and the caller
+#: disconnects (torque off) -- a bus that cannot take the write cannot be
+#: waited on forever at shutdown, and the next start rewrites every leg.
+LEG_PROFILE_SETTLE_ATTEMPTS: int = 5
+
+#: Gestures whose servo tuning `Palmimo` applies (and later releases) itself
+#: inside `step()`, provided the driver has the Position_P_Gain / IIR knobs
+#: that tuning needs -- see `Palmimo._sync_gesture_tuning`. While one of these
+#: plays the loop never writes the leg profile, so it cannot overwrite the
+#: wave's crisp arm profile. Any other gesture (dance) gets no tuning from
+#: `Palmimo`, so the loop itself restores the legs to the driver default.
+SDK_TUNED_GESTURES: frozenset[str] = frozenset({"wave"})
+
+#: Marker in `RobotLoop._leg_pv_known` for a leg whose last write failed:
+#: its Profile_Velocity is unknown and possibly still shortened.
+_PV_UNKNOWN = -1
+
 #: Sign applied to the pilot's raw stick value before `Palmimo.look()`.
 #: `Palmimo.look`'s sign-to-direction mapping is itself unspecified (see its
 #: docstring); on a real neck both axes track the stick as-is.
@@ -79,9 +106,18 @@ class RobotLoop:
     inside `step()` when a gesture ends. Switching to a gesture puts the legs
     back to the driver default *before* `step()` instead -- `Palmimo` retunes
     the servos for a wave inside that `step()` but leaves them as they are
-    for a dance -- and nothing is written while the gesture plays. These
-    writes are best-effort: a dropped bus reply is logged at a throttled
-    rate and retried next cycle rather than failing the cycle.
+    for a dance -- and nothing is written while a wave plays.
+
+    These writes are best-effort and never fail the cycle. The loop tracks
+    each leg's last confirmed value, so a write that fails partway leaves the
+    legs it may not have reached marked unknown ("dirty") rather than assumed
+    written. Dirty legs are retried -- at once when the motion or speed
+    changes, otherwise on a back-off from `LEG_PROFILE_RETRY_BASE_S` to
+    `LEG_PROFILE_RETRY_MAX_S` -- while standing, walking or dancing, and up to
+    `LEG_PROFILE_SETTLE_ATTEMPTS` times during shutdown's settle. During a
+    wave the loop hands the legs to `Palmimo` and assumes nothing: `Palmimo`'s
+    own wave writes can fail too (it suppresses their errors), so every leg is
+    rewritten once the wave ends.
     """
 
     def __init__(
@@ -122,10 +158,17 @@ class RobotLoop:
         #: The speed multiplier currently written to `robot`; starts at the
         #: default because that is what `_base_gait_speed` was read at.
         self._applied_speed = DEFAULT_SPEED
-        #: The leg Profile_Velocity this loop last wrote, or `None` when it
-        #: is not known (before the first write, or after a gesture, whose
-        #: servo tuning `Palmimo` rewrites on its own).
-        self._applied_leg_pv: int | None = None
+        #: Per leg servo, the Profile_Velocity this loop last confirmed
+        #: writing, or `_PV_UNKNOWN` after a write that failed. A missing leg
+        #: is one the loop has not written since start or since handing the
+        #: legs to `Palmimo` for a wave -- never dirty, but always rewritten
+        #: when the loop next wants a value on it.
+        self._leg_pv_known: dict[str, int] = {}
+        self._leg_pv_failures = 0
+        self._leg_pv_next_try_at: float | None = None
+        #: Whether this loop has ever written (or tried to write) the leg
+        #: profile -- settle restores nothing on a robot it never retuned.
+        self._leg_pv_touched = False
         self._last_profile_log_at: float | None = None
 
     @property
@@ -159,10 +202,12 @@ class RobotLoop:
         """
         try:
             effective = self.session.effective_input()
-            if effective.speed != self._applied_speed:
+            speed_changed = effective.speed != self._applied_speed
+            if speed_changed:
                 self._apply_speed(effective.speed)
             motion = resolve_motion(effective.move, effective.rotate, effective.gesture)
-            if motion != self._applied_motion:
+            motion_changed = motion != self._applied_motion
+            if motion_changed:
                 if motion is None:
                     self.robot.stop()
                 else:
@@ -170,11 +215,13 @@ class RobotLoop:
                 self._applied_motion = motion
             gait_or_idle = motion is None or motion in GAIT_MOTIONS
             if not gait_or_idle:
-                self._release_leg_profile()
+                # Only a change of *motion* is a gesture's first cycle; a speed
+                # tap mid-wave must not re-trigger the pre-wave write.
+                self._leg_profile_before_gesture(motion, entering=motion_changed)
             self.robot.look(pitch=effective.neck_pitch * NECK_PITCH_SIGN, yaw=effective.neck_yaw * NECK_YAW_SIGN)
             self.robot.step()
             if gait_or_idle:
-                self._sync_leg_profile(motion)
+                self._sync_leg_profile(motion, force=motion_changed or speed_changed)
         except Exception:
             self._record_tick_failure()
             return False
@@ -187,6 +234,18 @@ class RobotLoop:
         self.robot.engine.gait_speed = min(MAX_GAIT_SPEED, self._base_gait_speed * multiplier)
         self._applied_speed = multiplier
 
+    def applied_multiplier(self, selected: float) -> float:
+        """How much faster than 1x the gait actually runs when *selected* is chosen.
+
+        Equal to *selected* unless `control.MAX_GAIT_SPEED` caps it -- with
+        `--gait-speed 0.05`, every multiplier runs at 1x. Pure arithmetic on
+        the startup gait speed, so the status broadcast can call it from the
+        event loop without touching `robot`.
+        """
+        if self._base_gait_speed <= 0:
+            return selected
+        return min(MAX_GAIT_SPEED, self._base_gait_speed * selected) / self._base_gait_speed
+
     def _profile_driver(self) -> tuple[Any, int] | None:
         """The driver and its default Profile_Velocity, or `None` if it has no
         time-based profile knob (compute-only, or a non-Dynamixel backend)."""
@@ -198,13 +257,29 @@ class RobotLoop:
             return None
         return driver, default
 
-    def _sync_leg_profile(self, motion: str | None) -> None:
+    def _sdk_tunes(self, driver: Any, motion: str | None) -> bool:
+        """Whether `Palmimo` applies its own servo tuning to *motion* on this driver."""
+        return motion in SDK_TUNED_GESTURES and hasattr(driver, "set_position_p_gain") and hasattr(driver, "set_iir")
+
+    def _pending_legs(self, value: int) -> list[str]:
+        """Legs not confirmed at *value* (never written, written otherwise, or a failed write)."""
+        return [m for m in LEG_MOTORS if self._leg_pv_known.get(m) != value]
+
+    def _dirty_legs(self, default: int) -> list[str]:
+        """Legs the loop may have left off the driver default (shortened, or a failed write)."""
+        return [m for m in LEG_MOTORS if m in self._leg_pv_known and self._leg_pv_known[m] != default]
+
+    def _retry_due(self) -> bool:
+        return self._leg_pv_next_try_at is None or self._now() >= self._leg_pv_next_try_at
+
+    def _sync_leg_profile(self, motion: str | None, *, force: bool = False) -> None:
         """Write the leg Profile_Velocity a gait (*motion*) or standing still (`None`) calls for.
 
         A gait gets the driver default divided by how much faster than its
         startup speed the gait now runs (so a capped gait speed is matched
-        too); standing still gets the driver default. A failed write leaves
-        `_applied_leg_pv` unchanged, so the next cycle retries it.
+        too); standing still gets the driver default. Only legs not already
+        confirmed at that value are written; after a failure they are retried
+        on the back-off, or at once when *force* (the motion or speed changed).
         """
         found = self._profile_driver()
         if found is None:
@@ -215,33 +290,70 @@ class RobotLoop:
             want = max(1, round(default / ratio)) if default > 0 else 0
         else:
             want = default
-        if want != self._applied_leg_pv and self._write_leg_profile(driver, want):
-            self._applied_leg_pv = want
+        pending = self._pending_legs(want)
+        if pending and (force or self._retry_due()):
+            self._write_leg_profile(driver, want, pending)
 
-    def _release_leg_profile(self) -> None:
-        """Before a gesture's `step()`, put a shortened leg profile back to the driver default.
+    def _leg_profile_before_gesture(self, motion: str | None, *, entering: bool) -> None:
+        """Before a gesture's `step()`, put any leg the loop shortened back to the driver default.
 
-        Tried once, not retried: by the next cycle `Palmimo` has applied a
-        wave's own servo tuning, which a second write would overwrite.
+        For a wave `Palmimo` tunes the servos itself: the restore is tried
+        once, on the wave's first cycle only (by the next cycle `Palmimo` has
+        applied the wave's arm profile, which a later write would overwrite),
+        and the legs are then handed over -- forgotten, so every leg is
+        rewritten after the wave instead of trusting `Palmimo`'s own writes,
+        whose errors it suppresses. For a dance (no tuning from `Palmimo`)
+        dirty legs are retried every cycle on the back-off until confirmed.
         """
         found = self._profile_driver()
         if found is None:
             return
         driver, default = found
-        if self._applied_leg_pv not in (None, default):
-            self._write_leg_profile(driver, default)
-        self._applied_leg_pv = None
+        dirty = self._dirty_legs(default)
+        if not self._sdk_tunes(driver, motion):
+            if dirty and (entering or self._retry_due()):
+                self._write_leg_profile(driver, default, dirty)
+            return
+        if not entering:
+            return
+        if dirty and not self._write_leg_profile(driver, default, dirty):
+            _LOG.warning(
+                "leg Profile_Velocity not restored before %s; left to Palmimo's own tuning, "
+                "and every leg is rewritten when it ends",
+                motion,
+            )
+        self._leg_pv_known.clear()
 
-    def _write_leg_profile(self, driver: Any, value: int) -> bool:
-        """Write *value* to the leg servos' Profile_Velocity; `False` (logged, throttled) if it failed."""
+    def _write_leg_profile(self, driver: Any, value: int, motors: list[str]) -> bool:
+        """Write *value* to *motors*' Profile_Velocity; `False` (logged, throttled) if it failed.
+
+        The driver writes motor by motor, so a failure may land after some of
+        *motors* already took the value: all of them are marked unknown, to be
+        rewritten, and the next try is pushed back on the back-off.
+        """
+        self._leg_pv_touched = True
         try:
-            driver.set_profile_velocity_units(value, motors=list(LEG_MOTORS))
+            driver.set_profile_velocity_units(value, motors=list(motors))
         except Exception:
+            for motor in motors:
+                self._leg_pv_known[motor] = _PV_UNKNOWN
+            self._leg_pv_failures += 1
             now = self._now()
+            delay = min(LEG_PROFILE_RETRY_MAX_S, LEG_PROFILE_RETRY_BASE_S * 2 ** (self._leg_pv_failures - 1))
+            self._leg_pv_next_try_at = now + delay
             if self._last_profile_log_at is None or now - self._last_profile_log_at >= FAILURE_LOG_INTERVAL_S:
-                _LOG.warning("leg Profile_Velocity write failed; retrying next cycle", exc_info=True)
+                _LOG.warning(
+                    "leg Profile_Velocity write failed (%d in a row); retrying in %.1fs",
+                    self._leg_pv_failures,
+                    delay,
+                    exc_info=True,
+                )
                 self._last_profile_log_at = now
             return False
+        for motor in motors:
+            self._leg_pv_known[motor] = value
+        self._leg_pv_failures = 0
+        self._leg_pv_next_try_at = None
         return True
 
     def _record_tick_failure(self) -> None:
@@ -324,18 +436,47 @@ class RobotLoop:
         never race `tick()` -- paced rather than issued back-to-back, matching
         the "gradually" contract `Palmimo.stop()` promises on real hardware.
         A raised speed multiplier, and the leg servo profile shortened with
-        it, are put back to the defaults first, so the robot eases to a stop
-        at its own tuned speed.
+        it, are put back to the defaults, so the robot eases to a stop at its
+        own tuned speed. The leg restore is tried before `stop()` (unless a
+        wave still owns the servos -- `Palmimo` releases it on the next
+        `step()`) and again after settle steps `LEG_PROFILE_RETRY_BASE_S`
+        apart, until every leg is confirmed at the driver default or
+        `LEG_PROFILE_SETTLE_ATTEMPTS` is spent. A restore still failing then
+        is logged as an error and the caller disconnects (torque off) anyway.
         """
         if self._applied_speed != DEFAULT_SPEED:
             self._apply_speed(DEFAULT_SPEED)
-        if self._applied_leg_pv is not None:
-            self._sync_leg_profile(None)
+        found = self._profile_driver() if self._leg_pv_touched else None
+        attempts = 0
+
+        def try_restore() -> None:
+            nonlocal attempts
+            if found is None or attempts >= LEG_PROFILE_SETTLE_ATTEMPTS:
+                return
+            driver, default = found
+            legs = self._pending_legs(default)
+            if legs:
+                attempts += 1
+                self._write_leg_profile(driver, default, legs)
+
+        motion = self._applied_motion if isinstance(self._applied_motion, str) else None
+        if found is not None and not self._sdk_tunes(found[0], motion):
+            try_restore()
         self.robot.stop()
         frame_seconds = 1.0 / self.fps
-        for _ in range(int(self.fps * SETTLE_SECONDS)):
+        retry_frames = max(1, round(self.fps * LEG_PROFILE_RETRY_BASE_S))
+        for frame in range(int(self.fps * SETTLE_SECONDS)):
             self.robot.step()
+            if frame % retry_frames == 0:
+                try_restore()
             self._sleep(frame_seconds)
+        if found is not None and (left := self._pending_legs(found[1])):
+            _LOG.error(
+                "leg Profile_Velocity not restored on %d leg servo(s) after %d attempt(s); "
+                "disconnecting anyway (torque off) -- the next start rewrites every leg",
+                len(left),
+                attempts,
+            )
 
     def _run(self) -> None:
         frame_seconds = 1.0 / self.fps
