@@ -11,22 +11,15 @@ dependencies = [
     # Pinned to the 0.1 line of the released PyPI package: this example is a
     # standalone uv project (like a third-party Palmimo app), not a workspace
     # member, so it resolves the SDK from PyPI rather than from ../../packages.
-    # `voice` is MicStream, the microphone AI mode listens on; `speech` is
-    # Piper, the voice it answers in.
-    "palmimo-sdk[face,hardware,speech,vision,voice]>=0.1.3,<0.2",
-    # piper-plus 2.0 renamed its import package from `piper` to `piper_plus`,
-    # and palmimo-sdk 0.1.x still imports `piper`, so 2.x looks uninstalled.
-    "piper-plus>=1.13,<2",
-    # nltk 3.10.4 refuses data in a group-writable directory, and the app
-    # service's umask leaves palmimo-sdk 0.1.x's nltk_data cache group-writable.
-    "nltk>=3.9,<3.10.4",
-    # AI mode: OpenAI speech-to-text and chat (ai/llm.py), Silero VAD
-    # inference (ai/vad.py), and resampling the booth's 48 kHz mic (ai/audio.py).
-    "openai>=1.40",
-    "onnxruntime>=1.17",
+    # `voice` is MicStream, the microphone AI mode listens on.
+    "palmimo-sdk[face,hardware,vision,voice]>=0.1.3,<0.2",
+    # AI mode: the Realtime websocket (ai/client.py), its typed wire models
+    # (ai/protocol.py, with pydantic below), and resampling the mic to the
+    # API's 24 kHz (ai/audio.py).
+    "websockets>=14",
     "numpy>=1.24",
     "scipy>=1.11",
-    # The prompt editor's request bodies (server.py).
+    # The prompt editor's request bodies (server.py) and the Realtime wire models.
     "pydantic>=2",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",

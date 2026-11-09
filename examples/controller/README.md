@@ -83,8 +83,15 @@ How a switch works:
   applies on the next switch, never to a running session. A source that
   fetches prompts from Palmimo Portal can replace it later.
 
-The model, voice, and language are fixed in `ai/controller.py` (`MODEL`,
-`VOICE`, `LANGUAGE`); the pilot picks a mode, not a model.
+The model and voice are fixed in `ai/controller.py` (`DEFAULT_MODEL`,
+`gpt-realtime-2.1-mini`, and `VOICE`); the pilot picks a mode, not a model.
+To try another Realtime model without a code change, set
+`CONTROLLER_REALTIME_MODEL` (for example `gpt-realtime-2.1`). The model hears
+the visitor's audio directly; no transcript is requested.
+
+With echo cancellation (`--audio-device respeaker`), a visitor who starts
+talking cuts the robot off. Without it (`booth-usb`), the microphone is not
+sent to the model while the robot talks, or it would hear and answer itself.
 
 ### Editing prompts
 
@@ -298,10 +305,10 @@ be reading from it would race the two.
 This project is its own standalone uv project (own `pyproject.toml`/`uv.lock`),
 not a member of the repository's root workspace: `cd` into this directory and
 `uv sync` -- no separate `.env` or extra install step. It declares
-`palmimo-sdk[hardware,vision,voice]` from PyPI, so the servo bus,
-head-camera (`cv2`), and microphone dependencies install with it. AI mode
-plays the model's voice through `aplay` on the ReSpeaker board, and records
-from the same board.
+`palmimo-sdk[face,hardware,vision,voice]` from PyPI, so the servo bus,
+face display, head-camera (`cv2`), and microphone dependencies install with
+it. AI mode plays the model's voice through `aplay` on the speaker
+`--audio-device` names, and records from its microphone.
 
 To try it against local, unreleased SDK changes instead of the published
 `palmimo-sdk`, run from this directory:
@@ -321,11 +328,13 @@ uv run --with-editable ../../packages/palmimo_sdk python -m palmimo_controller.m
 | `--no-camera` | off | Never attach the head camera |
 | `--no-face` | off | Never attach the face display. Without this flag, a face display is attached only when one is plugged in and opens, so a robot without a face still starts |
 | `--servo-port` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0`; ignored under `--dry-run` |
+| `--voice-speed` | `1.0` | AI mode speaking rate (0.5-1.5): 1.0 is the voice's natural pace, lower is slower |
 | `--audio-device` | `respeaker` | AI mode mic and speaker. `respeaker`: a development robot's ReSpeaker 4 Mic Array, with echo cancellation. `booth-usb`: an exhibition robot's push-to-talk USB mic ("USB PnP", 48 kHz, no echo cancellation; hold its button while talking) and USB speaker ("Composite") |
 
 | Environment variable | Purpose |
 |---|---|
 | `OPENAI_API_KEY` | OpenAI key for AI modes. Optional: without it, teleop works and AI modes stay off |
+| `CONTROLLER_REALTIME_MODEL` | Realtime model for AI modes, overriding `gpt-realtime-2.1-mini` |
 
 ## Hardware notes
 

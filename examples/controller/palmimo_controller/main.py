@@ -28,15 +28,13 @@ from palmimo_sdk import (
     HeadCamera,
     MicStream,
     Palmimo,
-    PiperEngine,
     ServoDriver,
-    Speaker,
-    SpeakerConfig,
     find_face_port,
+    resolve_alsa_device,
 )
 
-from .ai.controller import AiController, OpenMic, OpenVoice
-from .ai.llm import OpenAiLlm
+from .ai.audio import Playback
+from .ai.controller import DEFAULT_MODEL, AiController, OpenMic
 from .ai.reflexes import Detectors, Reflexes
 from .control import MAX_GAIT_SPEED
 from .modes import EditablePrompts, default_prompt_dir
@@ -64,12 +62,9 @@ _LOG = logging.getLogger(__name__)
 #: (unlike the gamepad example's stick deflection) -- buttons are on/off.
 DEFAULT_GAIT_SPEED: float = 0.012
 
-#: Language the robot listens and speaks in.
-LANGUAGE = "ja"
-
 #: Speaking rate, as in the companion agent: 1.0 is the voice's natural pace,
-#: lower is slower. At 1.0 the Japanese voice sounds rushed at the booth.
-DEFAULT_VOICE_SPEED: float = 0.8
+#: lower is slower.
+DEFAULT_VOICE_SPEED: float = 1.0
 
 #: Avoids 8765 (the MCP server), 80/8080 (Palmimo Portal), and 8000 (the
 #: teleop app), so both apps can be installed on one robot.
@@ -282,28 +277,11 @@ def _open_mic(device: AudioDevice) -> Iterator[OpenMic]:
         stream.close()
 
 
-@contextlib.contextmanager
-def _open_voice(device: AudioDevice, voice_speed: float = DEFAULT_VOICE_SPEED) -> Iterator[OpenVoice]:
-    """Load the Piper voice and the Silero VAD segmenter for one AI mode.
-
-    Both download their models on first use, which is why `AiController`
-    opens this outside its start timeout.
-    """
-    from .ai.vad import SileroVad, UtteranceSegmenter
-
-    speaker = Speaker(
-        SpeakerConfig(lang=LANGUAGE, device_name_hint=device.speaker_hint),
-        # Piper's length_scale is phoneme length, the inverse of a speed.
-        engine=PiperEngine(length_scale=1.0 / voice_speed),
-    )
-    speaker.open()
-    try:
-        segmenter = UtteranceSegmenter(SileroVad.load())
-        _LOG.info("AI speech plays on the device matching %r", device.speaker_hint)
-        yield OpenVoice(speaker, segmenter)
-    finally:
-        speaker.stop()
-        speaker.close()
+def _build_playback(device: AudioDevice) -> Playback:
+    """Open playback on the speaker matching *device*, or ALSA's default if none matches."""
+    playback = Playback(device=resolve_alsa_device(device.speaker_hint, kind="playback"))
+    _LOG.info("AI speech plays on the device matching %r", device.speaker_hint)
+    return playback
 
 
 class _CachedDetectors:
@@ -350,15 +328,20 @@ def _build_ai(
     reflexes_factory: Callable[[], Reflexes] | None = None,
     voice_speed: float = DEFAULT_VOICE_SPEED,
 ) -> AiController:
-    """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop."""
-    api_key = os.environ.get("OPENAI_API_KEY") or None
+    """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop.
+
+    `CONTROLLER_REALTIME_MODEL` swaps the Realtime model without a code
+    change, e.g. to compare the full model against the mini default.
+    """
     return AiController(
         session,
         prompts,
-        llm=OpenAiLlm(api_key, language=LANGUAGE) if api_key is not None else None,
+        api_key=os.environ.get("OPENAI_API_KEY") or None,
         telemetry=telemetry,
         mic_factory=functools.partial(_open_mic, audio),
-        voice_factory=functools.partial(_open_voice, audio, voice_speed),
+        playback_factory=functools.partial(_build_playback, audio),
+        model=os.environ.get("CONTROLLER_REALTIME_MODEL") or DEFAULT_MODEL,
+        voice_speed=voice_speed,
         reflexes_factory=reflexes_factory,
     )
 
