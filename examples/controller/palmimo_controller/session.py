@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field, replace
 
-from .control import resolve_motion
+from .control import DEFAULT_SPEED, resolve_motion
 
 
 #: How long the pilot's connection may go without a control frame before the
@@ -75,6 +75,8 @@ class PilotInput:
     gesture: str | None = None
     neck_pitch: float = 0.0
     neck_yaw: float = 0.0
+    #: Walking/rotating speed multiplier (`control.ALLOWED_SPEEDS`).
+    speed: float = DEFAULT_SPEED
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,7 @@ class ControlStatus:
 
     pilot_present: bool
     motion: str | None
+    speed: float = DEFAULT_SPEED
     mode: str = MODE_TELEOP
     ai_mode: str | None = None
     notice: str | None = None
@@ -136,6 +139,11 @@ class _PilotState:
     #: gesture with a mismatched deadman clock.
     playing_gesture: str | None = None
     gesture_until: float | None = None
+    #: Speed multiplier the pilot selected (`set_speed()`). Like
+    #: `playing_gesture`, it is set by its own message rather than the
+    #: per-frame input, so it is carried over by every replacement of this
+    #: object and reset only when the pilot leaves or an AI mode starts.
+    speed: float = DEFAULT_SPEED
 
 
 class PilotSession:
@@ -180,6 +188,9 @@ class PilotSession:
         if self._pilot_id != client_id or self._mode.mode != MODE_TELEOP:
             return False
         self._mode = _ModeState(mode=MODE_AI_STARTING, ai_mode=name, since=self._now())
+        # An AI mode always drives at 1x, and the pilot comes back to 1x
+        # rather than to a fast speed picked before the switch.
+        self._state = replace(self._state, speed=DEFAULT_SPEED)
         return True
 
     def ai_started(self) -> None:
@@ -333,6 +344,7 @@ class PilotSession:
             last_input_at=self._now(),
             playing_gesture=None if steering else previous.playing_gesture,
             gesture_until=None if steering else previous.gesture_until,
+            speed=previous.speed,
         )
         return True
 
@@ -367,7 +379,29 @@ class PilotSession:
             last_input_at=state.last_input_at,
             playing_gesture=playing_gesture,
             gesture_until=gesture_until,
+            speed=state.speed,
         )
+        return True
+
+    def set_speed(self, client_id: Hashable, speed: float) -> bool:
+        """Select the walking and rotating speed multiplier for the current pilot.
+
+        Applies in teleop only: an AI mode always drives at 1x (see
+        `effective_input`), so a request outside teleop is dropped rather
+        than stored for when the pilot returns.
+
+        Args:
+            client_id (Hashable): Must match the current pilot holder.
+            speed (float): One of `control.ALLOWED_SPEEDS`; already
+                validated by the caller.
+
+        Returns:
+            bool: `False` (dropped, no state changed) if *client_id* is not
+                the current pilot or an AI mode is starting or running.
+        """
+        if self._pilot_id != client_id or self._mode.mode != MODE_TELEOP:
+            return False
+        self._state = replace(self._state, speed=speed)
         return True
 
     def _deadman_expired(self, state: _PilotState) -> bool:
@@ -382,9 +416,12 @@ class PilotSession:
         until that intent's time runs out. Between intents, a reflex glance's
         gaze (`set_gaze`) points the neck; otherwise the robot holds still.
 
-        In teleop, move/rotate/gesture/neck all collapse to inert (translation,
-        rotation, gesture off, neck centered) when there is no pilot or the
-        deadman has expired. The neck used to hold its last-known target
+        An AI mode always drives at the default speed: the pilot's speed
+        multiplier applies to teleop only.
+
+        In teleop, move/rotate/gesture/neck/speed all collapse to inert
+        (translation, rotation, gesture off, neck centered, default speed)
+        when there is no pilot or the deadman has expired. The neck used to hold its last-known target
         through a deadman expiry on the theory that holding gaze is never
         unsafe; a physical robot proved otherwise -- holding the neck at an
         extreme (e.g. fully up) is a known cause of neck-servo overheating,
@@ -421,6 +458,7 @@ class PilotSession:
             gesture=gesture,
             neck_pitch=current.neck_pitch,
             neck_yaw=current.neck_yaw,
+            speed=state.speed,
         )
 
     def status(self) -> ControlStatus:
@@ -430,6 +468,7 @@ class PilotSession:
         return ControlStatus(
             pilot_present=self.pilot_present,
             motion=resolve_motion(effective.move, effective.rotate, effective.gesture),
+            speed=effective.speed,
             mode=mode.mode,
             ai_mode=mode.ai_mode,
             notice=mode.notice,

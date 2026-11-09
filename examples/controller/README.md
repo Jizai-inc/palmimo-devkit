@@ -127,7 +127,7 @@ automatic hand-off, so the next person opens `/pilot` again to claim it fresh.
 
 Every open connection, pilot or viewer, receives the same status broadcast
 twice a second: `pilot_present`, the currently resolved `motion`, the
-measured `loop_fps`, `camera_ok`, `servo_attached` (whether a servo driver
+applied `speed` multiplier (see [Speed](#speed)), the measured `loop_fps`, `camera_ok`, `servo_attached` (whether a servo driver
 was attached at startup, as opposed to running compute-only -- see
 [Hardware notes](#hardware-notes)), and `robot_ok` (whether the most recent
 robot control cycle completed without raising -- see
@@ -190,6 +190,40 @@ restarting it (tap-to-toggle); tapping the other gesture replaces whichever
 one is running. Sending a non-idle `move`/`rotate` in the regular control
 frame cancels a playing gesture immediately -- the pilot's steering intent
 takes priority over letting the gesture finish its window.
+
+### Speed
+
+A row of buttons under the d-pad selects a speed multiplier -- **1x, 1.5x,
+2x, 2.5x** (`control.ALLOWED_SPEEDS`) -- applied to walking and rotating
+only; gestures always play at their own speed. Tapping one sends an
+independent `{"speed": <n>}` message, which only the current pilot may send
+and which is dropped unless it is one of those values. The selection holds
+until the pilot picks another one; the highlighted button is the multiplier
+the server reports as applied in the status broadcast, not the one last
+tapped.
+
+The robot loop scales the gait speed the robot was started with
+(`--gait-speed`), written to `robot.engine.gait_speed` since `Palmimo` takes
+gait speed only as a constructor argument. The multiplied gait speed is
+capped at `--gait-speed`'s own maximum (`control.MAX_GAIT_SPEED`, 0.05).
+
+Faster commands alone do not make the robot walk faster. The driver's
+time-based Profile_Velocity (300 ms per goal by default) low-passes the leg
+servos, so a faster gait comes out with a much smaller stride. So while a
+walking or rotating gait runs, the robot loop also divides the 18 leg
+servos' Profile_Velocity by the same factor as the gait speed (120 ms at
+2.5x), which keeps the 1x stride. It returns them to the driver default when
+the robot stands still or switches to a gesture, and writes nothing while
+the gesture plays (`Palmimo` retunes the servos for a wave itself). A
+dropped bus reply on one of these writes is retried next cycle instead of
+failing it.
+
+**AI modes always walk at 1x.** Starting an AI mode resets the multiplier to
+1x, a speed message sent while an AI mode is starting or running is
+dropped, and the pilot comes back to teleop at 1x. The multiplier also falls
+back to 1x whenever the robot is not being actively piloted -- the deadman
+expiring, the pilot leaving (the next pilot starts at 1x) -- and on shutdown
+the robot settles to neutral at 1x.
 
 ### Safety: the deadman timer
 
@@ -282,7 +316,7 @@ uv run --with-editable ../../packages/palmimo_sdk python -m palmimo_controller.m
 |---|---|---|
 | `--port` | `8010` | HTTP/WebSocket port to serve on (8000 is left to the `teleop` app) |
 | `--fps` | `60` | Robot control loop rate in cycles per second (minimum 1) |
-| `--gait-speed` | `0.012` | `Palmimo` gait speed applied to every teleop-driven motion (0.001-0.05) |
+| `--gait-speed` | `0.012` | `Palmimo` gait speed applied to every teleop-driven motion (0.001-0.05); the 1x that the pilot page's [speed](#speed) buttons scale |
 | `--dry-run` | off | Compute-only: never attach a servo driver |
 | `--no-camera` | off | Never attach the head camera |
 | `--no-face` | off | Never attach the face display. Without this flag, a face display is attached only when one is plugged in and opens, so a robot without a face still starts |
@@ -319,7 +353,8 @@ If a future neck revision changes either direction, flip the constant there
 anywhere else.
 
 As with any live motion: keep the robot in the air on first run, or after
-changing `--gait-speed`, the same as any other motion in this SDK.
+changing `--gait-speed` or picking a speed multiplier you have not run on
+that robot before, the same as any other motion in this SDK.
 
 ## Layout
 

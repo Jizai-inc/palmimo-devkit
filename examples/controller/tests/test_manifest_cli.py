@@ -43,9 +43,14 @@ def _build_argv(manifest: dict[str, Any]) -> list[str]:
     return argv
 
 
+class _DummyEngine:
+    gait_speed = 0.012
+
+
 class _DummyRobot:
     has_connectable_resource = False
     driver = None
+    engine = _DummyEngine()
 
 
 def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -196,3 +196,39 @@ def test_gaze_is_ignored_outside_a_live_ai_mode() -> None:
     session.begin_ai("a", "default")
     assert session.set_gaze(0.2, 0.2) is False
     assert session.effective_input() == PilotInput()
+
+
+def test_ai_mode_drives_at_the_default_speed_whatever_the_pilot_picked() -> None:
+    # Without this, a fast speed picked in teleop would carry into the
+    # unattended AI's walking.
+    session, _ = _pilot_session()
+    session.update_pilot_input("a", move=None, rotate=0, neck_pitch=0.0, neck_yaw=0.0)
+    session.set_speed("a", 2.5)
+    assert session.begin_ai("a", "default")
+    assert session.effective_input().speed == 1.0
+    session.ai_started()
+    session.set_ai_intent(PilotInput(move="forward"), 3.0)
+    assert session.effective_input().speed == 1.0
+    assert session.status().speed == 1.0
+
+
+def test_returning_to_teleop_starts_at_the_default_speed() -> None:
+    # Without this, the pilot would come back from AI mode to a fast walk
+    # picked before the switch, with no button tap to remind them.
+    session, _ = _pilot_session()
+    session.set_speed("a", 2.5)
+    _live_ai(session)
+    session.end_ai()
+    session.update_pilot_input("a", move=None, rotate=0, neck_pitch=0.0, neck_yaw=0.0)
+    assert session.effective_input().speed == 1.0
+
+
+def test_set_speed_is_dropped_outside_teleop() -> None:
+    # Without this, a speed tap during an AI mode would be stored and come
+    # back as a fast walk when the pilot returns to teleop.
+    session, _ = _pilot_session()
+    _live_ai(session)
+    assert session.set_speed("a", 2.5) is False
+    session.end_ai()
+    session.update_pilot_input("a", move=None, rotate=0, neck_pitch=0.0, neck_yaw=0.0)
+    assert session.effective_input().speed == 1.0
