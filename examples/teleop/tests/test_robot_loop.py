@@ -882,3 +882,45 @@ def test_applied_multiplier_reports_the_capped_speed(gait_speed: float, selected
     # reported as applied.
     loop = _loop(FakeRobot(gait_speed=gait_speed), PilotSession(now=FakeClock()))
     assert loop.applied_multiplier(selected) == pytest.approx(applied)
+
+
+def _speed_up_with_a_partial_failure_after_1x(robot: FakeRobot) -> tuple[RobotLoop, PilotSession, FakeClock]:
+    """Stand at 1x (every leg confirmed at the default), then walk at 2.5x with that write
+    failing after 7 legs -- so the loop's last *confirmed* value for every leg is the default."""
+    loop, session, clock = _clocked(robot)
+    loop.tick()
+    assert _all_legs_at(robot, 300)
+    session.set_speed("a", 2.5)
+    _drive(session, move="forward")
+    _pv(robot).fail_after = 7
+    loop.tick()
+    assert sum(v == 120 for v in _pv(robot).pv.values()) == 7
+    return loop, session, clock
+
+
+def test_stopping_restores_legs_a_failed_write_reached_after_they_were_at_the_default() -> None:
+    # Without this, legs last confirmed at the default would be skipped by the
+    # restore even though the failed fast-gait write had already shortened them.
+    robot = FakeRobot()
+    loop, session, _ = _speed_up_with_a_partial_failure_after_1x(robot)
+    _drive(session)
+    loop.tick()
+    assert _all_legs_at(robot, 300)
+
+
+def test_a_dance_restores_legs_a_failed_write_reached_after_they_were_at_the_default() -> None:
+    # Same as above for a dance, which `Palmimo` never retunes.
+    robot = FakeRobot()
+    loop, session, _ = _speed_up_with_a_partial_failure_after_1x(robot)
+    session.play("a", "dance")
+    _drive(session)
+    loop.tick()
+    assert _all_legs_at(robot, 300)
+
+
+def test_shutdown_restores_legs_a_failed_write_reached_after_they_were_at_the_default() -> None:
+    # Same as above for shutdown's settle.
+    robot = FakeRobot()
+    loop, _session, _ = _speed_up_with_a_partial_failure_after_1x(robot)
+    assert loop.shutdown() is True
+    assert _all_legs_at(robot, 300)
