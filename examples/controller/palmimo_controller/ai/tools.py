@@ -87,8 +87,9 @@ _FUNCTIONS: list[dict[str, Any]] = [
     },
 ]
 
-#: The motion tools in Chat Completions' `{"type": "function", "function": {...}}` shape.
-TOOL_DEFINITIONS: list[dict[str, Any]] = [{"type": "function", "function": function} for function in _FUNCTIONS]
+#: The motion tools in the Responses API's flat `{"type": "function", "name": ...}` shape.
+#: Not strict: strict mode would require every property and `additionalProperties: false`.
+TOOL_DEFINITIONS: list[dict[str, Any]] = [{"type": "function", "strict": False, **function} for function in _FUNCTIONS]
 
 
 def _seconds(args: dict[str, Any]) -> float:

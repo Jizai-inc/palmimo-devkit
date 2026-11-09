@@ -111,7 +111,7 @@ def _classify(exc: BaseException) -> tuple[str, str]:
 
 
 class History:
-    """The mode's prompt plus its last few exchanges, in Chat Completions message form.
+    """The mode's prompt plus its last few exchanges, as Responses API input items.
 
     An exchange is a visitor's utterance and everything said and done in reply,
     dropped as a unit so a tool result never outlives the call it answers.
@@ -124,11 +124,11 @@ class History:
     def begin(self, text: str) -> None:
         self._turns.append([{"role": "user", "content": text}])
 
-    def add(self, message: dict[str, Any]) -> None:
-        self._turns[-1].append(message)
+    def add(self, *items: dict[str, Any]) -> None:
+        self._turns[-1].extend(items)
 
-    def messages(self) -> list[dict[str, Any]]:
-        return [self._system, *(message for turn in self._turns for message in turn)]
+    def items(self) -> list[dict[str, Any]]:
+        return [self._system, *(item for turn in self._turns for item in turn)]
 
 
 def _offer(queue: asyncio.Queue[Int16Array], utterance: Int16Array) -> None:
@@ -326,14 +326,14 @@ class AiController:
         history.begin(text)
         for round_ in range(MAX_CHAT_ROUNDS):
             tools = TOOL_DEFINITIONS if round_ < MAX_CHAT_ROUNDS - 1 else None
-            reply = await llm.chat(history.messages(), tools=tools)
-            history.add(reply.message)
+            reply = await llm.chat(history.items(), tools=tools)
+            history.add(*reply.items)
             if reply.text:
                 voice.say(reply.text)
                 _LOG.info("AI: replied with speech (%d chars)", len(reply.text))
             for call in reply.tool_calls:
                 output = run_tool(self._session, call.name, call.arguments)
-                history.add({"role": "tool", "tool_call_id": call.id, "content": output})
+                history.add({"type": "function_call_output", "call_id": call.id, "output": output})
             # Once something was said, the tool results only need to be on
             # record: asking the model again would make it talk twice.
             if reply.text or not reply.tool_calls:

@@ -20,8 +20,8 @@ _LOG = logging.getLogger(__name__)
 #: Defaults; `main.py` lets `CONTROLLER_CHAT_MODEL` / `CONTROLLER_STT_MODEL` override them.
 CHAT_MODEL = "gpt-5.4-mini"
 STT_MODEL = "gpt-4o-mini-transcribe"
-#: The lowest effort every GPT-5 model accepts: a spoken reply cannot wait on long reasoning.
-REASONING_EFFORT = "low"
+#: Low: a spoken reply cannot wait on long reasoning.
+REASONING_EFFORT: str | None = "low"
 
 _TIMEOUT_S = 20.0
 
@@ -45,11 +45,11 @@ class ToolCall:
 
 @dataclass(frozen=True)
 class ChatReply:
-    """One assistant message: what to say, which tools to run, and the message to keep in history."""
+    """One model response: what to say, which tools to run, and the output items to keep in history."""
 
     text: str
     tool_calls: list[ToolCall] = field(default_factory=list)
-    message: dict[str, Any] = field(default_factory=dict)
+    items: list[dict[str, Any]] = field(default_factory=list)
 
 
 class LlmLike(Protocol):
@@ -59,7 +59,7 @@ class LlmLike(Protocol):
 
     async def transcribe(self, wav: bytes) -> str: ...
 
-    async def chat(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None) -> ChatReply: ...
+    async def chat(self, items: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None) -> ChatReply: ...
 
 
 def _error(exc: Exception) -> LlmError:
@@ -72,6 +72,8 @@ def _error(exc: Exception) -> LlmError:
     if isinstance(exc, openai.NotFoundError):
         return LlmError("model", "model_not_found")
     if isinstance(exc, openai.APIStatusError):
+        # The status code alone cannot tell a bad request apart from an outage.
+        _LOG.warning("OpenAI returned HTTP %s: %s", exc.status_code, exc.message)
         return LlmError("transient", f"http_{exc.status_code}")
     if isinstance(exc, openai.APIConnectionError):
         return LlmError("transient", "network")
@@ -79,7 +81,7 @@ def _error(exc: Exception) -> LlmError:
 
 
 class OpenAiLlm:
-    """`LlmLike` over the OpenAI API: Chat Completions for replies, the transcription endpoint for STT."""
+    """`LlmLike` over the OpenAI API: the Responses API for replies, the transcription endpoint for STT."""
 
     def __init__(
         self,
@@ -112,36 +114,37 @@ class OpenAiLlm:
             raise _error(exc) from exc
         return (result.text or "").strip()
 
-    async def chat(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None) -> ChatReply:
+    async def chat(self, items: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None) -> ChatReply:
         options: dict[str, Any] = {}
         if tools:
             options["tools"] = tools
         if self._reasoning_effort:
-            options["reasoning_effort"] = self._reasoning_effort
+            options["reasoning"] = {"effort": self._reasoning_effort}
         try:
-            # History is kept as plain dicts; the SDK's TypedDict union adds nothing here.
-            response = await self._client.chat.completions.create(
-                model=self.chat_model, messages=cast(Any, messages), **options
+            # store=False keeps visitors' words off OpenAI's servers, so the
+            # whole conversation is resent each turn. Reasoning items then have
+            # to carry their encrypted content to be passed back with tool calls.
+            response = await self._client.responses.create(
+                model=self.chat_model,
+                input=cast(Any, items),
+                store=False,
+                include=["reasoning.encrypted_content"],
+                **options,
             )
         except Exception as exc:
             raise _error(exc) from exc
-        message = response.choices[0].message
         calls = [
-            ToolCall(id=call.id, name=call.function.name, arguments=call.function.arguments or "{}")
-            for call in message.tool_calls or []
-            if call.type == "function"
+            ToolCall(id=item.call_id, name=item.name, arguments=item.arguments or "{}")
+            for item in response.output
+            if item.type == "function_call"
         ]
-        kept: dict[str, Any] = {"role": "assistant", "content": message.content or ""}
-        if calls:
-            kept["tool_calls"] = [
-                {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}} for c in calls
-            ]
+        kept = [item.model_dump(mode="json", exclude_none=True) for item in response.output]
         if response.usage is not None:
             _LOG.info(
                 "AI: chat used %s",
-                json.dumps(response.usage.model_dump(include={"prompt_tokens", "completion_tokens"})),
+                json.dumps(response.usage.model_dump(include={"input_tokens", "output_tokens"})),
             )
-        return ChatReply(text=(message.content or "").strip(), tool_calls=calls, message=kept)
+        return ChatReply(text=response.output_text.strip(), tool_calls=calls, items=kept)
 
 
 __all__ = ["CHAT_MODEL", "STT_MODEL", "ChatReply", "LlmError", "LlmLike", "OpenAiLlm", "ToolCall"]

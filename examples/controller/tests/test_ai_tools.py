@@ -70,5 +70,5 @@ def test_run_tool_refuses_when_ai_mode_has_ended() -> None:
 
 
 def test_every_tool_definition_is_runnable() -> None:
-    names = {definition["function"]["name"] for definition in TOOL_DEFINITIONS}
+    names = {definition["name"] for definition in TOOL_DEFINITIONS}
     assert names == {"walk", "turn", "gesture", "look", "stop"}

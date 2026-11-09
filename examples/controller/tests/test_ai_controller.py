@@ -59,8 +59,8 @@ class FakeLlm:
             raise item
         return item
 
-    async def chat(self, messages: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None) -> ChatReply:
-        self.chats.append(list(messages))
+    async def chat(self, items: list[dict[str, Any]], *, tools: list[dict[str, Any]] | None) -> ChatReply:
+        self.chats.append(list(items))
         return self.replies.pop(0) if self.replies else ChatReply(text="")
 
 
@@ -292,15 +292,29 @@ async def test_voice_that_cannot_load_returns_to_teleop_and_closes_the_mic() -> 
 async def test_tool_call_moves_the_robot_and_the_result_stays_on_record() -> None:
     h = Harness()
     h.llm.replies += [
-        ChatReply(text="", tool_calls=[ToolCall("c1", "walk", '{"direction": "forward", "seconds": 2}')]),
+        ChatReply(
+            text="",
+            tool_calls=[ToolCall("c1", "walk", '{"direction": "forward", "seconds": 2}')],
+            items=[
+                {
+                    "type": "function_call",
+                    "call_id": "c1",
+                    "name": "walk",
+                    "arguments": '{"direction": "forward", "seconds": 2}',
+                }
+            ],
+        ),
         ChatReply(text="歩きます"),
     ]
     await _live(h)
     h.hear("前に歩いて")
     await _until(lambda: h.speaker.said == ["歩きます"])
     assert h.session.effective_input().move == "forward"
-    tool_results = [m for m in h.llm.chats[-1] if m.get("role") == "tool"]
-    assert tool_results and json.loads(tool_results[0]["content"])["ok"] is True
+    calls = [item for item in h.llm.chats[-1] if item.get("type") == "function_call"]
+    tool_results = [item for item in h.llm.chats[-1] if item.get("type") == "function_call_output"]
+    assert [call["call_id"] for call in calls] == ["c1"]
+    assert tool_results[0]["call_id"] == "c1"
+    assert json.loads(tool_results[0]["output"])["ok"] is True
     await h.ai.stop()
 
 
