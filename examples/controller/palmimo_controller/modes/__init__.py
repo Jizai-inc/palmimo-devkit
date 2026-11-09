@@ -32,10 +32,12 @@ class Mode:
     label: str
 
 
-#: Shipped presets, in the order the mode picker lists them.
+#: Shipped presets, in the order the mode picker lists them. `custom` ships
+#: only a starting point: it is the mode meant to be rewritten on the homepage.
 PRESET_MODES: tuple[Mode, ...] = (
     Mode(id="default", label="標準"),
     Mode(id="kansai", label="関西弁"),
+    Mode(id="custom", label="カスタム"),
 )
 
 

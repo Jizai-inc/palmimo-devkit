@@ -17,6 +17,16 @@
       <a id="pilot-link" href="/pilot">Start piloting</a>
       <div id="status-bar"></div>
 
+      <section id="voice-picker" aria-labelledby="voice-picker-title">
+        <h2 id="voice-picker-title">AIモードの声</h2>
+        <p class="prompt-note">変更は次にAIモードを開始したときに反映されます。</p>
+        <p id="voice-load-error" class="prompt-error" hidden>声の設定を読み込めませんでした。ページを再読み込みしてください。</p>
+        <div class="voice-row">
+          <select id="voice-select" aria-labelledby="voice-picker-title" disabled></select>
+          <span id="voice-status" class="prompt-status" role="status"></span>
+        </div>
+      </section>
+
       <section id="prompt-editor" aria-labelledby="prompt-editor-title">
         <h2 id="prompt-editor-title">AIモードのプロンプト</h2>
         <p class="prompt-note">変更は次にそのモードを開始したときに反映されます。</p>
@@ -30,5 +40,6 @@
     </div>
     <script src="/static/app.js"></script>
     <script src="/static/prompts.js"></script>
+    <script src="/static/voice.js"></script>
   </body>
 </html>

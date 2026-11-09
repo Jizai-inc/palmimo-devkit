@@ -43,6 +43,7 @@ from .server import create_app
 from .session import PilotSession
 from .telemetry import Telemetry
 from .video import VideoStream
+from .voices import VoiceSetting, default_voice_path
 
 
 # Released SDK versions before reservations have no reservation exceptions.
@@ -327,6 +328,7 @@ def _build_ai(
     audio: AudioDevice,
     reflexes_factory: Callable[[], Reflexes] | None = None,
     voice_speed: float = DEFAULT_VOICE_SPEED,
+    voices: VoiceSetting | None = None,
 ) -> AiController:
     """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop.
 
@@ -341,6 +343,7 @@ def _build_ai(
         mic_factory=functools.partial(_open_mic, audio),
         playback_factory=functools.partial(_build_playback, audio),
         model=os.environ.get("CONTROLLER_REALTIME_MODEL") or DEFAULT_MODEL,
+        voice=(voices if voices is not None else VoiceSetting(default_voice_path())).get,
         voice_speed=voice_speed,
         reflexes_factory=reflexes_factory,
     )
@@ -388,9 +391,11 @@ def main(
     telemetry = Telemetry()
     # One store for both: a prompt saved from the homepage must be the one the next AI mode reads.
     prompts = EditablePrompts(default_prompt_dir())
+    # Likewise one store for the voice the homepage picks and the next AI mode speaks in.
+    voices = VoiceSetting(default_voice_path())
     reflexes = _build_reflexes_factory(session, video, telemetry, enabled=not (no_reflexes or no_camera))
-    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voice_speed)
-    app_instance = create_app(robot, session, robot_loop, video, ai, prompts, telemetry)
+    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voice_speed, voices)
+    app_instance = create_app(robot, session, robot_loop, video, ai, prompts, telemetry, voices)
 
     mode = "--dry-run" if dry_run else ("compute-only (no servo bus found)" if robot.driver is None else "live")
     ai_state = "AI modes available" if ai.available else "AI modes off: OPENAI_API_KEY not set"

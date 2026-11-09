@@ -37,13 +37,14 @@ Any number of viewers can watch at once; only one pilot can drive at a time.
 
 ## AI modes
 
-Two preset modes ship with the app, each one prompt in
+Three modes ship with the app, each one prompt in
 `palmimo_controller/modes/`:
 
 | Mode | Prompt | Character |
 |---|---|---|
 | Default | `default.md` | Neutral, polite standard Japanese |
 | Kansai-ben | `kansai.md` | The same robot, speaking Kansai dialect |
+| Custom | `custom.md` | A starting point meant to be rewritten on the homepage: any character, any language |
 
 On the pilot page, tap the AI mode button in the mode bar, pick a mode, and
 the robot starts listening and talking. The same spot then holds the
@@ -101,7 +102,16 @@ back the shipped prompt. Edits are saved outside the package, in
 `$XDG_DATA_HOME/palmimo/controller/prompts/<mode>.md` (by default
 `~/.local/share/palmimo/controller/prompts/`), so an app update keeps them.
 The shipped files in `palmimo_controller/modes/` are never changed. Only the
-two presets can be edited; the mode list itself is fixed.
+three modes can be edited; the mode list itself is fixed.
+
+### Choosing the voice
+
+The homepage's voice section picks the Realtime voice every AI mode speaks
+in (`coral` by default). The choice is saved in
+`$XDG_DATA_HOME/palmimo/controller/voice.txt`, beside the prompt edits, and
+applies the next time an AI mode starts: the Realtime API cannot change a
+session's voice once it has spoken. The page uses `GET /api/voice` and
+`PUT /api/voice` (body `{"voice": ...}`).
 
 The page uses `GET /api/prompts`, `PUT /api/prompts/<mode>` (body
 `{"text": ...}`, at most 8000 characters) and `DELETE /api/prompts/<mode>`.

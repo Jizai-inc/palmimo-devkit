@@ -112,6 +112,7 @@ class Harness:
         mic_gate: threading.Event | None = None,
         echo_cancelled: bool = True,
         voice_speed: float = 1.0,
+        voice: str = "coral",
         reflexes_factory: Any = None,
     ) -> None:
         self.session = PilotSession()
@@ -126,6 +127,7 @@ class Harness:
         self._mic_error = mic_error
         self._mic_gate = mic_gate
         self._echo_cancelled = echo_cancelled
+        self.voice = voice
         self.ai = AiController(
             self.session,
             prompts if prompts is not None else BundledPrompts(),
@@ -134,6 +136,7 @@ class Harness:
             mic_factory=self._open_mic,
             playback_factory=lambda: self.playback,
             connect=self._connect,
+            voice=lambda: self.voice,
             voice_speed=voice_speed,
             start_timeout=1.0,
             reflexes_factory=reflexes_factory,
@@ -455,3 +458,17 @@ async def test_reflexes_run_while_ai_is_live_and_stop_with_it() -> None:
     await asyncio.wait_for(reflexes.started.wait(), 2.0)
     await h.ai.stop()
     assert reflexes.cancelled
+
+
+async def test_each_start_uses_the_voice_chosen_at_that_moment() -> None:
+    h = Harness()
+    await _live(h)
+    first = h.client.sent[0]
+    await h.ai.stop()
+    h.voice = "marin"
+    h.client = FakeClient()
+    await _live(h)
+    second = h.client.sent[0]
+    assert isinstance(first, SessionUpdate) and isinstance(second, SessionUpdate)
+    assert (first.voice, second.voice) == ("coral", "marin")
+    await h.ai.stop()

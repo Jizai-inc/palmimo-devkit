@@ -13,8 +13,8 @@ def test_every_preset_mode_has_a_nonempty_prompt() -> None:
         assert prompts.prompt(mode.id)
 
 
-def test_presets_are_default_then_kansai() -> None:
-    assert [mode.id for mode in BundledPrompts().modes()] == ["default", "kansai"]
+def test_presets_are_default_kansai_then_custom() -> None:
+    assert [mode.id for mode in BundledPrompts().modes()] == ["default", "kansai", "custom"]
 
 
 def test_prompt_rejects_an_unknown_mode() -> None:

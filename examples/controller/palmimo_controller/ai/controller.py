@@ -28,6 +28,7 @@ from typing import Any, NamedTuple, Protocol, TypeVar
 from ..modes import PromptSource
 from ..session import PilotSession
 from ..telemetry import Telemetry
+from ..voices import DEFAULT_VOICE
 from . import protocol
 from .audio import API_RATE, MicrophoneFeed, MicStreamLike
 from .client import RealtimeClient, RealtimeClientLike
@@ -37,9 +38,8 @@ from .tools import TOOL_DEFINITIONS, run_tool
 
 _LOG = logging.getLogger(__name__)
 
-#: Realtime model and voice. The mini model costs about a third of the full one.
+#: Realtime model. The mini model costs about a third of the full one.
 DEFAULT_MODEL = "gpt-realtime-2.1-mini"
-VOICE = "coral"
 
 #: Longest the connection at a switch to AI may take before it is abandoned.
 START_TIMEOUT_S: float = 8.0
@@ -131,6 +131,7 @@ class AiController:
         playback_factory: Callable[[], PlaybackLike],
         connect: Connect = RealtimeClient.connect,
         model: str = DEFAULT_MODEL,
+        voice: Callable[[], str] = lambda: DEFAULT_VOICE,
         voice_speed: float = 1.0,
         start_timeout: float = START_TIMEOUT_S,
         now: Callable[[], float] = time.monotonic,
@@ -144,6 +145,7 @@ class AiController:
         self._playback_factory = playback_factory
         self._connect = connect
         self._model = model
+        self._voice = voice
         self._voice_speed = voice_speed
         self._start_timeout = start_timeout
         self._now = now
@@ -179,8 +181,10 @@ class AiController:
             _LOG.exception("could not load prompt for mode %r", mode_id)
             self._fail(previous, mode_id, NOTICE_NO_PROMPT, "prompt_unavailable", latency_ms=0)
             return False
+        # Read at each start, like the prompt, so a choice saved on the homepage applies next time.
+        voice = self._voice()
         self._task = asyncio.create_task(
-            self._run(self._api_key, mode_id, prompt, self._now()), name=f"ai-mode-{mode_id}"
+            self._run(self._api_key, mode_id, prompt, voice, self._now()), name=f"ai-mode-{mode_id}"
         )
         return True
 
@@ -202,7 +206,7 @@ class AiController:
             "mode_switch", from_mode=from_mode, to_mode=mode_id, ok=False, latency_ms=latency_ms, error=reason
         )
 
-    async def _run(self, api_key: str, mode_id: str, prompt: str, started_at: float) -> None:
+    async def _run(self, api_key: str, mode_id: str, prompt: str, voice: str, started_at: float) -> None:
         live = False
         playback: PlaybackLike | None = None
         try:
@@ -214,7 +218,7 @@ class AiController:
                         SessionUpdate(
                             instructions=prompt,
                             tools=TOOL_DEFINITIONS,
-                            voice=VOICE,
+                            voice=voice,
                             rate=API_RATE,
                             speed=self._voice_speed,
                         )

@@ -410,16 +410,44 @@ body[data-role="pilot"] #video-layer {
   max-width: fit-content;
 }
 
-/* ---- Viewer page: AI mode prompt editor ---- */
+/* ---- Viewer page: AI voice picker and mode prompt editor ---- */
 
+#voice-picker,
 #prompt-editor {
   margin-top: 2.5em;
   text-align: left;
 }
 
+#voice-picker h2,
 #prompt-editor h2 {
   font-size: 1.05em;
   margin: 0 0 0.3em;
+}
+
+#voice-load-error[hidden] {
+  display: none;
+}
+
+.voice-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6em;
+}
+
+#voice-select {
+  min-width: 12em;
+  padding: 0.5em 0.6em;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: #1b1b1b;
+  color: #eee;
+  font: inherit;
+  font-size: 0.95em;
+}
+
+#voice-select:disabled {
+  opacity: 0.45;
 }
 
 .prompt-note {

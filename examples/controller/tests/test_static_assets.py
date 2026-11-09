@@ -73,3 +73,12 @@ def test_prompt_editor_script_is_loaded_and_never_writes_markup() -> None:
     assert 'id="prompt-list"' in viewer_html
     assert "innerHTML" not in prompts_js
     assert "insertAdjacentHTML" not in prompts_js
+
+
+def test_voice_picker_script_is_loaded_and_never_writes_markup() -> None:
+    voice_js = (STATIC_DIR / "voice.js").read_text()
+    viewer_html = (STATIC_DIR / "viewer.html").read_text()
+    assert '<script src="/static/voice.js"></script>' in viewer_html
+    assert 'id="voice-select"' in viewer_html
+    assert "innerHTML" not in voice_js
+    assert "insertAdjacentHTML" not in voice_js

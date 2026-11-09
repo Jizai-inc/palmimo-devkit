@@ -71,6 +71,7 @@ RUNTIME_TEXT_FILES: frozenset[str] = frozenset(
         # The controller's AI mode prompts: the character each mode speaks as.
         "examples/controller/palmimo_controller/modes/default.md",
         "examples/controller/palmimo_controller/modes/kansai.md",
+        "examples/controller/palmimo_controller/modes/custom.md",
     }
 )
 

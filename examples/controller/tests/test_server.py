@@ -539,7 +539,7 @@ def test_play_message_from_a_viewer_is_dropped(
 def test_modes_endpoint_lists_presets_and_key_state(client: TestClient) -> None:
     body = client.get("/api/modes").json()
     assert body["ai_available"] is False
-    assert [mode["id"] for mode in body["modes"]] == ["default", "kansai"]
+    assert [mode["id"] for mode in body["modes"]] == ["default", "kansai", "custom"]
 
 
 def test_ai_start_without_a_key_keeps_teleop_and_explains_why(
@@ -569,7 +569,7 @@ def test_ai_messages_from_a_viewer_are_ignored(client_and_session: tuple[TestCli
 
 def test_prompts_endpoint_lists_presets_with_their_default_text(client: TestClient) -> None:
     body = client.get("/api/prompts").json()
-    assert [entry["id"] for entry in body] == ["default", "kansai"]
+    assert [entry["id"] for entry in body] == ["default", "kansai", "custom"]
     for entry in body:
         assert entry["text"] == entry["default_text"]
         assert entry["custom"] is False
@@ -653,3 +653,20 @@ def test_status_broadcast_reports_the_speed(client: TestClient) -> None:
         ws.send_json({"role": "viewer"})
         ws.receive_json()
         assert ws.receive_json()["speed"] == 1.0
+
+
+def test_voice_endpoint_offers_every_voice_and_starts_at_the_default(client: TestClient) -> None:
+    body = client.get("/api/voice").json()
+    assert (body["voice"], body["default_voice"], body["custom"]) == ("coral", "coral", False)
+    assert "marin" in body["voices"]
+
+
+def test_saved_voice_is_returned_from_then_on(client: TestClient) -> None:
+    saved = client.put("/api/voice", json={"voice": "marin"})
+    assert saved.status_code == 200 and saved.json()["voice"] == "marin"
+    assert client.get("/api/voice").json() == {**saved.json(), "custom": True}
+
+
+def test_save_voice_rejects_an_unknown_voice(client: TestClient) -> None:
+    assert client.put("/api/voice", json={"voice": "nobody"}).status_code == 422
+    assert client.get("/api/voice").json()["voice"] == "coral"

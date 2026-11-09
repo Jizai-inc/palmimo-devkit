@@ -33,6 +33,7 @@ from .robot_loop import RobotLoop
 from .session import PilotSession
 from .telemetry import Telemetry
 from .video import MJPEG_BOUNDARY, VideoStream, mjpeg_generator
+from .voices import DEFAULT_VOICE, VOICES, VoiceSetting, default_voice_path
 
 
 _LOG = logging.getLogger(__name__)
@@ -341,6 +342,12 @@ class _PromptBody(BaseModel):
     text: str
 
 
+class _VoiceBody(BaseModel):
+    """`PUT /api/voice` body."""
+
+    voice: str
+
+
 def create_app(
     robot: Palmimo,
     session: PilotSession,
@@ -349,6 +356,7 @@ def create_app(
     ai: AiController,
     prompts: EditablePrompts,
     telemetry: Telemetry,
+    voices: VoiceSetting | None = None,
 ) -> FastAPI:
     """Assemble the FastAPI app around an already-constructed robot loop and video stream.
 
@@ -360,11 +368,14 @@ def create_app(
         ai (AiController): Starts/stops AI modes; stopped by the lifespan before the robot parks.
         prompts (EditablePrompts): The AI modes the pilot page lists, and the prompts the homepage edits.
         telemetry (Telemetry): Receives session start/end events.
+        voices (VoiceSetting | None): The AI voice the homepage picks; `None` uses the one saved
+            under the data home (`voices.default_voice_path`).
 
     Returns:
         FastAPI: The assembled app, ready for `uvicorn.run`.
     """
     registry = _ConnectionRegistry()
+    voice_setting = voices if voices is not None else VoiceSetting(default_voice_path())
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -462,6 +473,29 @@ def create_app(
             _LOG.exception("could not reset prompt for mode %r", mode_id)
             raise HTTPException(status_code=500, detail="could not remove the prompt file") from exc
         return _prompt_entry(mode_id, label)
+
+    def _voice_entry() -> dict[str, Any]:
+        return {
+            "voice": voice_setting.get(),
+            "default_voice": DEFAULT_VOICE,
+            "voices": list(VOICES),
+            "custom": voice_setting.is_custom(),
+        }
+
+    @app.get("/api/voice")
+    async def get_voice() -> dict[str, Any]:
+        return _voice_entry()
+
+    @app.put("/api/voice")
+    async def save_voice(body: _VoiceBody) -> dict[str, Any]:
+        try:
+            voice_setting.save(body.voice)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            _LOG.exception("could not save the AI voice")
+            raise HTTPException(status_code=500, detail="could not write the voice setting") from exc
+        return _voice_entry()
 
     @app.get("/video.mjpeg")
     async def video_stream() -> StreamingResponse:
