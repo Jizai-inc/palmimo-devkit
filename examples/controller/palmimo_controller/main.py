@@ -28,6 +28,7 @@ from palmimo_sdk import (
     HeadCamera,
     MicStream,
     Palmimo,
+    PiperEngine,
     ServoDriver,
     Speaker,
     SpeakerConfig,
@@ -65,6 +66,10 @@ DEFAULT_GAIT_SPEED: float = 0.012
 
 #: Language the robot listens and speaks in.
 LANGUAGE = "ja"
+
+#: Speaking rate, as in the companion agent: 1.0 is the voice's natural pace,
+#: lower is slower. At 1.0 the Japanese voice sounds rushed at the booth.
+DEFAULT_VOICE_SPEED: float = 0.8
 
 #: Avoids 8765 (the MCP server), 80/8080 (Palmimo Portal), and 8000 (the
 #: teleop app), so both apps can be installed on one robot.
@@ -278,7 +283,7 @@ def _open_mic(device: AudioDevice) -> Iterator[OpenMic]:
 
 
 @contextlib.contextmanager
-def _open_voice(device: AudioDevice) -> Iterator[OpenVoice]:
+def _open_voice(device: AudioDevice, voice_speed: float = DEFAULT_VOICE_SPEED) -> Iterator[OpenVoice]:
     """Load the Piper voice and the Silero VAD segmenter for one AI mode.
 
     Both download their models on first use, which is why `AiController`
@@ -286,7 +291,11 @@ def _open_voice(device: AudioDevice) -> Iterator[OpenVoice]:
     """
     from .ai.vad import SileroVad, UtteranceSegmenter
 
-    speaker = Speaker(SpeakerConfig(lang=LANGUAGE, device_name_hint=device.speaker_hint))
+    speaker = Speaker(
+        SpeakerConfig(lang=LANGUAGE, device_name_hint=device.speaker_hint),
+        # Piper's length_scale is phoneme length, the inverse of a speed.
+        engine=PiperEngine(length_scale=1.0 / voice_speed),
+    )
     speaker.open()
     try:
         segmenter = UtteranceSegmenter(SileroVad.load())
@@ -339,6 +348,7 @@ def _build_ai(
     prompts: EditablePrompts,
     audio: AudioDevice,
     reflexes_factory: Callable[[], Reflexes] | None = None,
+    voice_speed: float = DEFAULT_VOICE_SPEED,
 ) -> AiController:
     """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop."""
     api_key = os.environ.get("OPENAI_API_KEY") or None
@@ -348,7 +358,7 @@ def _build_ai(
         llm=OpenAiLlm(api_key, language=LANGUAGE) if api_key is not None else None,
         telemetry=telemetry,
         mic_factory=functools.partial(_open_mic, audio),
-        voice_factory=functools.partial(_open_voice, audio),
+        voice_factory=functools.partial(_open_voice, audio, voice_speed),
         reflexes_factory=reflexes_factory,
     )
 
@@ -377,6 +387,13 @@ def main(
         "--audio-device",
         help="AI mode mic and speaker: respeaker (development robot) or booth-usb (exhibition robot).",
     ),
+    voice_speed: float = typer.Option(
+        DEFAULT_VOICE_SPEED,
+        "--voice-speed",
+        help="AI mode speaking rate: 1.0 is the voice's natural pace, lower is slower.",
+        min=0.5,
+        max=1.5,
+    ),
 ) -> None:
     """Serve Palmimo Controller: a phone/laptop browser drives the robot, views its head
     camera, and switches to AI voice modes, on the same LAN, with no authentication."""
@@ -389,7 +406,7 @@ def main(
     # One store for both: a prompt saved from the homepage must be the one the next AI mode reads.
     prompts = EditablePrompts(default_prompt_dir())
     reflexes = _build_reflexes_factory(session, video, telemetry, enabled=not (no_reflexes or no_camera))
-    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes)
+    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voice_speed)
     app_instance = create_app(robot, session, robot_loop, video, ai, prompts, telemetry)
 
     mode = "--dry-run" if dry_run else ("compute-only (no servo bus found)" if robot.driver is None else "live")

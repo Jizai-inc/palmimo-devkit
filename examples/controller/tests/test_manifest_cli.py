@@ -88,6 +88,7 @@ def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.Monk
 
     assert result.exit_code == 0, result.output
     assert f":{main_module.DEFAULT_PORT}/" in manifest["url"]
+    assert manifest["params"]["voice_speed"]["default"] == pytest.approx(main_module.DEFAULT_VOICE_SPEED)
     assert captured["port"] == main_module.DEFAULT_PORT
     assert captured["fps"] == 60
     assert captured["no_face"] is False
