@@ -87,12 +87,11 @@ def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.Monk
     result = CliRunner().invoke(main_module.app, argv)
 
     assert result.exit_code == 0, result.output
-    assert manifest["params"]["port"]["default"] == main_module.DEFAULT_PORT
-    assert manifest["params"]["gait_speed"]["default"] == pytest.approx(main_module.DEFAULT_GAIT_SPEED)
+    assert f":{main_module.DEFAULT_PORT}/" in manifest["url"]
     assert captured["port"] == main_module.DEFAULT_PORT
-    assert captured["fps"] == manifest["params"]["fps"]["default"]
-    assert captured["no_face"] == manifest["params"]["no_face"]["default"]
-    assert captured["reflexes"] is not manifest["params"]["no_reflexes"]["default"]
+    assert captured["fps"] == 60
+    assert captured["no_face"] is False
+    assert captured["reflexes"] is True
     assert captured["gait_speed"] == pytest.approx(main_module.DEFAULT_GAIT_SPEED)
     assert captured["dry_run"] is False
     assert captured["no_camera"] is False

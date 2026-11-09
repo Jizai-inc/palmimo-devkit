@@ -1,60 +1,15 @@
 schema = 1
 name = "controller"
 description = "Drive Palmimo from a phone or laptop browser, then switch to an AI voice mode with one tap. Teleop works without an API key."
-command = ["palmimo-controller", "--port", "{port}", "--fps", "{fps}", "--gait-speed", "{gait_speed}", "--audio-device", "{audio_device}", "{no_camera}", "{no_face}", "{no_reflexes}", "{dry_run}"]
-url = "http://{host}:{port}/"
+command = ["palmimo-controller", "--port", "8010", "--audio-device", "{audio_device}"]
+url = "http://{host}:8010/"
 devices = ["camera", "audio", "motor_display"]
-
-[params.port]
-type = "int"
-default = 8010
-min = 1024
-max = 65535
-description = "HTTP/WebSocket port the controller web app is served on."
-
-[params.fps]
-type = "int"
-default = 60
-min = 1
-max = 120
-description = "Robot control loop rate, in cycles per second."
-
-[params.gait_speed]
-type = "float"
-default = 0.012
-min = 0.001
-max = 0.05
-description = "How fast the robot walks; higher is faster."
 
 [params.audio_device]
 type = "enum"
 choices = ["respeaker", "booth-usb"]
 default = "respeaker"
 description = "Mic and speaker for AI modes: respeaker for a development robot with a ReSpeaker 4 Mic Array, or booth-usb for an exhibition robot with a push-to-talk USB microphone and USB speaker (hold the mic button while talking)."
-
-[params.no_camera]
-type = "bool"
-default = false
-flag = "--no-camera"
-description = "Disable the head camera video feed."
-
-[params.no_face]
-type = "bool"
-default = false
-flag = "--no-face"
-description = "Do not drive the face display, even when one is plugged in."
-
-[params.no_reflexes]
-type = "bool"
-default = false
-flag = "--no-reflexes"
-description = "In AI modes, do not wave back at visitors or glance at faces."
-
-[params.dry_run]
-type = "bool"
-default = false
-flag = "--dry-run"
-description = "Run compute-only, without ever attaching a servo driver."
 
 [env.OPENAI_API_KEY]
 required = false
