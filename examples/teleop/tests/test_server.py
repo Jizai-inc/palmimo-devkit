@@ -12,7 +12,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from palmimo_sdk import Palmimo, ServoDriver
-from palmimo_teleop.robot_loop import RobotLoop
+from palmimo_teleop.robot_loop import RobotLoop, SettleFailedError
 from palmimo_teleop.server import (
     _ConnectionRegistry,
     _control_connection,
@@ -591,3 +591,31 @@ def test_status_broadcast_separates_the_selected_and_applied_speed(gait_speed: f
         payload = ws.receive_json()
     assert payload["speed"] == 2.5
     assert payload["applied_speed"] == pytest.approx(applied)
+
+
+class _SettleFailingLoop(RobotLoop):
+    """A loop whose settle raises, as when the servo bus fails during shutdown."""
+
+    def _settle(self) -> None:
+        raise RuntimeError("servo bus fault")
+
+
+def test_lifespan_still_disconnects_when_the_settle_fails(caplog: pytest.LogCaptureFixture) -> None:
+    # Without this, a bus failing mid-settle would skip `robot.disconnect()`
+    # and leave the servos torqued -- or the failure would be swallowed and
+    # the shutdown reported as clean.
+    driver = _FakeServoDriver()
+    robot = Palmimo(driver=driver)
+    session = PilotSession()
+    robot_loop = _SettleFailingLoop(robot, session, fps=30)
+    app = create_app(robot, session, robot_loop, VideoStream(None))
+    raised: BaseException | None = None
+    with caplog.at_level("ERROR"):
+        try:
+            with TestClient(app):
+                assert driver.is_connected
+        except Exception as exc:  # the TestClient may surface the lifespan's re-raise
+            raised = exc
+    assert not driver.is_connected
+    assert any("disconnecting anyway" in r.getMessage() for r in caplog.records)
+    assert raised is None or isinstance(raised, SettleFailedError)

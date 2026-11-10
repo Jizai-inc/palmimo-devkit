@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from palmimo_sdk import Palmimo
 
 from .control import ALLOWED_GESTURES, ALLOWED_MOVES, ALLOWED_ROTATES, ALLOWED_SPEEDS, clamp_neck
-from .robot_loop import RobotLoop
+from .robot_loop import RobotLoop, SettleFailedError
 from .session import PilotSession
 from .video import MJPEG_BOUNDARY, VideoStream, mjpeg_generator
 
@@ -349,7 +349,18 @@ def create_app(
                 _LOG.exception("status broadcast task ended with an unexpected error")
             finally:
                 video.stop()
-                if robot_loop.shutdown():
+                try:
+                    stopped = robot_loop.shutdown()
+                except SettleFailedError:
+                    # The control thread is gone but the settle raised: no
+                    # one is driving `robot`, so it must still be
+                    # disconnected (torque off) -- then the failure is
+                    # re-raised so shutdown is not reported as clean.
+                    _LOG.exception("robot settle failed; disconnecting anyway")
+                    if robot.has_connectable_resource:
+                        robot.disconnect()
+                    raise
+                if stopped:
                     if robot.has_connectable_resource:
                         robot.disconnect()
                 else:

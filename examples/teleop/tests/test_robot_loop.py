@@ -18,6 +18,7 @@ from palmimo_teleop.robot_loop import (
     NECK_PITCH_SIGN,
     NECK_YAW_SIGN,
     RobotLoop,
+    SettleFailedError,
 )
 from palmimo_teleop.session import PilotSession
 
@@ -924,3 +925,161 @@ def test_shutdown_restores_legs_a_failed_write_reached_after_they_were_at_the_de
     loop, _session, _ = _speed_up_with_a_partial_failure_after_1x(robot)
     assert loop.shutdown() is True
     assert _all_legs_at(robot, 300)
+
+
+# -- Back-off overflow, wave -> dance hand-off, settle failures ------------------------------------
+
+
+def test_a_long_run_of_leg_profile_failures_does_not_overflow_the_back_off() -> None:
+    # Without this, `2 ** n` past n = 1023 raises OverflowError inside the
+    # failure handler (~17 minutes of 1 s retries against a dead servo): every
+    # tick then fails and retries without any back-off at all.
+    robot = FakeRobot()
+    loop, session, clock = _clocked(robot)
+    session.set_speed("a", 2.5)
+    _pv(robot).always_fail = True
+    loop._leg_pv_failures = 2000
+    for frame in range(3):
+        clock.now = frame * LEG_PROFILE_RETRY_MAX_S
+        _drive(session, move="forward")
+        assert loop.tick() is True
+    assert loop.robot_ok is True
+    assert loop._leg_pv_failures == 2003
+    assert loop._leg_pv_next_try_at == pytest.approx(clock.now + LEG_PROFILE_RETRY_MAX_S)
+
+
+class SdkLikeRobot(FakeRobot):
+    """A `FakeRobot` whose `step()` mimics `Palmimo._sync_gesture_tuning` for a wave on its driver.
+
+    On a wave's first step the waving arm (leg 1) goes to `WAVE_ARM_PV`; on the first step after
+    the wave every servo goes back to the driver default -- unless `release_fails`, mirroring the
+    SDK's error-suppressed release write that silently leaves the arm on the wave profile.
+    """
+
+    WAVE_ARM_PV = 0
+    ARM = tuple(m for m in LEG_MOTORS if m.startswith("leg_1_"))
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.motion: str | None = None
+        self.release_fails = False
+        self._wave_tuned = False
+
+    def set_motion(self, name: str) -> None:
+        super().set_motion(name)
+        self.motion = name
+
+    def stop(self) -> None:
+        super().stop()
+        self.motion = None
+
+    def step(self) -> dict[str, int]:
+        pv = _pv(self).pv
+        if self.motion == "wave" and not self._wave_tuned:
+            for motor in self.ARM:
+                pv[motor] = self.WAVE_ARM_PV
+            self._wave_tuned = True
+        elif self.motion != "wave" and self._wave_tuned:
+            if not self.release_fails:
+                for motor in pv:
+                    pv[motor] = 300
+            self._wave_tuned = False  # the SDK forgets the wave either way
+        return super().step()
+
+
+def test_a_wave_then_dance_restores_the_arm_when_palmimo_s_release_fails() -> None:
+    # Without this, switching a wave straight to a dance after Palmimo's
+    # release write silently failed would dance with the arm on the wave's
+    # profile until the dance ends: the hand-off had forgotten the legs, so
+    # the dance saw nothing dirty to restore.
+    robot = SdkLikeRobot()
+    loop, session, _ = _clocked(robot)
+    loop.tick()
+    session.play("a", "wave")
+    _drive(session)
+    loop.tick()
+    assert all(_pv(robot).pv[m] == SdkLikeRobot.WAVE_ARM_PV for m in SdkLikeRobot.ARM)
+    robot.release_fails = True
+    session.play("a", "dance")
+    _drive(session)
+    loop.tick()
+    assert session.effective_input().gesture == "dance"
+    assert _all_legs_at(robot, 300)
+
+
+def test_a_wave_then_dance_keeps_retrying_the_restore_during_the_dance() -> None:
+    # Without this, a restore that also failed at the dance switch would never
+    # be retried for the rest of the dance.
+    robot = SdkLikeRobot()
+    loop, session, clock = _clocked(robot)
+    loop.tick()
+    session.play("a", "wave")
+    _drive(session)
+    loop.tick()
+    robot.release_fails = True
+    _pv(robot).fail_next_writes = 1
+    session.play("a", "dance")
+    _drive(session)
+    loop.tick()
+    assert not _all_legs_at(robot, 300)
+    clock.now = LEG_PROFILE_RETRY_BASE_S
+    _drive(session)
+    loop.tick()
+    assert _all_legs_at(robot, 300)
+
+
+def test_the_wave_profile_is_still_not_overwritten_while_the_wave_plays() -> None:
+    # Without this, handing the legs over as unknown would let a later wave
+    # cycle "restore" them and wipe the arm profile Palmimo applied.
+    robot = SdkLikeRobot()
+    loop, session, clock = _clocked(robot)
+    loop.tick()
+    session.play("a", "wave")
+    _drive(session)
+    loop.tick()
+    attempts = _pv(robot).write_attempts
+    for i in range(1, 20):
+        clock.now = i * LEG_PROFILE_RETRY_MAX_S / 4
+        _drive(session)
+        loop.tick()
+    assert _pv(robot).write_attempts == attempts
+    assert all(_pv(robot).pv[m] == SdkLikeRobot.WAVE_ARM_PV for m in SdkLikeRobot.ARM)
+
+
+class SettleFailingRobot(FakeRobot):
+    """A robot whose `step()` starts raising once `fail_steps` is set, simulating a bus lost at shutdown."""
+
+    fail_steps = False
+
+    def step(self) -> dict[str, int]:
+        if self.fail_steps:
+            raise RuntimeError("servo bus fault")
+        return super().step()
+
+
+def test_a_settle_failure_raises_settle_failed_instead_of_reporting_success() -> None:
+    # Without this, a bus failing mid-settle would either escape as a bare
+    # error the server cannot tell apart from anything else, or be swallowed
+    # and reported as a clean shutdown.
+    robot = SettleFailingRobot()
+    loop, session, _ = _clocked(robot)
+    _drive(session, move="forward")
+    loop.tick()
+    robot.fail_steps = True
+    with pytest.raises(SettleFailedError) as excinfo:
+        loop.shutdown()
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert ("stop", None) in robot.calls
+
+
+def test_a_settle_failure_after_the_thread_stops_still_raises_settle_failed() -> None:
+    # Same, through the real background thread: `shutdown()` joins it first,
+    # so the error is a settle failure, not a stuck-thread `False`.
+    robot = SettleFailingRobot()
+    session = PilotSession(now=FakeClock())
+    loop = RobotLoop(_robot(robot), session, fps=200)
+    loop.start()
+    time.sleep(0.05)
+    robot.fail_steps = True
+    with pytest.raises(SettleFailedError):
+        loop.shutdown()

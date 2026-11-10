@@ -60,9 +60,24 @@ LEG_PROFILE_SETTLE_ATTEMPTS: int = 5
 #: `Palmimo`, so the loop itself restores the legs to the driver default.
 SDK_TUNED_GESTURES: frozenset[str] = frozenset({"wave"})
 
-#: Marker in `RobotLoop._leg_pv_known` for a leg whose last write failed:
-#: its Profile_Velocity is unknown and possibly still shortened.
+#: Marker in `RobotLoop._leg_pv_known` for a leg whose last write failed, or
+#: that a wave handed to `Palmimo`: its Profile_Velocity is unknown and
+#: possibly still shortened or wave-tuned.
 _PV_UNKNOWN = -1
+
+#: Largest back-off exponent: 0.1 s * 2**4 already exceeds the 1 s cap, so
+#: anything above only has to stay far from float overflow.
+_RETRY_EXPONENT_CAP = 16
+
+
+class SettleFailedError(RuntimeError):
+    """`RobotLoop.shutdown()` stopped the control thread, but settling the robot raised.
+
+    The thread has been joined, so nothing else is driving `robot` and the
+    caller may (and should) still disconnect it -- torque off -- before
+    treating shutdown as failed. The original error is the `__cause__`.
+    """
+
 
 #: Sign applied to the pilot's raw stick value before `Palmimo.look()`.
 #: `Palmimo.look`'s sign-to-direction mapping is itself unspecified (see its
@@ -322,7 +337,12 @@ class RobotLoop:
                 "and every leg is rewritten when it ends",
                 motion,
             )
-        self._leg_pv_known.clear()
+        # Hand the legs over as *unknown*, not forgotten: `Palmimo`'s release
+        # write when the wave ends is error-suppressed, so whatever follows
+        # -- a gait, standing still, a dance, or the settle -- must treat
+        # every leg as possibly still on the wave's tuning and rewrite it.
+        # (Mid-wave writes stay blocked by the `entering` check above.)
+        self._leg_pv_known = dict.fromkeys(LEG_MOTORS, _PV_UNKNOWN)
 
     def _write_leg_profile(self, driver: Any, value: int, motors: list[str]) -> bool:
         """Write *value* to *motors*' Profile_Velocity; `False` (logged, throttled) if it failed.
@@ -339,7 +359,12 @@ class RobotLoop:
                 self._leg_pv_known[motor] = _PV_UNKNOWN
             self._leg_pv_failures += 1
             now = self._now()
-            delay = min(LEG_PROFILE_RETRY_MAX_S, LEG_PROFILE_RETRY_BASE_S * 2 ** (self._leg_pv_failures - 1))
+            # The exponent is clamped *before* the power: an unclamped
+            # `2 ** n` overflows float conversion past n = 1023 (some 17
+            # minutes of 1 s retries against a dead servo), and `min()` on
+            # the product would come too late to stop it.
+            exponent = min(self._leg_pv_failures - 1, _RETRY_EXPONENT_CAP)
+            delay = min(LEG_PROFILE_RETRY_MAX_S, LEG_PROFILE_RETRY_BASE_S * 2**exponent)
             self._leg_pv_next_try_at = now + delay
             if self._last_profile_log_at is None or now - self._last_profile_log_at >= FAILURE_LOG_INTERVAL_S:
                 _LOG.warning(
@@ -414,6 +439,13 @@ class RobotLoop:
             bool: `True` if the loop stopped and settled; `False` if the
                 thread was still alive after `settle_timeout` and settling
                 was skipped.
+
+        Raises:
+            SettleFailedError: The thread stopped but `_settle()` raised (e.g.
+                the servo bus failing mid-settle). Distinct from the `False`
+                return: the robot is no longer driven by anyone, so the
+                caller must still disconnect it, then treat shutdown as
+                failed rather than successful.
         """
         self._stop_event.set()
         if self._thread is not None:
@@ -426,7 +458,10 @@ class RobotLoop:
                 )
                 return False
             self._thread = None
-        self._settle()
+        try:
+            self._settle()
+        except Exception as exc:
+            raise SettleFailedError("settling the robot failed after the control thread stopped") from exc
         return True
 
     def _settle(self) -> None:
