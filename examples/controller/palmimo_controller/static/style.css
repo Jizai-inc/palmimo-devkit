@@ -102,12 +102,85 @@ body[data-role="pilot"] #video-layer {
     aspect-ratio: 4 / 3;
   }
 
+  /* Portrait stacks the controls instead of squeezing them side by side:
+     the gestures as one full-width row of wide buttons, and the d-pad and
+     the neck stick below them, where the thumbs rest. Every size derives
+     from --u, which is held to the controls' width (the d-pad must fit half
+     of it) and to their height (6.5u in all), so a short phone shrinks the
+     controls rather than overflowing. Sizing by height needs the controls
+     to be a size container, hence the zero flex basis. */
   body[data-role="pilot"] #controls {
+    --u: min(12.5vw, 15cqh, 80px);
     position: relative;
     inset: auto;
-    flex: 1 1 auto;
-    flex-direction: row;
+    flex: 1 1 0;
+    min-height: 0;
+    container-type: size;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "gestures gestures"
+      "dpad stick";
     align-items: center;
+    justify-items: center;
+    row-gap: calc(var(--u) * 0.3);
+    column-gap: calc(var(--u) * 0.2);
+    padding: calc(var(--u) * 0.3) 4vw max(calc(var(--u) * 0.3), env(safe-area-inset-bottom));
+  }
+
+  body[data-role="pilot"] #neck-controls {
+    display: contents;
+  }
+
+  body[data-role="pilot"] #gesture-buttons {
+    grid-area: gestures;
+    width: 100%;
+    grid-template-columns: repeat(4, 1fr);
+    gap: calc(var(--u) * 0.2);
+  }
+
+  body[data-role="pilot"] #gesture-buttons button {
+    width: auto;
+    height: var(--u);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+  }
+
+  body[data-role="pilot"] #gesture-buttons .icon {
+    width: calc(var(--u) * 0.5);
+    height: calc(var(--u) * 0.5);
+  }
+
+  body[data-role="pilot"] #dpad-column {
+    grid-area: dpad;
+    margin-left: 0;
+  }
+
+  body[data-role="pilot"] #dpad {
+    grid-template-columns: repeat(3, var(--u));
+    grid-template-rows: repeat(3, var(--u));
+    gap: calc(var(--u) * 0.2);
+  }
+
+  body[data-role="pilot"] #dpad button {
+    font-size: calc(var(--u) * 0.4);
+  }
+
+  /* No outward nudge here: in a half-width column it only pushed the
+     rotate buttons off the d-pad, so they read as stray buttons. */
+  body[data-role="pilot"] #rotate-left,
+  body[data-role="pilot"] #rotate-right {
+    transform: none;
+  }
+
+  body[data-role="pilot"] #neck-stick {
+    grid-area: stick;
+    width: min(40vw, calc(var(--u) * 3.4));
+    height: min(40vw, calc(var(--u) * 3.4));
   }
 }
 
@@ -188,17 +261,19 @@ body[data-role="pilot"] #video-layer {
   color: #fff;
 }
 
+/* Styled like the mode bar beside it, so the two read as one top bar over
+   the video rather than a pale block covering it. */
 #home-link {
   position: fixed;
-  top: 0.5em;
-  right: 0.5em;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
   z-index: 20;
-  padding: 0.9em 1.2em;
-  font-size: 1.1em;
-  font-weight: bold;
+  padding: 10px 16px;
+  font-size: 15px;
+  font-weight: 600;
   color: #fff;
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 999px;
   text-decoration: none;
   /* Leaving /pilot closes this connection's WebSocket, which the server's
      existing disconnect handling already turns into a stop + slot release
@@ -252,15 +327,9 @@ body[data-role="pilot"] #video-layer {
   display: none;
 }
 
-/* Both groups below are sized in vmin (the viewport's shorter side), so the
-   layout fits either orientation without a per-orientation rule: switching
-   orientation swaps which of vw/vh is smaller, and vmin tracks whichever
-   that is. Budget in the worst case (portrait, vmin == vw): padding
-   2*2vmin + dpad-column's 4vmin left margin + dpad-column (3*14vmin cells +
-   2*1.5vmin gaps = 45vmin) + neck-controls (its widest child, the
-   gesture-buttons grid at 4*10vmin + 3*1.2vmin gaps = 43.6vmin) = 96.6vmin,
-   comfortably under the 100vw available so `justify-content: space-between`
-   always has room and neither group needs to shrink. */
+/* Landscape layout: the d-pad and the neck controls pinned to the bottom
+   corners, both sized in vmin (the viewport's shorter side). Portrait
+   replaces this with its own grid -- see the portrait block above. */
 #controls {
   position: fixed;
   inset: 0;
@@ -697,8 +766,7 @@ body[data-role="viewer"] {
   gap: clamp(4px, 1.2vmin, 8px);
 }
 
-/* Four per row so all eight buttons (seven gestures + AI) fit beside the
-   d-pad in portrait -- see the width budget above `#controls`. */
+/* Four per row: seven gestures plus the AI button in two even rows. */
 #gesture-buttons {
   display: grid;
   grid-template-columns: repeat(4, auto);

@@ -518,10 +518,11 @@
   const handle = document.getElementById("neck-stick-handle");
   let dragging = false;
 
+  // In percent, not pixels, so a rest position stays centered when the
+  // stick resizes (e.g. the phone rotates between portrait and landscape).
   function setHandlePosition(x, y) {
-    const radius = stick.clientWidth / 2;
-    handle.style.left = radius + x * radius + "px";
-    handle.style.top = radius + y * radius + "px";
+    handle.style.left = 50 + x * 50 + "%";
+    handle.style.top = 50 + y * 50 + "%";
   }
 
   function stickPointFromEvent(event) {
