@@ -11,8 +11,7 @@
 
   const speakerValue = document.getElementById("speaker-volume-value");
   const micValue = document.getElementById("mic-gain-value");
-  const speakerStatus = document.getElementById("speaker-status");
-  const micStatus = document.getElementById("mic-status");
+  const status = document.getElementById("audio-status");
   const loadError = document.getElementById("audio-load-error");
   const meter = document.getElementById("mic-meter");
   const meterFill = document.getElementById("mic-meter-fill");
@@ -27,18 +26,15 @@
 
   let saveTimer = null;
   let idleTimer = null;
-  let lastChanged = null;
 
   function showValues() {
     speakerValue.textContent = speaker.value + "%";
     micValue.textContent = mic.value + "%";
   }
 
-  function setStatus(target, text, isError) {
-    const other = target === speakerStatus ? micStatus : speakerStatus;
-    other.textContent = "";
-    target.textContent = text;
-    target.classList.toggle("is-error", isError);
+  function setStatus(text, isError) {
+    status.textContent = text;
+    status.classList.toggle("is-error", isError);
   }
 
   function apply(entry) {
@@ -52,8 +48,7 @@
   }
 
   function save() {
-    const target = lastChanged === mic ? micStatus : speakerStatus;
-    setStatus(target, "…", false);
+    setStatus("…", false);
     fetch("/api/audio", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -70,15 +65,14 @@
       .then(function (entry) {
         // A newer drag may already be waiting to save; don't snap the slider back under it.
         if (saveTimer === null) apply(entry);
-        setStatus(target, "保存しました", false);
+        setStatus("保存しました", false);
       })
       .catch(function (err) {
-        setStatus(target, "エラー：" + err.message, true);
+        setStatus("エラー：" + err.message, true);
       });
   }
 
-  function onInput(event) {
-    lastChanged = event.target;
+  function onInput() {
     showValues();
     if (saveTimer !== null) clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {

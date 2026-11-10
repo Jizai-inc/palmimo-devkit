@@ -582,16 +582,49 @@ body[data-role="viewer"] {
   display: none;
 }
 
-.level-row {
-  display: flex;
-  align-items: center;
+/* Speaker and mic sit under the camera as two compact cards, side by side
+   until the column is too narrow for both. */
+#audio-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
 }
 
+.audio-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid #2a2d35;
+  border-radius: 12px;
+  background: #1a1c22;
+}
+
+.audio-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.audio-head h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #9aa0ac;
+  cursor: help;
+}
+
+.audio-note {
+  margin: 0;
+  font-size: 11px;
+  color: #6f7582;
+}
+
 .level-slider {
-  flex: 1;
-  min-width: 0;
-  height: 44px;
+  width: 100%;
+  height: 32px;
   margin: 0;
   accent-color: #4f7cff;
   cursor: pointer;
@@ -608,15 +641,14 @@ body[data-role="viewer"] {
 }
 
 .level-value {
-  min-width: 3.5em;
-  font-size: 14px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   text-align: right;
   color: #d5d8df;
 }
 
 .level-meter {
-  height: 8px;
+  height: 6px;
   overflow: hidden;
   border-radius: 4px;
   background: #15171c;

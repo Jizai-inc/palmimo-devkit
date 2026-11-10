@@ -209,7 +209,7 @@ takes priority over letting the gesture finish its window.
 
 ### Speaker and microphone
 
-The homepage's **Speaker** and **Microphone** cards set how loud the AI's
+The **Speaker** and **Microphone** cards under the homepage's camera view set how loud the AI's
 voice plays and how strongly the mic picks up speech. Both are software gain
 the controller applies to its own audio, not the robot's system mixer:
 

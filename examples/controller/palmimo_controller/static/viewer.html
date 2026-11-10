@@ -27,38 +27,34 @@
             <span id="video-tag">頭部カメラ</span>
           </div>
           <div id="status-bar" role="status"></div>
+
+          <div id="audio-panel">
+            <section id="speaker-config" class="audio-card" aria-labelledby="speaker-config-title">
+              <div class="audio-head">
+                <h2 id="speaker-config-title" title="AIの声の音量です。話している途中でもすぐに反映されます。">スピーカー</h2>
+                <output id="speaker-volume-value" class="level-value" for="speaker-volume">100%</output>
+              </div>
+              <input id="speaker-volume" class="level-slider" type="range" min="0" max="100" step="1" value="100" aria-labelledby="speaker-config-title" aria-describedby="speaker-config-note" disabled />
+              <p id="speaker-config-note" class="audio-note">AIの声の音量</p>
+            </section>
+
+            <section id="mic-config" class="audio-card" aria-labelledby="mic-config-title">
+              <div class="audio-head">
+                <h2 id="mic-config-title" title="声を拾う感度です。100%より上げると小さな声も届きますが、大きすぎると音が割れます。">マイク</h2>
+                <output id="mic-gain-value" class="level-value" for="mic-gain">100%</output>
+              </div>
+              <input id="mic-gain" class="level-slider" type="range" min="0" max="200" step="5" value="100" aria-labelledby="mic-config-title" aria-describedby="mic-meter-hint" disabled />
+              <div id="mic-meter" class="level-meter is-idle" role="meter" aria-label="マイク入力レベル" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div id="mic-meter-fill" class="level-meter-fill"></div>
+              </div>
+              <p id="mic-meter-hint" class="audio-note">AIモード中に入力レベルを表示</p>
+            </section>
+          </div>
+          <p id="audio-load-error" class="settings-error" hidden>音量の設定を読み込めませんでした。ページを再読み込みしてください。</p>
+          <p id="audio-status" class="settings-status" role="status"></p>
         </section>
 
         <aside id="viewer-settings">
-          <section id="speaker-config" class="settings-card" aria-labelledby="speaker-config-title">
-            <div class="settings-head">
-              <h2 id="speaker-config-title">スピーカー</h2>
-              <p class="settings-note">AIの声の音量です。話している途中でもすぐに反映されます。</p>
-            </div>
-            <p id="audio-load-error" class="settings-error" hidden>音量の設定を読み込めませんでした。ページを再読み込みしてください。</p>
-            <div class="level-row">
-              <input id="speaker-volume" class="level-slider" type="range" min="0" max="100" step="1" value="100" aria-labelledby="speaker-config-title" disabled />
-              <output id="speaker-volume-value" class="level-value" for="speaker-volume">100%</output>
-            </div>
-            <p id="speaker-status" class="settings-status" role="status"></p>
-          </section>
-
-          <section id="mic-config" class="settings-card" aria-labelledby="mic-config-title">
-            <div class="settings-head">
-              <h2 id="mic-config-title">マイク</h2>
-              <p class="settings-note">声を拾う感度です。100%より上げると小さな声も届きますが、大きすぎると音が割れます。</p>
-            </div>
-            <div class="level-row">
-              <input id="mic-gain" class="level-slider" type="range" min="0" max="200" step="5" value="100" aria-labelledby="mic-config-title" disabled />
-              <output id="mic-gain-value" class="level-value" for="mic-gain">100%</output>
-            </div>
-            <div id="mic-meter" class="level-meter is-idle" role="meter" aria-label="マイク入力レベル" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-              <div id="mic-meter-fill" class="level-meter-fill"></div>
-            </div>
-            <p id="mic-meter-hint" class="settings-note">AIモード中に入力レベルを表示します。</p>
-            <p id="mic-status" class="settings-status" role="status"></p>
-          </section>
-
           <section id="voice-picker" class="settings-card" aria-labelledby="voice-picker-title">
             <div class="settings-head">
               <h2 id="voice-picker-title">AIの声</h2>
