@@ -111,7 +111,6 @@ class Harness:
         mic_error: BaseException | None = None,
         mic_gate: threading.Event | None = None,
         echo_cancelled: bool = True,
-        voice_speed: float = 1.0,
         voice: str = "coral",
         reflexes_factory: Any = None,
     ) -> None:
@@ -137,7 +136,6 @@ class Harness:
             playback_factory=lambda: self.playback,
             connect=self._connect,
             voice=lambda: self.voice,
-            voice_speed=voice_speed,
             start_timeout=1.0,
             reflexes_factory=reflexes_factory,
         )
@@ -369,16 +367,6 @@ async def test_start_uses_a_prompt_saved_after_the_app_started(tmp_path: Path) -
     await _live(h)
     update = h.client.sent[0]
     assert isinstance(update, SessionUpdate) and update.instructions == "edited prompt"
-    await h.ai.stop()
-
-
-@pytest.mark.parametrize(("speed", "sent"), [(1.0, None), (0.8, 0.8)])
-async def test_voice_speed_reaches_the_session_only_when_changed(speed: float, sent: float | None) -> None:
-    h = Harness(voice_speed=speed)
-    await _live(h)
-    update = h.client.sent[0]
-    assert isinstance(update, SessionUpdate)
-    assert update.to_dict()["session"]["audio"]["output"].get("speed") == sent
     await h.ai.stop()
 
 

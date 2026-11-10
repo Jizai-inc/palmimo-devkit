@@ -63,10 +63,6 @@ _LOG = logging.getLogger(__name__)
 #: buttons are on/off.
 DEFAULT_GAIT_SPEED: float = 0.012
 
-#: Speaking rate, as in the companion agent: 1.0 is the voice's natural pace,
-#: lower is slower.
-DEFAULT_VOICE_SPEED: float = 1.0
-
 #: Avoids 8765 (the MCP server), 80/8080 (Palmimo Portal), and 8000 (the
 #: teleop app), so both apps can be installed on one robot.
 DEFAULT_PORT: int = 8010
@@ -327,7 +323,6 @@ def _build_ai(
     prompts: EditablePrompts,
     audio: AudioDevice,
     reflexes_factory: Callable[[], Reflexes] | None = None,
-    voice_speed: float = DEFAULT_VOICE_SPEED,
     voices: VoiceSetting | None = None,
 ) -> AiController:
     """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop.
@@ -344,7 +339,6 @@ def _build_ai(
         playback_factory=functools.partial(_build_playback, audio),
         model=os.environ.get("CONTROLLER_REALTIME_MODEL") or DEFAULT_MODEL,
         voice=(voices if voices is not None else VoiceSetting(default_voice_path())).get,
-        voice_speed=voice_speed,
         reflexes_factory=reflexes_factory,
     )
 
@@ -373,13 +367,6 @@ def main(
         "--audio-device",
         help="AI mode mic and speaker: respeaker (development robot) or booth-usb (exhibition robot).",
     ),
-    voice_speed: float = typer.Option(
-        DEFAULT_VOICE_SPEED,
-        "--voice-speed",
-        help="AI mode speaking rate: 1.0 is the voice's natural pace, lower is slower.",
-        min=0.5,
-        max=1.5,
-    ),
 ) -> None:
     """Serve Palmimo Controller: a phone/laptop browser drives the robot, views its head
     camera, and switches to AI voice modes, on the same LAN, with no authentication."""
@@ -394,7 +381,7 @@ def main(
     # Likewise one store for the voice the homepage picks and the next AI mode speaks in.
     voices = VoiceSetting(default_voice_path())
     reflexes = _build_reflexes_factory(session, video, telemetry, enabled=not (no_reflexes or no_camera))
-    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voice_speed, voices)
+    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voices)
     app_instance = create_app(robot, session, robot_loop, video, ai, prompts, telemetry, voices)
 
     mode = "--dry-run" if dry_run else ("compute-only (no servo bus found)" if robot.driver is None else "live")

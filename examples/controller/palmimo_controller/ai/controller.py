@@ -132,7 +132,6 @@ class AiController:
         connect: Connect = RealtimeClient.connect,
         model: str = DEFAULT_MODEL,
         voice: Callable[[], str] = lambda: DEFAULT_VOICE,
-        voice_speed: float = 1.0,
         start_timeout: float = START_TIMEOUT_S,
         now: Callable[[], float] = time.monotonic,
         reflexes_factory: Callable[[], ReflexesLike] | None = None,
@@ -146,7 +145,6 @@ class AiController:
         self._connect = connect
         self._model = model
         self._voice = voice
-        self._voice_speed = voice_speed
         self._start_timeout = start_timeout
         self._now = now
         self._reflexes_factory = reflexes_factory
@@ -220,7 +218,6 @@ class AiController:
                             tools=TOOL_DEFINITIONS,
                             voice=voice,
                             rate=API_RATE,
-                            speed=self._voice_speed,
                         )
                     )
                 # Resolving the output device lists ALSA cards, which blocks.

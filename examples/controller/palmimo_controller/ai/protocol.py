@@ -217,16 +217,11 @@ class SessionUpdate(BaseModel):
     tools: list[dict[str, Any]] = Field(default_factory=list)
     voice: str
     rate: int
-    speed: float = 1.0
     tool_choice: str = "auto"
 
     def to_dict(self) -> dict[str, Any]:
         audio_format = {"type": "audio/pcm", "rate": self.rate}
         output: dict[str, Any] = {"format": audio_format, "voice": self.voice}
-        # Left out at the default, so a session that never changes the speed
-        # sends exactly what the API documents as its default.
-        if self.speed != 1.0:
-            output["speed"] = self.speed
         return {
             "type": "session.update",
             "session": {

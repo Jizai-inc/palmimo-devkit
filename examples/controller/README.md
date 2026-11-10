@@ -303,7 +303,6 @@ uv run --with-editable ../../packages/palmimo_sdk python -m palmimo_controller.m
 | `--no-camera` | off | Never attach the head camera |
 | `--no-face` | off | Never attach the face display. Without this flag, a face display is attached only when one is plugged in and opens, so a robot without a face still starts |
 | `--servo-port` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0`; ignored under `--dry-run` |
-| `--voice-speed` | `1.0` | AI mode speaking rate (0.5-1.5): 1.0 is the voice's natural pace, lower is slower |
 | `--audio-device` | `respeaker` | AI mode mic and speaker. `respeaker`: a development robot's ReSpeaker 4 Mic Array, with echo cancellation. `booth-usb`: an exhibition robot's push-to-talk USB mic ("USB PnP", 48 kHz, no echo cancellation; hold its button while talking) and USB speaker ("Composite") |
 
 | Environment variable | Purpose |
