@@ -328,7 +328,7 @@ def _build_ai(
     """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop.
 
     `CONTROLLER_REALTIME_MODEL` swaps the Realtime model without a code
-    change, e.g. to compare the full model against the mini default.
+    change, e.g. to compare the cheaper mini model against the full default.
     """
     return AiController(
         session,

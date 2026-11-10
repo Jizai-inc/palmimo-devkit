@@ -84,10 +84,10 @@ How a switch works:
   applies on the next switch, never to a running session. A source that
   fetches prompts from Palmimo Portal can replace it later.
 
-The model and voice are fixed in `ai/controller.py` (`DEFAULT_MODEL`,
-`gpt-realtime-2.1-mini`, and `VOICE`); the pilot picks a mode, not a model.
-To try another Realtime model without a code change, set
-`CONTROLLER_REALTIME_MODEL` (for example `gpt-realtime-2.1`). The model hears
+The model is fixed in `ai/controller.py` (`DEFAULT_MODEL`,
+`gpt-realtime-2.1`); the pilot picks a mode, not a model. To try another
+Realtime model without a code change, set `CONTROLLER_REALTIME_MODEL` (for
+example `gpt-realtime-2.1-mini`, about a third of the cost). The model hears
 the visitor's audio directly; no transcript is requested.
 
 With echo cancellation (`--audio-device respeaker`), a visitor who starts
@@ -308,7 +308,7 @@ uv run --with-editable ../../packages/palmimo_sdk python -m palmimo_controller.m
 | Environment variable | Purpose |
 |---|---|
 | `OPENAI_API_KEY` | OpenAI key for AI modes. Optional: without it, teleop works and AI modes stay off |
-| `CONTROLLER_REALTIME_MODEL` | Realtime model for AI modes, overriding `gpt-realtime-2.1-mini` |
+| `CONTROLLER_REALTIME_MODEL` | Realtime model for AI modes, overriding `gpt-realtime-2.1` |
 
 ## Hardware notes
 

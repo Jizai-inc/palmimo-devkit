@@ -38,8 +38,9 @@ from .tools import TOOL_DEFINITIONS, run_tool
 
 _LOG = logging.getLogger(__name__)
 
-#: Realtime model. The mini model costs about a third of the full one.
-DEFAULT_MODEL = "gpt-realtime-2.1-mini"
+#: Realtime model. `gpt-realtime-2.1-mini` costs about a third as much, but
+#: follows the persona and picks motions less reliably.
+DEFAULT_MODEL = "gpt-realtime-2.1"
 
 #: Longest the connection at a switch to AI may take before it is abandoned.
 START_TIMEOUT_S: float = 8.0
