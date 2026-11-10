@@ -308,56 +308,6 @@ body[data-role="pilot"] #video-layer {
   background: rgba(255, 255, 255, 0.5);
 }
 
-/* Speed buttons match the gesture buttons' look (square, same corner and
-   fill) and are sized so the row is never wider than the d-pad above it, at
-   each clamp() bound and in between: 4*34px + 3*4px = 148px against the
-   d-pad's 152px minimum, 4*10vmin + 3*1.2vmin = 43.6vmin against its 45vmin,
-   and 4*62px + 3*8px = 272px against its 272px maximum -- so the row adds no
-   width to the controls' budget above. */
-#speed-control {
-  display: flex;
-  flex-direction: column;
-  gap: clamp(3px, 1vmin, 6px);
-  margin-top: clamp(6px, 2vmin, 14px);
-}
-
-#speed-label {
-  font-size: clamp(10px, 2.2vmin, 13px);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: #c9cdd6;
-}
-
-#speed-buttons {
-  display: flex;
-  gap: clamp(4px, 1.2vmin, 8px);
-}
-
-#speed-buttons button {
-  width: clamp(34px, 10vmin, 62px);
-  height: clamp(34px, 10vmin, 62px);
-  padding: 0;
-  font-size: clamp(12px, 3vmin, 18px);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  border-radius: 10px;
-  border: 2px solid transparent;
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
-}
-
-#speed-buttons button:active {
-  background: rgba(255, 255, 255, 0.5);
-}
-
-/* The applied speed, as the server reports it: the AI accent plus a white
-   ring, so it reads as chosen even at a glance from the side. */
-#speed-buttons button.selected {
-  background: #4f7cff;
-  border-color: #fff;
-  box-shadow: 0 0 0 3px rgba(79, 124, 255, 0.45);
-}
-
 /* Rotate sits in the grid's top corners for layout purposes, but is nudged
    diagonally outward and made circular so it doesn't read as a 5th/6th
    d-pad direction. */
@@ -844,15 +794,6 @@ body[data-role="viewer"] {
 #teleop-button {
   background: #fff;
   color: #111;
-}
-
-#speed-indicator {
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(79, 124, 255, 0.85);
-  font-size: 13px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
 }
 
 body.ai-active #mode-indicator {

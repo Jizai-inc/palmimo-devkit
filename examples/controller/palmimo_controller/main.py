@@ -58,9 +58,9 @@ else:
 
 _LOG = logging.getLogger(__name__)
 
-#: Default gait speed applied to every teleop-driven motion: the 1x that the
-#: pilot page's speed multiplier scales. There is no per-frame speed scaling
-#: (unlike the gamepad example's stick deflection) -- buttons are on/off.
+#: Default gait speed applied to every teleop-driven motion. There is no
+#: per-frame speed scaling (unlike the gamepad example's stick deflection) --
+#: buttons are on/off.
 DEFAULT_GAIT_SPEED: float = 0.012
 
 #: Speaking rate, as in the companion agent: 1.0 is the voice's natural pace,

@@ -67,7 +67,6 @@
     addChip("操縦者", status.pilot_present ? "操作中" : "なし");
     addChip("モード", status.mode === "teleop" ? "手動操作" : "AI：" + (status.ai_mode || status.mode));
     addChip("動作", status.motion || "待機中");
-    addChip("速度", status.speed + "x");
     addChip("", status.loop_fps.toFixed(1) + " fps");
     addChip("サーボバス", status.servo_attached ? "接続" : "未接続", status.servo_attached);
     addChip("カメラ", status.camera_ok ? "正常" : "使用不可", status.camera_ok);
@@ -100,20 +99,6 @@
         ? "ほかの人が操作中です。終わると操作できるようになります。"
         : "見学中です。操作するには「操作を開始」を押してください。";
     }
-  }
-
-  // Highlights the speed the server reports as applied, not the one last
-  // tapped: a tap the server dropped (or one still in flight) must not look
-  // selected.
-  function renderSpeedButtons(status) {
-    const buttons = document.querySelectorAll("#speed-buttons button");
-    buttons.forEach(function (button) {
-      const selected = Number(button.dataset.speed) === status.speed;
-      button.classList.toggle("selected", selected);
-      button.setAttribute("aria-checked", selected ? "true" : "false");
-    });
-    const indicator = document.getElementById("speed-indicator");
-    if (indicator) indicator.textContent = "速度 " + status.speed + "x";
   }
 
   function preventDefault(event) {
@@ -163,7 +148,6 @@
       renderStatusBar(payload);
       renderPilotLinkAvailability(payload);
       renderServoBanners(payload);
-      renderSpeedButtons(payload);
       if (onStatus) onStatus(payload);
     }
     if (payload.granted === false) {
@@ -358,17 +342,6 @@
   ];
   GESTURES.forEach(function (gesture) {
     bindPlayButton(gesture.id, gesture.name);
-  });
-
-  // A speed is a one-off `{"speed": ...}` message, like a gesture; the
-  // server keeps it until the pilot picks another one, leaves, or starts an
-  // AI mode (which always walks at 1x).
-  document.querySelectorAll("#speed-buttons button").forEach(function (button) {
-    button.addEventListener("click", function (event) {
-      event.preventDefault();
-      if (socket.readyState !== WebSocket.OPEN) return;
-      socket.send(JSON.stringify({ speed: Number(button.dataset.speed) }));
-    });
   });
 
   // ---- AI mode switching ----
