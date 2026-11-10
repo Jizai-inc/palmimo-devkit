@@ -228,6 +228,33 @@ def test_idle_input_does_not_cancel_a_playing_gesture() -> None:
     assert session.effective_input().gesture == "dance"
 
 
+def test_gesture_cut_off_by_the_deadman_does_not_resume_when_frames_return() -> None:
+    # Without this, a brief network dropout mid-clap would stop the clap and
+    # then, once frames resumed inside the play window, restart it from the
+    # top -- one tap replaying the whole gesture after every hiccup.
+    session, clock = _session()
+    session.acquire_pilot("a")
+    _heartbeat(session)
+    session.play("a", "clap")
+    clock.advance(DEADMAN_TIMEOUT_S + 0.1)
+    assert session.effective_input().gesture is None
+    _heartbeat(session)
+    assert session.effective_input().gesture is None
+
+
+def test_gesture_started_during_a_deadman_lapse_plays_when_frames_return() -> None:
+    # Without this, a tap that reached the server while frames were briefly
+    # late would be thrown away even though the robot never played it.
+    session, clock = _session()
+    session.acquire_pilot("a")
+    _heartbeat(session)
+    clock.advance(DEADMAN_TIMEOUT_S + 0.1)
+    session.play("a", "clap")
+    clock.advance(0.05)
+    _heartbeat(session)
+    assert session.effective_input().gesture == "clap"
+
+
 def test_status_reports_resolved_motion() -> None:
     # Without this, the @2Hz broadcast would have no way to tell viewers
     # what the robot is actually doing.

@@ -32,6 +32,9 @@ API_RATE = 24000
 
 _BYTES_PER_SAMPLE = 2
 
+#: Input quieter than this reads as an empty meter; 0 dBFS (full scale) fills it.
+_METER_FLOOR_DB = -60.0
+
 #: A bounded read, so cancellation is noticed within this long even when the
 #: mic is silent: the executor thread blocked in ``chunks.get()`` cannot
 #: itself be cancelled.
@@ -60,30 +63,82 @@ def to_api_rate(chunk: Any, rate: int) -> bytes:
     return np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
 
 
+def apply_gain(pcm: bytes, gain: float) -> bytes:
+    """Return 16-bit PCM *pcm* scaled by *gain*, clipped to the int16 range."""
+    if gain == 1.0:
+        return pcm
+    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) * gain
+    return np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
+
+
+def meter_level(pcm: bytes) -> float:
+    """Loudness of 16-bit PCM *pcm* for a meter: RMS in dBFS, mapped from `_METER_FLOOR_DB`..0 onto 0..1.
+
+    A linear RMS would leave speech in the bottom fifth of the bar; the
+    decibel scale is how loudness is heard.
+    """
+    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+    if samples.size == 0:
+        return 0.0
+    rms = float(np.sqrt(np.mean(samples * samples))) / 32768.0
+    if rms <= 0.0:
+        return 0.0
+    db = 20.0 * math.log10(rms)
+    return max(0.0, min(1.0, 1.0 - db / _METER_FLOOR_DB))
+
+
+class MicLevelLike(Protocol):
+    """The part of `audio_levels.MicLevel` the mic feed reports to."""
+
+    def report(self, level: float) -> None: ...
+
+    def clear(self) -> None: ...
+
+
 class MicrophoneFeed:
     """Reads capture chunks and appends them, at `API_RATE`, to the API's input buffer.
 
     *hold* is asked before each chunk is sent; while it answers true the
     chunk is dropped. A mic without echo cancellation uses it to stay deaf
     while the robot talks, or the model would hear and answer itself.
+
+    *gain* is asked per chunk, so the homepage's mic slider applies at once.
+    *level* hears every chunk's loudness after gain, including chunks *hold*
+    drops, so the meter still moves while the robot talks.
     """
 
     def __init__(
-        self, mic: MicStreamLike, client: RealtimeClientLike, *, hold: Callable[[], bool] | None = None
+        self,
+        mic: MicStreamLike,
+        client: RealtimeClientLike,
+        *,
+        hold: Callable[[], bool] | None = None,
+        gain: Callable[[], float] = lambda: 1.0,
+        level: MicLevelLike | None = None,
     ) -> None:
         self._mic = mic
         self._client = client
         self._hold = hold
+        self._gain = gain
+        self._level = level
 
     async def run(self) -> None:
         loop = asyncio.get_running_loop()
-        with self._mic.stream() as chunks:
-            while True:
-                chunk = await loop.run_in_executor(None, chunks.get, _MIC_READ_TIMEOUT_S)
-                if chunk is None or (self._hold is not None and self._hold()):
-                    continue
-                pcm = to_api_rate(chunk, self._mic.sample_rate)
-                await self._client.send(AudioAppend(audio_b64=base64.b64encode(pcm).decode()))
+        try:
+            with self._mic.stream() as chunks:
+                while True:
+                    chunk = await loop.run_in_executor(None, chunks.get, _MIC_READ_TIMEOUT_S)
+                    if chunk is None:
+                        continue
+                    pcm = apply_gain(to_api_rate(chunk, self._mic.sample_rate), self._gain())
+                    if self._level is not None:
+                        self._level.report(meter_level(pcm))
+                    if self._hold is not None and self._hold():
+                        continue
+                    await self._client.send(AudioAppend(audio_b64=base64.b64encode(pcm).decode()))
+        finally:
+            if self._level is not None:
+                self._level.clear()
 
 
 def _kill_and_reap(process: subprocess.Popen[bytes]) -> None:
@@ -153,8 +208,12 @@ class Playback:
     #: clears.
     _WARN_INTERVAL_S = 30.0
 
-    def __init__(self, device: str | None = None) -> None:
+    def __init__(self, device: str | None = None, *, volume: Callable[[], float] = lambda: 1.0) -> None:
         self._device = device
+        #: Asked per chunk in `write`, so the homepage's speaker slider
+        #: applies from the next chunk -- mid-sentence, behind only what
+        #: ``aplay`` has already buffered.
+        self._volume = volume
         self._process: subprocess.Popen[bytes] | None = None
         self._process_lock = threading.Lock()
         #: Guarded by ``_process_lock`` alongside ``_process``: once set,
@@ -284,7 +343,7 @@ class Playback:
         now = time.monotonic()
         self._speaking_until = max(now, self._speaking_until) + len(pcm) / (_BYTES_PER_SAMPLE * API_RATE)
         self._ensure_writer()
-        self._queue.put_nowait(pcm)
+        self._queue.put_nowait(apply_gain(pcm, self._volume()))
 
     def speaking(self, *, tail: float = 0.0) -> bool:
         """Whether written audio is still playing, or stopped less than *tail* seconds ago.

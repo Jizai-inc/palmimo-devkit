@@ -36,6 +36,7 @@ from palmimo_sdk import (
 from .ai.audio import Playback
 from .ai.controller import DEFAULT_MODEL, AiController, OpenMic
 from .ai.reflexes import Detectors, Reflexes
+from .audio_levels import AudioLevels, MicLevel, default_audio_levels_path
 from .control import MAX_GAIT_SPEED
 from .modes import EditablePrompts, default_prompt_dir
 from .robot_loop import RobotLoop
@@ -274,9 +275,9 @@ def _open_mic(device: AudioDevice) -> Iterator[OpenMic]:
         stream.close()
 
 
-def _build_playback(device: AudioDevice) -> Playback:
+def _build_playback(device: AudioDevice, volume: Callable[[], float] = lambda: 1.0) -> Playback:
     """Open playback on the speaker matching *device*, or ALSA's default if none matches."""
-    playback = Playback(device=resolve_alsa_device(device.speaker_hint, kind="playback"))
+    playback = Playback(device=resolve_alsa_device(device.speaker_hint, kind="playback"), volume=volume)
     _LOG.info("AI speech plays on the device matching %r", device.speaker_hint)
     return playback
 
@@ -324,6 +325,8 @@ def _build_ai(
     audio: AudioDevice,
     reflexes_factory: Callable[[], Reflexes] | None = None,
     voices: VoiceSetting | None = None,
+    levels: AudioLevels | None = None,
+    mic_level: MicLevel | None = None,
 ) -> AiController:
     """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop.
 
@@ -336,10 +339,12 @@ def _build_ai(
         api_key=os.environ.get("OPENAI_API_KEY") or None,
         telemetry=telemetry,
         mic_factory=functools.partial(_open_mic, audio),
-        playback_factory=functools.partial(_build_playback, audio),
+        playback_factory=functools.partial(_build_playback, audio, levels.speaker_gain if levels else lambda: 1.0),
         model=os.environ.get("CONTROLLER_REALTIME_MODEL") or DEFAULT_MODEL,
         voice=(voices if voices is not None else VoiceSetting(default_voice_path())).get,
         reflexes_factory=reflexes_factory,
+        mic_gain=levels.mic_gain if levels else lambda: 1.0,
+        mic_level=mic_level,
     )
 
 
@@ -380,9 +385,14 @@ def main(
     prompts = EditablePrompts(default_prompt_dir())
     # Likewise one store for the voice the homepage picks and the next AI mode speaks in.
     voices = VoiceSetting(default_voice_path())
+    # And for the speaker/mic levels: the homepage sliders change what the running AI mode hears and plays.
+    levels = AudioLevels(default_audio_levels_path())
+    mic_level = MicLevel()
     reflexes = _build_reflexes_factory(session, video, telemetry, enabled=not (no_reflexes or no_camera))
-    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voices)
-    app_instance = create_app(robot, session, robot_loop, video, ai, prompts, telemetry, voices)
+    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voices, levels, mic_level)
+    app_instance = create_app(
+        robot, session, robot_loop, video, ai, prompts, telemetry, voices, audio_levels=levels, mic_level=mic_level
+    )
 
     mode = "--dry-run" if dry_run else ("compute-only (no servo bus found)" if robot.driver is None else "live")
     ai_state = "AI modes available" if ai.available else "AI modes off: OPENAI_API_KEY not set"

@@ -22,11 +22,22 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from palmimo_sdk import Palmimo
 
 from .ai.controller import NOTICE_ROBOT_OFFLINE, AiController
+from .audio_levels import (
+    DEFAULT_MIC_GAIN,
+    DEFAULT_SPEAKER_VOLUME,
+    MIC_GAIN_MAX,
+    MIC_GAIN_MIN,
+    SPEAKER_VOLUME_MAX,
+    SPEAKER_VOLUME_MIN,
+    AudioLevels,
+    MicLevel,
+    default_audio_levels_path,
+)
 from .control import ALLOWED_GESTURES, ALLOWED_MOVES, ALLOWED_ROTATES, clamp_neck
 from .modes import EditablePrompts
 from .robot_loop import RobotLoop
@@ -42,6 +53,9 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 #: How often the `@2Hz` status broadcast fires.
 STATUS_BROADCAST_INTERVAL_S: float = 0.5
+
+#: How often the homepage's mic meter is updated while an AI mode has the mic open.
+MIC_LEVEL_INTERVAL_S: float = 0.1
 
 #: Cap on one client's `send_json` during a status broadcast -- a stalled
 #: peer (a dead TCP path that has not yet surfaced as a close) must not hold
@@ -336,6 +350,13 @@ class _VoiceBody(BaseModel):
     voice: str
 
 
+class _AudioBody(BaseModel):
+    """`PUT /api/audio` body: both levels in percent."""
+
+    speaker_volume: int = Field(ge=SPEAKER_VOLUME_MIN, le=SPEAKER_VOLUME_MAX)
+    mic_gain: int = Field(ge=MIC_GAIN_MIN, le=MIC_GAIN_MAX)
+
+
 def create_app(
     robot: Palmimo,
     session: PilotSession,
@@ -345,6 +366,9 @@ def create_app(
     prompts: EditablePrompts,
     telemetry: Telemetry,
     voices: VoiceSetting | None = None,
+    *,
+    audio_levels: AudioLevels | None = None,
+    mic_level: MicLevel | None = None,
 ) -> FastAPI:
     """Assemble the FastAPI app around an already-constructed robot loop and video stream.
 
@@ -358,12 +382,17 @@ def create_app(
         telemetry (Telemetry): Receives session start/end events.
         voices (VoiceSetting | None): The AI voice the homepage picks; `None` uses the one saved
             under the data home (`voices.default_voice_path`).
+        audio_levels (AudioLevels | None): The speaker volume and mic gain the homepage sets;
+            `None` uses the ones saved under the data home (`audio_levels.default_audio_levels_path`).
+        mic_level (MicLevel | None): The running AI mode's mic loudness, sent to the homepage meter;
+            `None` sends no meter updates.
 
     Returns:
         FastAPI: The assembled app, ready for `uvicorn.run`.
     """
     registry = _ConnectionRegistry()
     voice_setting = voices if voices is not None else VoiceSetting(default_voice_path())
+    levels = audio_levels if audio_levels is not None else AudioLevels(default_audio_levels_path())
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -373,9 +402,14 @@ def create_app(
         video.start()
         telemetry.event("session_start", servo_attached=robot.driver is not None, ai_available=ai.available)
         broadcast_task = asyncio.create_task(_broadcast_loop(robot, session, robot_loop, video, registry, ai))
+        level_task = asyncio.create_task(_mic_level_loop(mic_level, registry, ai)) if mic_level is not None else None
         try:
             yield
         finally:
+            if level_task is not None:
+                level_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await level_task
             broadcast_task.cancel()
             try:
                 await broadcast_task
@@ -485,6 +519,32 @@ def create_app(
             raise HTTPException(status_code=500, detail="could not write the voice setting") from exc
         return _voice_entry()
 
+    def _audio_entry() -> dict[str, Any]:
+        current = levels.get()
+        return {
+            "speaker_volume": current.speaker_volume,
+            "mic_gain": current.mic_gain,
+            "default_speaker_volume": DEFAULT_SPEAKER_VOLUME,
+            "default_mic_gain": DEFAULT_MIC_GAIN,
+            "speaker_volume_range": [SPEAKER_VOLUME_MIN, SPEAKER_VOLUME_MAX],
+            "mic_gain_range": [MIC_GAIN_MIN, MIC_GAIN_MAX],
+        }
+
+    @app.get("/api/audio")
+    async def get_audio() -> dict[str, Any]:
+        return _audio_entry()
+
+    @app.put("/api/audio")
+    async def save_audio(body: _AudioBody) -> dict[str, Any]:
+        try:
+            levels.save(speaker_volume=body.speaker_volume, mic_gain=body.mic_gain)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            _LOG.exception("could not save the audio levels")
+            raise HTTPException(status_code=500, detail="could not write the audio levels") from exc
+        return _audio_entry()
+
     @app.get("/video.mjpeg")
     async def video_stream() -> StreamingResponse:
         if not video.has_camera:
@@ -503,6 +563,32 @@ def create_app(
         await _control_connection(websocket, session, registry, id(websocket), ai)
 
     return app
+
+
+async def _mic_level_loop(
+    mic_level: MicLevel,
+    registry: _ConnectionRegistry,
+    ai: AiController,
+    *,
+    interval: float = MIC_LEVEL_INTERVAL_S,
+) -> None:
+    """Send the mic's peak loudness to every client while an AI mode has the mic open.
+
+    A message of its own (`{"mic_level": ...}`) rather than a field of the
+    2 Hz status: the meter needs a faster rate, and a status-shaped message
+    with fields missing would read as the robot going offline. Each
+    iteration is guarded like `_broadcast_loop`'s, so one failure never
+    ends the meter for the rest of the process.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            level = mic_level.take()
+            if level is None or not ai.running:
+                continue
+            await registry.broadcast({"mic_level": round(level, 3)})
+        except Exception:
+            _LOG.exception("mic level broadcast failed")
 
 
 async def _broadcast_loop(

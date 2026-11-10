@@ -576,8 +576,62 @@ body[data-role="viewer"] {
 }
 
 #voice-load-error[hidden],
-#prompt-load-error[hidden] {
+#prompt-load-error[hidden],
+#audio-load-error[hidden],
+#mic-meter-hint[hidden] {
   display: none;
+}
+
+.level-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.level-slider {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  margin: 0;
+  accent-color: #4f7cff;
+  cursor: pointer;
+}
+
+.level-slider:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.level-slider:focus-visible {
+  outline: 2px solid #8fb0ff;
+  outline-offset: 2px;
+}
+
+.level-value {
+  min-width: 3.5em;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: #d5d8df;
+}
+
+.level-meter {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #15171c;
+}
+
+.level-meter-fill {
+  width: 0;
+  height: 100%;
+  border-radius: 4px;
+  background: #8fe0a8;
+  transition: width 90ms linear;
+}
+
+.level-meter.is-idle .level-meter-fill {
+  background: #474c58;
 }
 
 .settings-status,
@@ -766,7 +820,8 @@ body[data-role="viewer"] {
   gap: clamp(4px, 1.2vmin, 8px);
 }
 
-/* Four per row: seven gestures plus the AI button in two even rows. */
+/* Four per row: seven gestures, leaving the last cell of the second row empty
+   so each gesture keeps its place. */
 #gesture-buttons {
   display: grid;
   grid-template-columns: repeat(4, auto);
@@ -792,21 +847,6 @@ body[data-role="viewer"] {
 #gesture-buttons button:active,
 #gesture-buttons button.pressed {
   background: rgba(255, 255, 255, 0.5);
-}
-
-/* The AI button opens the mode picker rather than playing a gesture, so it
-   keeps the AI accent color. Hidden while an AI mode runs; the mode bar's
-   teleop button is the way back. */
-#gesture-buttons #ai-button {
-  background: #4f7cff;
-}
-
-#gesture-buttons #ai-button:active {
-  background: #7d9dff;
-}
-
-#ai-button[hidden] {
-  display: none;
 }
 
 #neck-stick {
@@ -862,6 +902,33 @@ body[data-role="viewer"] {
 #teleop-button {
   background: #fff;
   color: #111;
+}
+
+/* The AI button sits in the mode bar while in teleop. It is outlined rather
+   than filled, so it reads as an action and not as AI already being on; the
+   blue accent is kept for the running AI state. Hidden while an AI mode
+   runs, when the teleop button takes its place. */
+#mode-bar #ai-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: #fff;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.85);
+}
+
+#mode-bar #ai-button:active {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+#mode-bar #ai-button .icon {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+#mode-bar #ai-button[hidden] {
+  display: none;
 }
 
 body.ai-active #mode-indicator {

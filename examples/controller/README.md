@@ -207,6 +207,23 @@ one is running. Sending a non-idle `move`/`rotate` in the regular control
 frame cancels a playing gesture immediately -- the pilot's steering intent
 takes priority over letting the gesture finish its window.
 
+### Speaker and microphone
+
+The homepage's **Speaker** and **Microphone** cards set how loud the AI's
+voice plays and how strongly the mic picks up speech. Both are software gain
+the controller applies to its own audio, not the robot's system mixer:
+
+- **Speaker** (0-100%) scales the AI's voice before it reaches `aplay`. It
+  only turns the voice down; the speaker's own hardware level sets the maximum.
+- **Microphone** (0-200%) scales the mic before it is sent to the AI. Above
+  100% a quiet voice carries further, but too much gain clips and distorts.
+
+A change applies to the next audio chunk, so moving a slider mid-sentence
+takes effect at once. The levels are saved on the robot in `audio.json`,
+next to the AI voice choice, and survive a restart. While an AI mode has
+the mic open, the Microphone card shows a live input level meter; in
+teleop the meter stays idle.
+
 ### Safety: the deadman timer
 
 The pilot page sends one control frame every 100ms
@@ -217,7 +234,9 @@ robot loop stops translation, rotation, any playing gesture, **and the
 neck** on its own -- the neck returns to center (`pitch=0, yaw=0`), it does
 not hold whatever target the pilot last aimed it at, since an unattended
 neck held at an extreme (e.g. fully up) is a known cause of neck-servo
-overheating on real hardware. The pilot slot itself stays held as long as
+overheating on real hardware. A gesture the lapse cuts off is cancelled,
+not resumed, when frames return -- resuming would restart it from the top.
+The pilot slot itself stays held as long as
 the WebSocket is still open, so a brief network hiccup does not lose the
 slot, only the motion. A pilot
 WebSocket disconnecting outright stops the robot and releases the slot -- the

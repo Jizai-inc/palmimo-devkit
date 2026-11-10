@@ -30,7 +30,7 @@ from ..session import PilotSession
 from ..telemetry import Telemetry
 from ..voices import DEFAULT_VOICE
 from . import protocol
-from .audio import API_RATE, MicrophoneFeed, MicStreamLike
+from .audio import API_RATE, MicLevelLike, MicrophoneFeed, MicStreamLike
 from .client import RealtimeClient, RealtimeClientLike
 from .protocol import ItemCreate, ResponseCreate, SessionUpdate
 from .tools import TOOL_DEFINITIONS, run_tool
@@ -136,6 +136,8 @@ class AiController:
         start_timeout: float = START_TIMEOUT_S,
         now: Callable[[], float] = time.monotonic,
         reflexes_factory: Callable[[], ReflexesLike] | None = None,
+        mic_gain: Callable[[], float] = lambda: 1.0,
+        mic_level: MicLevelLike | None = None,
     ) -> None:
         self._session = session
         self._prompts = prompts
@@ -149,6 +151,8 @@ class AiController:
         self._start_timeout = start_timeout
         self._now = now
         self._reflexes_factory = reflexes_factory
+        self._mic_gain = mic_gain
+        self._mic_level = mic_level
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -235,7 +239,9 @@ class AiController:
                 speaker = playback
                 hold = None if mic.echo_cancelled else (lambda: speaker.speaking(tail=_ECHO_TAIL_S))
                 async with asyncio.TaskGroup() as group:
-                    group.create_task(MicrophoneFeed(mic.stream, client, hold=hold).run())
+                    group.create_task(
+                        MicrophoneFeed(mic.stream, client, hold=hold, gain=self._mic_gain, level=self._mic_level).run()
+                    )
                     group.create_task(self._route(client, playback))
                     if self._reflexes_factory is not None:
                         # Reflexes.run() only ever ends by cancellation, so it

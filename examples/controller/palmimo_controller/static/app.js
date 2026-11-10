@@ -144,6 +144,11 @@
     } catch (err) {
       return;
     }
+    // The mic meter's own message (see audio.js); never a status frame.
+    if ("mic_level" in payload) {
+      window.dispatchEvent(new CustomEvent("palmimo:mic-level", { detail: payload.mic_level }));
+      return;
+    }
     if ("pilot_present" in payload) {
       renderStatusBar(payload);
       renderPilotLinkAvailability(payload);
@@ -392,8 +397,9 @@
   function renderMode(mode, name) {
     const inTeleop = mode === "teleop";
     const starting = mode === "ai_starting";
+    // In teleop the AI button stands in for the label, so the label hides.
     if (inTeleop) {
-      modeIndicator.textContent = "手動操作";
+      modeIndicator.textContent = "";
     } else if (starting) {
       modeIndicator.textContent = "AI起動中：" + name;
     } else {
@@ -401,6 +407,7 @@
     }
     document.body.classList.toggle("ai-active", !inTeleop);
     document.body.classList.toggle("ai-starting", starting);
+    modeIndicator.hidden = inTeleop;
     aiButton.hidden = !inTeleop;
     teleopButton.hidden = inTeleop;
     if (!inTeleop) modePicker.hidden = true;

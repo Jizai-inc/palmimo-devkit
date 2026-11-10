@@ -12,11 +12,13 @@ from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
 from palmimo_controller.ai.controller import AiController
+from palmimo_controller.audio_levels import MicLevel
 from palmimo_controller.modes import MAX_PROMPT_CHARS, EditablePrompts, default_prompt_dir
 from palmimo_controller.robot_loop import RobotLoop
 from palmimo_controller.server import (
     _ConnectionRegistry,
     _control_connection,
+    _mic_level_loop,
     _validate_pilot_message,
     _validate_play_message,
     create_app,
@@ -626,3 +628,66 @@ def test_pages_and_assets_are_revalidated_on_every_load(client: TestClient, path
     response = client.get(path)
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-cache"
+
+
+def test_audio_endpoint_starts_at_the_defaults_with_their_ranges(client: TestClient) -> None:
+    body = client.get("/api/audio").json()
+    assert body["speaker_volume"] == body["default_speaker_volume"] == 100
+    assert body["mic_gain"] == body["default_mic_gain"] == 100
+    assert body["speaker_volume_range"] == [0, 100]
+    assert body["mic_gain_range"] == [0, 200]
+
+
+def test_saved_audio_levels_are_returned_from_then_on(client: TestClient) -> None:
+    saved = client.put("/api/audio", json={"speaker_volume": 35, "mic_gain": 160})
+    assert saved.status_code == 200
+    assert client.get("/api/audio").json() == saved.json()
+    assert saved.json()["speaker_volume"] == 35
+    assert saved.json()["mic_gain"] == 160
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"speaker_volume": 101, "mic_gain": 100}, {"speaker_volume": 50, "mic_gain": 201}, {"speaker_volume": 50}],
+)
+def test_save_audio_rejects_out_of_range_or_missing_levels(client: TestClient, body: dict[str, int]) -> None:
+    assert client.put("/api/audio", json=body).status_code == 422
+    assert client.get("/api/audio").json()["speaker_volume"] == 100
+
+
+class _RecordingRegistry:
+    def __init__(self) -> None:
+        self.sent: list[dict[str, Any]] = []
+
+    async def broadcast(self, payload: dict[str, Any]) -> None:
+        self.sent.append(payload)
+
+
+class _FakeAi:
+    def __init__(self, running: bool) -> None:
+        self.running = running
+
+
+@pytest.mark.parametrize(
+    ("running", "reported", "expect_sent"), [(True, True, True), (False, True, False), (True, False, False)]
+)
+async def test_mic_level_is_sent_only_while_an_ai_mode_has_the_mic_open(
+    running: bool, reported: bool, expect_sent: bool
+) -> None:
+    # Without this, viewers would get meter traffic in teleop, or a closed mic
+    # would keep drawing a stale level.
+    level = MicLevel()
+    if reported:
+        level.report(0.42)
+    registry = _RecordingRegistry()
+    task = asyncio.create_task(
+        _mic_level_loop(level, cast(_ConnectionRegistry, registry), cast(AiController, _FakeAi(running)), interval=0.01)
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    if expect_sent:
+        assert registry.sent[0] == {"mic_level": 0.42}
+    else:
+        assert registry.sent == []

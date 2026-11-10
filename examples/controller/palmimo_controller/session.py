@@ -136,6 +136,9 @@ class _PilotState:
     #: gesture with a mismatched deadman clock.
     playing_gesture: str | None = None
     gesture_until: float | None = None
+    #: When `playing_gesture` was started, so a frame arriving after a deadman
+    #: lapse can tell whether that lapse cut the gesture off.
+    gesture_started_at: float | None = None
 
 
 class PilotSession:
@@ -327,14 +330,33 @@ class PilotSession:
         if self._pilot_id != client_id:
             return False
         previous = self._state
+        now = self._now()
         steering = move is not None or rotate != 0
+        cancel = steering or self._gesture_cut_by_deadman(previous, now)
         self._state = _PilotState(
             input=PilotInput(move=move, rotate=rotate, neck_pitch=neck_pitch, neck_yaw=neck_yaw),
-            last_input_at=self._now(),
-            playing_gesture=None if steering else previous.playing_gesture,
-            gesture_until=None if steering else previous.gesture_until,
+            last_input_at=now,
+            playing_gesture=None if cancel else previous.playing_gesture,
+            gesture_until=None if cancel else previous.gesture_until,
+            gesture_started_at=None if cancel else previous.gesture_started_at,
         )
         return True
+
+    @staticmethod
+    def _gesture_cut_by_deadman(state: _PilotState, now: float) -> bool:
+        """Whether *state*'s gesture was playing when the deadman lapsed before *now*.
+
+        The lapse stops the robot mid-gesture. Resuming the gesture when frames
+        return would make the robot loop select it again, and the engine
+        restarts a wave or clap from its first frame on every selection -- so a
+        single tap would replay the whole gesture after each network hiccup. A
+        gesture started during the lapse never played, so it is kept.
+        """
+        last = state.last_input_at
+        started = state.gesture_started_at
+        if last is None or started is None or now - last <= DEADMAN_TIMEOUT_S:
+            return False
+        return started <= last + DEADMAN_TIMEOUT_S
 
     def play(self, client_id: Hashable, name: str) -> bool:
         """Play gesture *name* for the current pilot; toggle it off if it is already playing.
@@ -359,14 +381,15 @@ class PilotSession:
         now = self._now()
         active = state.gesture_until is not None and now < state.gesture_until
         if active and state.playing_gesture == name:
-            playing_gesture, gesture_until = None, None
+            playing_gesture, gesture_until, started_at = None, None, None
         else:
-            playing_gesture, gesture_until = name, now + GESTURE_PLAY_SECONDS[name]
+            playing_gesture, gesture_until, started_at = name, now + GESTURE_PLAY_SECONDS[name], now
         self._state = _PilotState(
             input=state.input,
             last_input_at=state.last_input_at,
             playing_gesture=playing_gesture,
             gesture_until=gesture_until,
+            gesture_started_at=started_at,
         )
         return True
 
