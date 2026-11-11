@@ -175,6 +175,9 @@ robot in teleop where that is not acceptable.
 
 ## How it works
 
+[doc/system-diagram.md](doc/system-diagram.md) draws the parts below and how
+they connect, as Mermaid diagrams.
+
 ### Roles and the control slot
 
 Both pages open the same `/api/control` WebSocket and announce a role as
