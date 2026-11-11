@@ -44,6 +44,14 @@ GESTURE_PLAY_SECONDS: dict[str, float] = {
     "head_shake": 1.5,
 }
 
+#: Which layer `PilotSession.resolve()` took the robot's input from.
+LAYER_PILOT = "pilot"
+LAYER_STARTING = "starting"
+LAYER_AI_INTENT = "ai_intent"
+LAYER_GAZE = "gaze"
+LAYER_IDLE = "idle"
+LAYER_STILL = "still"
+
 #: The pilot's own input drives the robot.
 MODE_TELEOP = "teleop"
 #: An AI mode was picked and its session is still connecting; the robot holds still.
@@ -357,6 +365,11 @@ class PilotSession:
         )
 
     @property
+    def idle_face_active(self) -> bool:
+        """Whether a face the idle layer chose is still showing."""
+        return self.face_active and self._mode.face_from_idle
+
+    @property
     def gazing(self) -> bool:
         """Whether a reflex glance holds the neck."""
         mode = self._mode
@@ -566,30 +579,41 @@ class PilotSession:
         pairing this call's `last_input_at` with a different call's `input`
         (or vice versa) -- see the class docstring.
         """
+        return self.resolve()[0]
+
+    def resolve(self) -> tuple[PilotInput, str]:
+        """`effective_input()` plus which layer produced it, from one read of the state.
+
+        The layer is one of `LAYER_*`, so logs can say why the robot does
+        what it does, not just what.
+        """
         mode = self._mode
         if mode.mode == MODE_AI_STARTING:
-            return PilotInput()
+            return PilotInput(), LAYER_STARTING
         if mode.mode == MODE_AI:
             if mode.ai_until is not None and self._now() < mode.ai_until:
-                return mode.ai_input
+                return mode.ai_input, LAYER_AI_INTENT
             if mode.gaze is not None:
-                return PilotInput(neck_pitch=mode.gaze[0], neck_yaw=mode.gaze[1])
+                return PilotInput(neck_pitch=mode.gaze[0], neck_yaw=mode.gaze[1]), LAYER_GAZE
             if mode.idle_input is not None and mode.idle_until is not None and self._now() < mode.idle_until:
-                return mode.idle_input
-            return PilotInput()
+                return mode.idle_input, LAYER_IDLE
+            return PilotInput(), LAYER_STILL
         state = self._state
         current = state.input
         if not self.pilot_present or self._deadman_expired(state):
-            return PilotInput()
+            return PilotInput(), LAYER_STILL
         gesture = None
         if state.gesture_until is not None and self._now() < state.gesture_until:
             gesture = state.playing_gesture
-        return PilotInput(
-            move=current.move,
-            rotate=current.rotate,
-            gesture=gesture,
-            neck_pitch=current.neck_pitch,
-            neck_yaw=current.neck_yaw,
+        return (
+            PilotInput(
+                move=current.move,
+                rotate=current.rotate,
+                gesture=gesture,
+                neck_pitch=current.neck_pitch,
+                neck_yaw=current.neck_yaw,
+            ),
+            LAYER_PILOT,
         )
 
     def status(self) -> ControlStatus:

@@ -1,8 +1,9 @@
-"""Structured usage events: session start/end, mode switches, and AI errors.
+"""Structured events: sessions, mode switches, AI replies and tool calls, reflexes, and idle.
 
 Each event is one JSON log record on the `palmimo_controller.telemetry`
 logger, so the host can collect them from the app's output without this app
-knowing where they go. No conversation audio or transcript text is recorded.
+knowing where they go. The robot's own spoken text is recorded (`ai_said`);
+the visitor's speech is never transcribed, and no audio is recorded.
 """
 
 from __future__ import annotations

@@ -256,3 +256,19 @@ def test_idle_is_the_lowest_priority_and_ends_with_the_ai_session() -> None:
     # The pilot leaving (or any other end) drops idle with the rest of the AI state.
     session.end_ai()
     assert session.effective_input() == PilotInput()
+
+
+def test_resolve_names_the_layer_driving_the_robot() -> None:
+    session, clock = _pilot_session()
+    session.update_pilot_input("a", move="forward", rotate=0, neck_pitch=0.0, neck_yaw=0.0)
+    assert session.resolve()[1] == "pilot"
+    session.begin_ai("a", "default")
+    assert session.resolve()[1] == "starting"
+    session.ai_started()
+    assert session.resolve()[1] == "ai_intent"
+    clock.now = AI_START_NOD_SECONDS
+    assert session.resolve()[1] == "still"
+    session.set_idle(PilotInput(gesture="stretch"), 2.0)
+    assert session.resolve() == (PilotInput(gesture="stretch"), "idle")
+    session.set_gaze(0.1, 0.1)
+    assert session.resolve()[1] == "gaze"

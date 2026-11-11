@@ -129,9 +129,11 @@ class RobotLoop:
             bool: `True` if the cycle completed, `False` if it raised.
         """
         try:
-            effective = self.session.effective_input()
+            effective, layer = self.session.resolve()
             motion = resolve_motion(effective.move, effective.rotate, effective.gesture)
             if motion != self._applied_motion:
+                previous = None if self._applied_motion is _UNSET else self._applied_motion
+                _LOG.debug("robot motion %s -> %s (layer=%s)", previous, motion, layer)
                 if motion is None:
                     self.robot.stop()
                 else:
@@ -162,6 +164,7 @@ class RobotLoop:
         if cue.key == self._applied_face_key:
             return
         self._applied_face_key = cue.key
+        _LOG.debug("robot face -> %s (key=%s, hold_ms=%d)", cue.expression or "IDLE", cue.key, cue.hold_ms)
         try:
             if cue.expression is None:
                 display.idle()

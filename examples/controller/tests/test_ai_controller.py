@@ -471,3 +471,58 @@ async def test_each_start_uses_the_voice_chosen_at_that_moment() -> None:
     assert isinstance(first, SessionUpdate) and isinstance(second, SessionUpdate)
     assert (first.voice, second.voice) == ("coral", "marin")
     await h.ai.stop()
+
+
+def _events_of(h: Harness, kind: str) -> list[dict[str, Any]]:
+    return [event for event in h.events if event["type"] == kind]
+
+
+async def test_a_reply_is_logged_with_its_tools_words_and_cost() -> None:
+    h = Harness()
+    await _live(h)
+    h.client.push({"type": "response.created", "response": {"id": "r1"}})
+    h.client.push({"type": "response.output_audio.delta", "delta": base64.b64encode(b"\0" * 4800).decode()})
+    h.client.push({"type": "response.output_audio_transcript.done", "transcript": "こんにちは"})
+    h.client.push(
+        {
+            "type": "response.done",
+            "response": {
+                "id": "r1",
+                "output": [
+                    {"type": "message", "role": "assistant", "content": []},
+                    {"type": "function_call", "name": "walk", "arguments": '{"direction": "forward", "seconds": 9}'},
+                ],
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "input_token_details": {"cached_tokens": 80, "audio_tokens": 5},
+                    "output_token_details": {"audio_tokens": 15, "reasoning_tokens": 3},
+                },
+            },
+        }
+    )
+    await _until(lambda: bool(_events_of(h, "tool_call")))
+    said = _events_of(h, "ai_said")[-1]
+    assert (said["response_id"], said["text"]) == ("r1", "こんにちは")
+    response = _events_of(h, "ai_response")[-1]
+    assert response["spoke"] is True and response["tools"] == ["walk"]
+    assert isinstance(response["duration_ms"], int)
+    assert response["audio_out_s"] == 0.1
+    assert (response["cached_tokens"], response["reasoning_tokens"]) == (80, 3)
+    tool = _events_of(h, "tool_call")[-1]
+    # Asked for 9 s, applied the walk cap: the log shows the gap.
+    assert tool["args"]["seconds"] == 9 and tool["applied_seconds"] == 3.0 and tool["ok"] is True
+    await h.ai.stop()
+
+
+async def test_visitor_speech_is_logged_with_whether_it_cut_the_robot_off() -> None:
+    h = Harness()
+    await _live(h)
+    h.playback.talking = True
+    h.client.push({"type": "input_audio_buffer.speech_started"})
+    h.client.push({"type": "input_audio_buffer.speech_stopped"})
+    await _until(lambda: len(_events_of(h, "visitor_speech")) == 2)
+    started, stopped = _events_of(h, "visitor_speech")
+    assert (started["state"], started["interrupted_robot"]) == ("started", True)
+    assert stopped["state"] == "stopped"
+    await h.ai.stop()

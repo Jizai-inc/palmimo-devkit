@@ -156,6 +156,11 @@ class AiController:
         self._mic_gain = mic_gain
         self._mic_level = mic_level
         self._task: asyncio.Task[None] | None = None
+        # Per-response bookkeeping for the `ai_response` debug event only;
+        # nothing here changes how a turn is handled.
+        self._response_started: dict[str, float] = {}
+        self._response_audio_bytes = 0
+        self._current_response_id = ""
 
     @property
     def available(self) -> bool:
@@ -307,16 +312,29 @@ class AiController:
     ) -> None:
         match event:
             case protocol.AudioDelta():
-                playback.write(base64.b64decode(event.delta))
+                pcm = base64.b64decode(event.delta)
+                self._response_audio_bytes += len(pcm)
+                playback.write(pcm)
             case protocol.SpeechStarted():
+                cut_off = playback.speaking()
                 # The visitor started talking: stop speaking over them.
                 playback.interrupt()
+                self._telemetry.event("visitor_speech", state="started", interrupted_robot=cut_off)
+            case protocol.SpeechStopped():
+                self._telemetry.event("visitor_speech", state="stopped")
+            case protocol.ResponseCreated():
+                self._response_started[event.response.id] = self._now()
+                self._response_audio_bytes = 0
+                self._current_response_id = event.response.id
+            case protocol.TranscriptDone():
+                # The robot's own words only; visitor speech is never transcribed.
+                _LOG.info("AI said: %s", event.transcript)
+                self._telemetry.event("ai_said", response_id=self._current_response_id, text=event.transcript)
             case protocol.ResponseDone():
-                if event.response.usage is not None:
-                    _LOG.info("AI: response used %s", event.response.usage)
+                self._log_response(event.response)
                 calls = event.response.function_calls
                 for call in calls:
-                    output = run_tool(self._session, call.name, call.arguments)
+                    output = run_tool(self._session, call.name, call.arguments, telemetry=self._telemetry)
                     await client.send(ItemCreate.function_call_output(call.call_id, output))
                 # Once something was said, the tool results only need to be on
                 # record: asking for another response would make it talk twice.
@@ -324,6 +342,38 @@ class AiController:
                     await client.send(ResponseCreate())
             case protocol.ErrorEvent():
                 self._raise_if_fatal(event.error)
+
+    def _log_response(self, response: protocol.Response) -> None:
+        """Emit one `ai_response` event: what the reply did, how long it took, and what it cost."""
+        started = self._response_started.pop(response.id, None)
+        usage = response.usage or {}
+        input_details = usage.get("input_token_details") or {}
+        output_details = usage.get("output_token_details") or {}
+        audio_seconds = self._response_audio_bytes / (2 * API_RATE)
+        fields: dict[str, Any] = {
+            "response_id": response.id,
+            "status": response.status,
+            "spoke": response.has_message,
+            "tools": [call.name for call in response.function_calls],
+            "duration_ms": None if started is None else round((self._now() - started) * 1000),
+            "audio_out_s": round(audio_seconds, 2),
+            "input_tokens": usage.get("input_tokens"),
+            "cached_tokens": input_details.get("cached_tokens"),
+            "input_audio_tokens": input_details.get("audio_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "output_audio_tokens": output_details.get("audio_tokens"),
+            "reasoning_tokens": output_details.get("reasoning_tokens"),
+        }
+        _LOG.info(
+            "AI response %s: %s, spoke=%s, tools=%s, %s ms, %.1f s audio",
+            response.id,
+            response.status,
+            fields["spoke"],
+            fields["tools"],
+            fields["duration_ms"],
+            audio_seconds,
+        )
+        self._telemetry.event("ai_response", **fields)
 
     def _raise_if_fatal(self, error: dict[str, Any]) -> None:
         code = error.get("code")

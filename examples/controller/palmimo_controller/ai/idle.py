@@ -22,6 +22,7 @@ import logging
 import random
 import time
 from collections.abc import Callable
+from typing import Any
 
 from ..session import GESTURE_PLAY_SECONDS, MODE_AI, PilotInput, PilotSession
 from ..telemetry import Telemetry
@@ -60,10 +61,14 @@ class IdleJudge:
         self._telemetry = telemetry
         self._quiet_since: float | None = None
         self._next_at: float | None = None
+        #: The behaviour started last and when it was planned to end, to tell
+        #: "ran its course" from "cut short" (and by what) in the logs.
+        self._running: tuple[str, float, float] | None = None
 
     def update(self, now: float) -> None:
         """Act on the session's state at time *now*: wait, start a behaviour, or let one run."""
         session = self._session
+        self._check_running(now)
         if session.mode != MODE_AI:
             self._quiet_since = None
             self._next_at = None
@@ -82,18 +87,54 @@ class IdleJudge:
         if now < self._next_at:
             return
         behaviour = self._rng.choice(IDLE_BEHAVIOURS)
-        duration = self._play(behaviour)
-        self._next_at = now + duration + self._rng.uniform(*IDLE_PAUSE_S)
+        duration = self._play(behaviour, now)
+        pause = self._rng.uniform(*IDLE_PAUSE_S)
+        self._next_at = now + duration + pause
+        _LOG.debug("AI idle: next behaviour in %.1f s", duration + pause)
 
     def stop(self) -> None:
         """End any idle behaviour, recentering the neck."""
+        if self._running is not None:
+            self._end_event(self._running[0], "stopped", None)
+            self._running = None
         self._session.clear_idle()
 
-    def _play(self, behaviour: str) -> float:
+    def _check_running(self, now: float) -> None:
+        if self._running is None:
+            return
+        behaviour, started, planned_end = self._running
+        if now >= planned_end:
+            self._running = None
+            return
+        session = self._session
+        still_on = session.idle_face_active if behaviour == "face" else session.idle_active
+        if still_on:
+            return
+        self._running = None
+        if session.mode != MODE_AI:
+            reason = "session_end"
+        elif session.ai_busy:
+            reason = "ai_intent"
+        elif session.gazing:
+            reason = "gaze"
+        elif session.face_active:
+            reason = "ai_face"
+        else:
+            reason = "other"
+        self._end_event(behaviour, reason, round(now - started, 2))
+
+    def _end_event(self, behaviour: str, reason: str, ran_s: float | None) -> None:
+        _LOG.info("AI idle: %s cut short (%s)", behaviour, reason)
+        if self._telemetry is not None:
+            self._telemetry.event("idle_end", behaviour=behaviour, reason=reason, ran_s=ran_s)
+
+    def _play(self, behaviour: str, now: float) -> float:
         """Start *behaviour* and return how long it runs. A refused write just skips this turn."""
+        params: dict[str, Any] = {}
         if behaviour == "look_around":
             pitch = self._rng.uniform(-IDLE_NECK_MAX, IDLE_NECK_MAX)
             yaw = self._rng.uniform(-IDLE_NECK_MAX, IDLE_NECK_MAX)
+            params = {"pitch": round(pitch, 3), "yaw": round(yaw, 3)}
             ok = self._session.set_idle(PilotInput(neck_pitch=pitch, neck_yaw=yaw), IDLE_LOOK_SECONDS)
             duration = IDLE_LOOK_SECONDS
         elif behaviour == "body_tilt":
@@ -103,13 +144,28 @@ class IdleJudge:
             duration = GESTURE_PLAY_SECONDS["stretch"]
             ok = self._session.set_idle(PilotInput(gesture="stretch"), duration)
         else:
-            ok = self._session.set_idle_face(self._rng.choice(IDLE_FACES), IDLE_FACE_SECONDS)
+            expression = self._rng.choice(IDLE_FACES)
+            params = {"expression": expression}
+            ok = self._session.set_idle_face(expression, IDLE_FACE_SECONDS)
             duration = IDLE_FACE_SECONDS
-        if ok:
-            _LOG.info("AI idle: %s", behaviour)
-            if self._telemetry is not None:
-                self._telemetry.event("idle", behaviour=behaviour)
+        if not ok:
+            _LOG.debug("AI idle: %s refused by the session (%s)", behaviour, self._refusal())
+            return duration
+        self._running = (behaviour, now, now + duration)
+        _LOG.info("AI idle: %s %s for %.1f s", behaviour, params or "", duration)
+        if self._telemetry is not None:
+            self._telemetry.event("idle", behaviour=behaviour, duration_s=duration, **params)
         return duration
+
+    def _refusal(self) -> str:
+        session = self._session
+        if session.ai_busy:
+            return "ai_busy"
+        if session.gazing:
+            return "gaze"
+        if session.face_active:
+            return "face showing"
+        return "not in AI mode" if session.mode != MODE_AI else "unknown"
 
 
 class Idle:

@@ -1,6 +1,7 @@
 """Behavior of `palmimo_controller.robot_loop.RobotLoop`, driven deterministically via `tick()`
 and `shutdown()` -- never through the real background thread or real time."""
 
+import logging
 import threading
 import time
 from typing import Any, cast
@@ -336,3 +337,15 @@ def test_face_failure_does_not_fail_the_tick() -> None:
     assert loop.tick() is True
     assert loop.robot_ok is True
     assert ("step", None) in robot.calls
+
+
+def test_tick_logs_each_motion_change_with_the_layer_behind_it(caplog: pytest.LogCaptureFixture) -> None:
+    clock = FakeClock()
+    session = _ai_session(clock)
+    session.ai_started()
+    loop = RobotLoop(_robot(FakeRobot()), session, now=clock, sleep=_no_sleep)
+    with caplog.at_level(logging.DEBUG, logger="palmimo_controller.robot_loop"):
+        loop.tick()
+        loop.tick()
+    lines = [record.getMessage() for record in caplog.records if "robot motion" in record.getMessage()]
+    assert lines == ["robot motion None -> nod (layer=ai_intent)"]

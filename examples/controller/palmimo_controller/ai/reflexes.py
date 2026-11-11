@@ -54,6 +54,8 @@ BOW_NEAR_FACE_FRACTION: float = 0.3
 BOW_NEAR_HITS: int = 5
 #: Seconds after a bow before another can start, so a crowd does not keep it bowing.
 BOW_COOLDOWN_S: float = 30.0
+#: How often `Reflexes` logs what the camera saw (`reflex_stats`), for tuning thresholds.
+REFLEX_STATS_INTERVAL_S: float = 30.0
 #: Minimum gap between two "detector failed" log lines.
 FAILURE_LOG_INTERVAL_S: float = 30.0
 
@@ -98,6 +100,7 @@ class ReflexJudge:
         self._last_glance: float | None = None
         self._face_hits = 0
         self._glance_started: float | None = None
+        self._glance_face_size: float | None = None
         self._face_seen_at = 0.0
         self._pitch = 0.0
         self._yaw = 0.0
@@ -107,6 +110,11 @@ class ReflexJudge:
         #: again only once the face moves back or leaves, so a visitor who stays
         #: close is bowed to once, not every cooldown.
         self._bow_armed = True
+        #: Whether this approach's skipped bow was already logged, so a
+        #: skip is logged once per approach rather than on every frame.
+        self._bow_skip_logged = False
+        #: Waves seen but not waved back (busy or cooling down) since the last wave-back.
+        self._waves_skipped = 0
 
     @property
     def glancing(self) -> bool:
@@ -123,54 +131,74 @@ class ReflexJudge:
             self._near_hits += 1
         else:
             self._near_hits = 0
+            if not self._bow_armed:
+                # Logged because a flickering detector re-arms here too, which is
+                # what lets a visitor who never left be bowed to again.
+                reason = "face_lost" if sighting.face_size is None else "face_far"
+                _LOG.info("AI reflex: bow re-armed (%s, face_size=%s)", reason, _round(sighting.face_size))
+                self._event("bow_rearm", reason=reason, face_size=_round(sighting.face_size))
             self._bow_armed = True
+            self._bow_skip_logged = False
         if sighting.waved and self._wave_back(now):
             return
-        if near and self._maybe_bow(now):
+        if near and self._maybe_bow(sighting.face_size, now):
             return
         if self.glancing:
-            self._continue_glance(sighting.face, now)
+            self._continue_glance(sighting, now)
         else:
-            self._maybe_start_glance(sighting.face, now)
+            self._maybe_start_glance(sighting, now)
 
     def stop(self) -> None:
         """End any glance, recentering the neck."""
         if self.glancing:
-            self._end_glance()
+            self._end_glance("stopped", None)
 
     def _wave_back(self, now: float) -> bool:
-        if self._session.ai_busy:
-            return False
-        if self._last_wave is not None and now - self._last_wave < WAVE_COOLDOWN_S:
+        if self._session.ai_busy or (self._last_wave is not None and now - self._last_wave < WAVE_COOLDOWN_S):
+            self._waves_skipped += 1
+            _LOG.debug("AI reflex: wave seen but skipped (%s)", "ai_busy" if self._session.ai_busy else "cooldown")
             return False
         if not self._session.set_ai_intent(PilotInput(gesture="wave"), GESTURE_PLAY_SECONDS["wave"]):
             return False
+        since = None if self._last_wave is None else round(now - self._last_wave, 1)
         self._last_wave = now
         if self.glancing:
-            self._end_glance()
+            self._end_glance("wave", now)
         self._face_hits = 0
         _LOG.info("AI reflex: waved back")
-        self._event("wave")
+        self._event("wave", waves_skipped=self._waves_skipped, since_last_s=since)
+        self._waves_skipped = 0
         return True
 
-    def _maybe_bow(self, now: float) -> bool:
+    def _maybe_bow(self, face_size: float | None, now: float) -> bool:
         # A skipped bow stays armed: the visitor is still close once the AI's motion ends.
-        if not self._bow_armed or self._near_hits < BOW_NEAR_HITS or self._session.ai_busy:
+        if not self._bow_armed or self._near_hits < BOW_NEAR_HITS:
+            return False
+        if self._session.ai_busy:
+            self._log_bow_skip("ai_busy")
             return False
         if self._last_bow is not None and now - self._last_bow < BOW_COOLDOWN_S:
+            self._log_bow_skip(f"cooldown, {BOW_COOLDOWN_S - (now - self._last_bow):.1f} s left")
             return False
         if not self._session.set_ai_intent(PilotInput(gesture="bow"), GESTURE_PLAY_SECONDS["bow"]):
             return False
+        since = None if self._last_bow is None else round(now - self._last_bow, 1)
         self._last_bow = now
         self._bow_armed = False
         if self.glancing:
-            self._end_glance()
+            self._end_glance("bow", now)
         self._face_hits = 0
-        _LOG.info("AI reflex: bowed to a close visitor")
-        self._event("bow")
+        _LOG.info("AI reflex: bowed to a close visitor (face_size=%s)", _round(face_size))
+        self._event("bow", face_size=_round(face_size), near_frames=self._near_hits, since_last_s=since)
         return True
 
-    def _maybe_start_glance(self, face: tuple[float, float] | None, now: float) -> None:
+    def _log_bow_skip(self, reason: str) -> None:
+        if not self._bow_skip_logged:
+            _LOG.debug("AI reflex: close visitor, bow skipped (%s)", reason)
+            self._bow_skip_logged = True
+
+    def _maybe_start_glance(self, sighting: Sighting, now: float) -> None:
+        face = sighting.face
         if face is None:
             self._face_hits = 0
             return
@@ -182,21 +210,30 @@ class ReflexJudge:
         self._face_hits = 0
         self._last_glance = now
         self._glance_started = now
+        self._glance_face_size = sighting.face_size
         self._pitch, self._yaw = 0.0, 0.0
-        _LOG.info("AI reflex: glancing at a face")
-        self._event("glance")
         self._track(face, now)
+        _LOG.info("AI reflex: glancing at a face")
+        self._event(
+            "glance",
+            face=[_round(face[0]), _round(face[1])],
+            face_size=_round(sighting.face_size),
+            target_pitch=_round(self._pitch),
+            target_yaw=_round(self._yaw),
+        )
 
-    def _continue_glance(self, face: tuple[float, float] | None, now: float) -> None:
+    def _continue_glance(self, sighting: Sighting, now: float) -> None:
         started = self._glance_started
         assert started is not None
         # An AI intent wins: the model asked for something, so the glance gives way.
-        if self._session.ai_busy or now - started >= GLANCE_SECONDS:
-            self._end_glance()
-        elif face is not None:
-            self._track(face, now)
+        if self._session.ai_busy:
+            self._end_glance("ai_intent", now)
+        elif now - started >= GLANCE_SECONDS:
+            self._end_glance("timeout", now)
+        elif sighting.face is not None:
+            self._track(sighting.face, now)
         elif now - self._face_seen_at >= GLANCE_LOST_GRACE_S:
-            self._end_glance()
+            self._end_glance("face_lost", now)
 
     def _track(self, face: tuple[float, float], now: float) -> None:
         self._face_seen_at = now
@@ -207,13 +244,82 @@ class ReflexJudge:
             self._pitch = _clamp(self._pitch + ey * GLANCE_GAIN)
         self._session.set_gaze(self._pitch, self._yaw)
 
-    def _end_glance(self) -> None:
+    def _end_glance(self, reason: str, now: float | None) -> None:
+        started = self._glance_started
         self._glance_started = None
         self._session.clear_gaze()
+        duration = None if started is None or now is None else round(now - started, 2)
+        _LOG.debug("AI reflex: glance ended (%s)", reason)
+        self._event(
+            "glance_end",
+            reason=reason,
+            duration_s=duration,
+            final_pitch=_round(self._pitch),
+            final_yaw=_round(self._yaw),
+        )
 
-    def _event(self, kind: str) -> None:
+    def _event(self, kind: str, **fields: Any) -> None:
         if self._telemetry is not None:
-            self._telemetry.event("reflex", reflex=kind)
+            self._telemetry.event("reflex", reflex=kind, **fields)
+
+
+def _round(value: float | None) -> float | None:
+    return None if value is None else round(value, 3)
+
+
+class ReflexStats:
+    """Counts what the camera saw over one window, for the periodic `reflex_stats` event.
+
+    The numbers are what tuning needs: face sizes against
+    `BOW_NEAR_FACE_FRACTION`, how often faces are in view, and the real frame rate.
+    """
+
+    def __init__(self, started: float) -> None:
+        self._started = started
+        self.frames = 0
+        self.frame_errors = 0
+        self.waves = 0
+        self.near_frames = 0
+        self._face_sizes: list[float] = []
+
+    def record(self, sighting: Sighting) -> None:
+        self.frames += 1
+        if sighting.waved:
+            self.waves += 1
+        if sighting.face_size is not None:
+            self._face_sizes.append(sighting.face_size)
+            if sighting.face_size >= BOW_NEAR_FACE_FRACTION:
+                self.near_frames += 1
+
+    def record_error(self) -> None:
+        self.frame_errors += 1
+
+    def due(self, now: float) -> bool:
+        return now - self._started >= REFLEX_STATS_INTERVAL_S
+
+    def summary(self, now: float) -> dict[str, Any]:
+        """This window's numbers as event fields."""
+        elapsed = max(now - self._started, 1e-9)
+        sizes = sorted(self._face_sizes)
+        return {
+            "window_s": round(elapsed, 1),
+            "frames": self.frames,
+            "fps": round(self.frames / elapsed, 1),
+            "frame_errors": self.frame_errors,
+            "face_frames": len(sizes),
+            "face_size_p50": _round(_percentile(sizes, 0.5)),
+            "face_size_p90": _round(_percentile(sizes, 0.9)),
+            "face_size_max": _round(sizes[-1] if sizes else None),
+            "near_frames": self.near_frames,
+            "waves": self.waves,
+        }
+
+
+def _percentile(sorted_values: list[float], fraction: float) -> float | None:
+    if not sorted_values:
+        return None
+    index = min(len(sorted_values) - 1, int(fraction * len(sorted_values)))
+    return sorted_values[index]
 
 
 class Reflexes:
@@ -238,23 +344,35 @@ class Reflexes:
         self._frame_source = frame_source
         self._load_detectors = load_detectors
         self._judge = ReflexJudge(session, telemetry=telemetry)
+        self._telemetry = telemetry
         self._period = period
         self._now = now
         self._last_failure_log_at: float | None = None
+        self._stats = ReflexStats(now())
 
     async def run(self) -> None:
         """Watch and react until cancelled. Never raises anything but cancellation."""
+        load_started = self._now()
         try:
             detectors = await asyncio.to_thread(self._load_detectors)
         except Exception:
             _LOG.warning("wave/face detectors unavailable; AI mode runs without reflexes", exc_info=True)
             return
+        # The first load in a process imports MediaPipe and reads its models,
+        # which delays the first reflex; this shows by how much.
+        load_s = round(self._now() - load_started, 2)
+        _LOG.info("AI reflexes: detectors ready in %.2f s", load_s)
+        if self._telemetry is not None:
+            self._telemetry.event("reflex_ready", load_s=load_s)
+        self._stats = ReflexStats(self._now())
         try:
             while True:
                 started = self._now()
                 await self._step(detectors)
+                self._maybe_emit_stats()
                 await asyncio.sleep(max(0.0, self._period - (self._now() - started)))
         finally:
+            self._emit_stats()
             self._judge.stop()
 
     async def _step(self, detectors: Detectors) -> None:
@@ -264,12 +382,28 @@ class Reflexes:
                 return
             sighting = await asyncio.to_thread(_look, detectors, frame, self._now())
         except Exception:
+            self._stats.record_error()
             now = self._now()
             if self._last_failure_log_at is None or now - self._last_failure_log_at >= FAILURE_LOG_INTERVAL_S:
                 _LOG.warning("reflex detectors failed on a frame", exc_info=True)
                 self._last_failure_log_at = now
             return
+        self._stats.record(sighting)
         self._judge.update(sighting, self._now())
+
+    def _maybe_emit_stats(self) -> None:
+        if self._stats.due(self._now()):
+            self._emit_stats()
+
+    def _emit_stats(self) -> None:
+        now = self._now()
+        summary = self._stats.summary(now)
+        self._stats = ReflexStats(now)
+        if summary["frames"] == 0 and summary["frame_errors"] == 0:
+            return
+        _LOG.info("AI reflex stats: %s", summary)
+        if self._telemetry is not None:
+            self._telemetry.event("reflex_stats", **summary)
 
 
 def _look(detectors: Detectors, frame: Any, timestamp: float) -> Sighting:
@@ -281,4 +415,4 @@ def _look(detectors: Detectors, frame: Any, timestamp: float) -> Sighting:
     )
 
 
-__all__ = ["Detectors", "ReflexJudge", "Reflexes", "Sighting"]
+__all__ = ["Detectors", "ReflexJudge", "ReflexStats", "Reflexes", "Sighting"]

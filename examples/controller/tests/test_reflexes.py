@@ -16,6 +16,7 @@ from palmimo_controller.ai.reflexes import (
     Detectors,
     Reflexes,
     ReflexJudge,
+    ReflexStats,
     Sighting,
 )
 from palmimo_controller.ai.vision import FaceBox
@@ -277,3 +278,57 @@ async def test_reflexes_bow_to_a_close_face_from_camera_frames() -> None:
             await asyncio.sleep(0.005)
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+
+
+def test_bow_event_carries_the_face_size_and_rearm_says_why() -> None:
+    _, clock, events, judge = _live()
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    bow = next(event for event in events if event.get("reflex") == "bow")
+    assert bow["face_size"] == round(NEAR.face_size or 0, 3) and bow["near_frames"] == BOW_NEAR_HITS
+    assert bow["since_last_s"] is None
+    _see(judge, clock, Sighting())
+    rearm = events[-1]
+    assert (rearm["reflex"], rearm["reason"]) == ("bow_rearm", "face_lost")
+
+
+def test_glance_end_reports_its_reason() -> None:
+    session, clock, events, judge = _live()
+    _see(judge, clock, Sighting(face=FACE_RIGHT, face_size=0.1), frames=GLANCE_FACE_HITS)
+    glance = next(event for event in events if event.get("reflex") == "glance")
+    assert glance["face_size"] == 0.1 and glance["target_yaw"] > 0
+    session.set_ai_intent(PilotInput(gesture="nod"), 1.0)
+    _see(judge, clock, Sighting(face=FACE_RIGHT))
+    end = events[-1]
+    assert (end["reflex"], end["reason"]) == ("glance_end", "ai_intent")
+    assert end["duration_s"] is not None
+
+
+def test_reflex_stats_summarise_face_sizes_and_rate() -> None:
+    stats = ReflexStats(started=0.0)
+    for size in (0.1, 0.2, 0.3, 0.4, None):
+        stats.record(Sighting(face_size=size))
+    stats.record_error()
+    summary = stats.summary(now=1.0)
+    assert (summary["frames"], summary["fps"], summary["frame_errors"]) == (5, 5.0, 1)
+    assert (summary["face_frames"], summary["face_size_max"], summary["near_frames"]) == (4, 0.4, 2)
+    assert summary["face_size_p50"] == 0.3
+
+
+async def test_reflexes_log_detector_load_and_final_stats() -> None:
+    session, _, _, _ = _live()
+    events: list[dict[str, Any]] = []
+    reflexes = Reflexes(
+        session,
+        lambda: object(),
+        lambda: Detectors(FakeWave(), FakeFace()),
+        telemetry=Telemetry(emit=lambda line: events.append(json.loads(line))),
+        period=0.001,
+    )
+    task = asyncio.create_task(reflexes.run())
+    async with asyncio.timeout(2.0):
+        while not session.gazing:
+            await asyncio.sleep(0.005)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    types = [event["type"] for event in events]
+    assert types[0] == "reflex_ready" and "reflex_stats" in types

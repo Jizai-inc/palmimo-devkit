@@ -9,6 +9,7 @@ also what keeps the robot connection unchanged across a mode switch.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from ..control import clamp_neck
@@ -20,7 +21,10 @@ from ..session import (
     PilotInput,
     PilotSession,
 )
+from ..telemetry import Telemetry
 
+
+_LOG = logging.getLogger(__name__)
 
 _WALK_MOVES: dict[str, str] = {
     "forward": "forward",
@@ -133,7 +137,7 @@ def _seconds(tool: str, args: dict[str, Any]) -> float:
     return max(0.0, min(float(value), AI_TOOL_MAX_SECONDS[tool]))
 
 
-def run_tool(session: PilotSession, name: str, arguments: str) -> str:
+def run_tool(session: PilotSession, name: str, arguments: str, *, telemetry: Telemetry | None = None) -> str:
     """Apply one tool call to *session* and return the JSON result the model sees.
 
     Never raises: a bad call (unknown tool, malformed arguments, or the AI
@@ -144,10 +148,15 @@ def run_tool(session: PilotSession, name: str, arguments: str) -> str:
         session (PilotSession): Receives the motion intent or face.
         name (str): The tool name the model called.
         arguments (str): The call's JSON-encoded arguments.
+        telemetry (Telemetry, optional): Receives a `tool_call` event with
+            what the model asked for and what was applied, for debugging.
 
     Returns:
         str: `{"ok": true}` or `{"ok": false, "error": ...}`, JSON-encoded.
     """
+    args: Any = arguments
+    seconds: float | None = None
+    error: str | None = None
     try:
         args = json.loads(arguments or "{}")
         if not isinstance(args, dict):
@@ -159,10 +168,17 @@ def run_tool(session: PilotSession, name: str, arguments: str) -> str:
         else:
             intent, seconds = _intent_for(name, args)
             applied = session.set_ai_intent(intent, seconds)
+        if not applied:
+            error = "AI mode is not running"
     except (ValueError, KeyError, TypeError) as exc:
-        return json.dumps({"ok": False, "error": str(exc)})
-    if not applied:
-        return json.dumps({"ok": False, "error": "AI mode is not running"})
+        error = str(exc)
+    # `seconds` is what was applied after the per-tool cap, so a model that
+    # asks for longer than allowed shows up as asked > applied here.
+    _LOG.info("AI tool call: %s(%s) -> %s", name, arguments, "ok" if error is None else f"error: {error}")
+    if telemetry is not None:
+        telemetry.event("tool_call", name=name, args=args, ok=error is None, error=error, applied_seconds=seconds)
+    if error is not None:
+        return json.dumps({"ok": False, "error": error})
     return json.dumps({"ok": True})
 
 

@@ -136,3 +136,18 @@ def test_seconds_schema_maximum_matches_each_tool_cap() -> None:
         seconds = by_name[tool]["parameters"]["properties"]["seconds"]
         assert seconds["maximum"] == AI_TOOL_MAX_SECONDS[tool]
         assert f"{AI_TOOL_MAX_SECONDS[tool]:g}" in seconds["description"]
+
+
+def test_run_tool_logs_each_call_with_what_was_applied() -> None:
+    from palmimo_controller.telemetry import Telemetry
+
+    session, _ = _ai_session()
+    events: list[dict] = []
+    telemetry = Telemetry(emit=lambda line: events.append(json.loads(line)))
+    run_tool(session, "turn", '{"direction": "left", "seconds": 1.5}', telemetry=telemetry)
+    run_tool(session, "gesture", '{"name": "moonwalk"}', telemetry=telemetry)
+    ok, bad = events
+    assert (ok["type"], ok["name"], ok["ok"], ok["applied_seconds"]) == ("tool_call", "turn", True, 1.5)
+    assert ok["args"] == {"direction": "left", "seconds": 1.5}
+    assert (bad["ok"], bad["applied_seconds"]) == (False, None)
+    assert "moonwalk" in bad["error"]

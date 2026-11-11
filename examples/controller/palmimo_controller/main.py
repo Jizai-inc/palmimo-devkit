@@ -381,6 +381,12 @@ def main(
     no_idle: bool = typer.Option(
         False, "--no-idle", help="In AI modes, stand still between replies instead of small idle movements."
     ),
+    log_level: str = typer.Option(
+        "info",
+        "--log-level",
+        help="Log level: debug adds per-change lines (motion, face, skipped reflexes and idle).",
+        case_sensitive=False,
+    ),
     servo_port: str | None = typer.Option(
         None, "--servo-port", help="Servo bus serial port, e.g. /dev/ttyACM0 (auto-detected if omitted)."
     ),
@@ -392,7 +398,13 @@ def main(
 ) -> None:
     """Serve Palmimo Controller: a phone/laptop browser drives the robot, views its head
     camera, and switches to AI voice modes, on the same LAN, with no authentication."""
-    logging.basicConfig(level=logging.INFO)
+    level = logging.getLevelNamesMapping().get(log_level.upper())
+    if level is None:
+        raise typer.BadParameter(f"unknown log level {log_level!r}", param_hint="--log-level")
+    # Only this app's loggers follow --log-level: at debug, websockets and
+    # uvicorn would log every Realtime audio frame and drown the useful lines.
+    logging.basicConfig(level=max(level, logging.INFO))
+    logging.getLogger("palmimo_controller").setLevel(level)
     robot = _build_robot(dry_run=dry_run, gait_speed=gait_speed, fps=fps, servo_port=servo_port, no_face=no_face)
     session = PilotSession()
     robot_loop = RobotLoop(robot, session, fps=fps)

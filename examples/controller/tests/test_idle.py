@@ -153,3 +153,24 @@ async def test_idle_runs_and_stops_with_the_session_task() -> None:
     # Cancelling (the AI session ending) leaves the robot still and the face neutral.
     assert session.effective_input() == PilotInput()
     assert not session.face_active
+
+
+def test_idle_event_carries_its_parameters() -> None:
+    _, clock, events, judge = _live(seed=0)
+    clock.now = AI_START_NOD_SECONDS
+    _run(judge, clock, 120)
+    looks = [event for event in events if event.get("behaviour") == "look_around" and event["type"] == "idle"]
+    faces = [event for event in events if event.get("behaviour") == "face" and event["type"] == "idle"]
+    assert looks and all(abs(event["pitch"]) <= IDLE_NECK_MAX for event in looks)
+    assert faces and all(event["expression"] in ("SMILE", "THINKING") for event in faces)
+    assert all("duration_s" in event for event in events if event["type"] == "idle")
+
+
+def test_idle_cut_short_by_an_ai_intent_is_logged_with_the_reason() -> None:
+    for seed in range(20):
+        session, clock, events, judge = _live(seed)
+        _run(judge, clock, AI_START_NOD_SECONDS + IDLE_AFTER_S + STEP)
+        session.set_ai_intent(PilotInput(gesture="nod"), 1.0)
+        judge.update(clock.now)
+        ends = [event for event in events if event["type"] == "idle_end"]
+        assert len(ends) == 1 and ends[0]["reason"] == "ai_intent"

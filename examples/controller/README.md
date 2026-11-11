@@ -162,9 +162,31 @@ The page uses `GET /api/prompts`, `PUT /api/prompts/<mode>` (body
 ### Telemetry
 
 `palmimo_controller.telemetry.Telemetry` logs one JSON line per event on the
-`palmimo_controller.telemetry` logger: `session_start`, `session_end`,
-`mode_switch` (from, to, ok, latency, error), and `ai_error`. No audio or
-transcript text is recorded.
+`palmimo_controller.telemetry` logger, each with `type`, `session_id` and
+`ts`. On the robot, `journalctl` output filtered for `"type"` gives one stream
+to read with `jq`.
+
+| Event | When | Main fields |
+|---|---|---|
+| `session_start` / `session_end` | App starts / stops | `servo_attached`, `ai_available` |
+| `mode_switch` | Teleop and AI mode switch | `from_mode`, `to_mode`, `ok`, `latency_ms`, `reason` / `error` |
+| `ai_error` | An AI session fails | `mode`, `error` |
+| `ai_response` | The model finishes a reply | `response_id`, `status`, `spoke`, `tools`, `duration_ms`, `audio_out_s`, token counts (`input_tokens`, `cached_tokens`, `output_tokens`, `output_audio_tokens`, `reasoning_tokens`) |
+| `ai_said` | The robot finishes saying something | `response_id`, `text` (the robot's own words) |
+| `tool_call` | The model calls a tool | `name`, `args` (as sent), `ok`, `error`, `applied_seconds` (after the per-tool cap) |
+| `visitor_speech` | The visitor starts / stops talking | `state`, `interrupted_robot` |
+| `reflex` | A reflex decision | `reflex`: `wave` (`waves_skipped`, `since_last_s`), `bow` (`face_size`, `near_frames`, `since_last_s`), `bow_rearm` (`reason`: `face_far` / `face_lost`), `glance` (`face`, `face_size`, `target_pitch`, `target_yaw`), `glance_end` (`reason`, `duration_s`) |
+| `reflex_ready` | Detectors loaded for an AI session | `load_s` |
+| `reflex_stats` | Every 30 s of an AI session | `frames`, `fps`, `frame_errors`, `face_frames`, `face_size_p50` / `p90` / `max`, `near_frames`, `waves` |
+| `idle` / `idle_end` | An idle behaviour starts / is cut short | `behaviour`, `duration_s`, `pitch` / `yaw` or `expression`; `reason`, `ran_s` |
+
+`--log-level debug` adds plain log lines for each change in what drives the
+robot (`robot motion forward -> bow (layer=ai_intent)`), each face sent, and
+skipped reflexes and idle behaviours. It applies to this app's loggers only,
+so websockets and uvicorn stay at info.
+
+The robot's own spoken words are logged (`ai_said`). The visitor's speech is
+never transcribed, and no audio is recorded.
 
 ### Privacy
 
@@ -369,6 +391,7 @@ uv run --with-editable ../../packages/palmimo_sdk python -m palmimo_controller.m
 | `--no-face` | off | Never attach the face display. Without this flag, a face display is attached only when one is plugged in and opens, so a robot without a face still starts |
 | `--no-reflexes` | off | In AI modes, do not wave back, bow, or glance at faces |
 | `--no-idle` | off | In AI modes, stand still between replies instead of small idle movements |
+| `--log-level` | `info` | Log level for this app's loggers; `debug` adds per-change lines (motion, face, skipped reflexes and idle) |
 | `--servo-port` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0`; ignored under `--dry-run` |
 | `--audio-device` | `respeaker` | AI mode mic and speaker. `respeaker`: a development robot's ReSpeaker 4 Mic Array, with echo cancellation. `booth-usb`: an exhibition robot's push-to-talk USB mic ("USB PnP", 48 kHz, no echo cancellation; hold its button while talking) and USB speaker ("Composite") |
 
