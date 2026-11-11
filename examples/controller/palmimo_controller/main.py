@@ -362,7 +362,7 @@ def main(
     no_camera: bool = typer.Option(False, "--no-camera", help="Never attach the head camera."),
     no_face: bool = typer.Option(False, "--no-face", help="Never attach the face display."),
     no_reflexes: bool = typer.Option(
-        False, "--no-reflexes", help="In AI modes, do not wave back at visitors or glance at faces."
+        False, "--no-reflexes", help="In AI modes, do not wave back, bow to close visitors, or glance at faces."
     ),
     servo_port: str | None = typer.Option(
         None, "--servo-port", help="Servo bus serial port, e.g. /dev/ttyACM0 (auto-detected if omitted)."

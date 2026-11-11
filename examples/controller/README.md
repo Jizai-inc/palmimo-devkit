@@ -104,6 +104,25 @@ With echo cancellation (`--audio-device respeaker`), a visitor who starts
 talking cuts the robot off. Without it (`booth-usb`), the microphone is not
 sent to the model while the robot talks, or it would hear and answer itself.
 
+### Reflexes
+
+While an AI mode is live, the robot watches its head camera and reacts on
+its own, without telling the model (`ai/reflexes.py`):
+
+- **Wave back** at a visitor who waves (cooldown `WAVE_COOLDOWN_S`, 8 s).
+- **Bow** when a visitor comes close: the largest face is at least
+  `BOW_NEAR_FACE_FRACTION` (30 %) of the frame width for `BOW_NEAR_HITS`
+  frames in a row. It bows once per approach: the next bow needs the face to
+  move back or leave first, and at least `BOW_COOLDOWN_S` (30 s) to pass.
+- **Glance** at a face for a few seconds, then recenter (cooldown 15 s, so
+  the neck is not held off-center).
+
+A reflex is skipped, never queued, while an AI motion runs, so it never
+overrides the model. Wave-back wins when a wave and a bow trigger on the same
+frame. A detector that fails is logged and skipped; it never ends the AI
+session. Each reflex writes a `reflex` telemetry event. `--no-reflexes` (or
+`--no-camera`) turns them off.
+
 ### Editing prompts
 
 The homepage (`/`) lists each mode in a prompt section below the status bar.
@@ -331,6 +350,7 @@ uv run --with-editable ../../packages/palmimo_sdk python -m palmimo_controller.m
 | `--dry-run` | off | Compute-only: never attach a servo driver |
 | `--no-camera` | off | Never attach the head camera |
 | `--no-face` | off | Never attach the face display. Without this flag, a face display is attached only when one is plugged in and opens, so a robot without a face still starts |
+| `--no-reflexes` | off | In AI modes, do not wave back, bow, or glance at faces |
 | `--servo-port` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0`; ignored under `--dry-run` |
 | `--audio-device` | `respeaker` | AI mode mic and speaker. `respeaker`: a development robot's ReSpeaker 4 Mic Array, with echo cancellation. `booth-usb`: an exhibition robot's push-to-talk USB mic ("USB PnP", 48 kHz, no echo cancellation; hold its button while talking) and USB speaker ("Composite") |
 

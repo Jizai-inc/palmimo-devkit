@@ -1,4 +1,5 @@
-"""Reflexes for a live AI session: wave back at a waving visitor, glance at a new face.
+"""Reflexes for a live AI session: wave back at a waving visitor, bow to one who comes
+close, glance at a new face.
 
 Ported from the companion agent's reflex engine, with its rules: a reflex
 is skipped outright (never queued) while an AI intent runs, each kind has a
@@ -23,6 +24,7 @@ from typing import Any, Protocol
 
 from ..session import GESTURE_PLAY_SECONDS, PilotInput, PilotSession
 from ..telemetry import Telemetry
+from .vision import FaceBox
 
 
 _LOG = logging.getLogger(__name__)
@@ -45,6 +47,13 @@ GLANCE_LOST_GRACE_S: float = 1.0
 GLANCE_GAIN: float = 0.6
 #: Offset from the frame center below which the neck does not move.
 GLANCE_DEADBAND: float = 0.04
+#: Largest face's width, as a fraction of the frame width, at which a visitor
+#: counts as "close": roughly a face leaning in over the robot.
+BOW_NEAR_FACE_FRACTION: float = 0.3
+#: Consecutive "close" frames before a bow; filters a face passing by the lens.
+BOW_NEAR_HITS: int = 5
+#: Seconds after a bow before another can start, so a crowd does not keep it bowing.
+BOW_COOLDOWN_S: float = 30.0
 #: Minimum gap between two "detector failed" log lines.
 FAILURE_LOG_INTERVAL_S: float = 30.0
 
@@ -54,7 +63,7 @@ class WaveDetectorLike(Protocol):
 
 
 class FaceLocatorLike(Protocol):
-    def locate(self, frame: Any) -> tuple[float, float] | None: ...
+    def locate_box(self, frame: Any) -> FaceBox | None: ...
 
 
 @dataclass(frozen=True)
@@ -71,6 +80,8 @@ class Sighting:
 
     waved: bool = False
     face: tuple[float, float] | None = None
+    #: The largest face's width as a fraction of the frame width, `None` with no face.
+    face_size: float | None = None
 
 
 def _clamp(value: float) -> float:
@@ -90,14 +101,32 @@ class ReflexJudge:
         self._face_seen_at = 0.0
         self._pitch = 0.0
         self._yaw = 0.0
+        self._last_bow: float | None = None
+        self._near_hits = 0
+        #: Whether the next close approach may bow. Cleared by a bow and set
+        #: again only once the face moves back or leaves, so a visitor who stays
+        #: close is bowed to once, not every cooldown.
+        self._bow_armed = True
 
     @property
     def glancing(self) -> bool:
         return self._glance_started is not None
 
     def update(self, sighting: Sighting, now: float) -> None:
-        """Apply one frame's sighting at time *now*."""
+        """Apply one frame's sighting at time *now*.
+
+        Wave-back runs first, so a visitor who waves while leaning in gets a
+        wave, not a bow, on that frame.
+        """
+        near = sighting.face_size is not None and sighting.face_size >= BOW_NEAR_FACE_FRACTION
+        if near:
+            self._near_hits += 1
+        else:
+            self._near_hits = 0
+            self._bow_armed = True
         if sighting.waved and self._wave_back(now):
+            return
+        if near and self._maybe_bow(now):
             return
         if self.glancing:
             self._continue_glance(sighting.face, now)
@@ -122,6 +151,23 @@ class ReflexJudge:
         self._face_hits = 0
         _LOG.info("AI reflex: waved back")
         self._event("wave")
+        return True
+
+    def _maybe_bow(self, now: float) -> bool:
+        # A skipped bow stays armed: the visitor is still close once the AI's motion ends.
+        if not self._bow_armed or self._near_hits < BOW_NEAR_HITS or self._session.ai_busy:
+            return False
+        if self._last_bow is not None and now - self._last_bow < BOW_COOLDOWN_S:
+            return False
+        if not self._session.set_ai_intent(PilotInput(gesture="bow"), GESTURE_PLAY_SECONDS["bow"]):
+            return False
+        self._last_bow = now
+        self._bow_armed = False
+        if self.glancing:
+            self._end_glance()
+        self._face_hits = 0
+        _LOG.info("AI reflex: bowed to a close visitor")
+        self._event("bow")
         return True
 
     def _maybe_start_glance(self, face: tuple[float, float] | None, now: float) -> None:
@@ -227,7 +273,12 @@ class Reflexes:
 
 
 def _look(detectors: Detectors, frame: Any, timestamp: float) -> Sighting:
-    return Sighting(waved=detectors.wave.process(frame, timestamp), face=detectors.face.locate(frame))
+    face = detectors.face.locate_box(frame)
+    return Sighting(
+        waved=detectors.wave.process(frame, timestamp),
+        face=None if face is None else face.center,
+        face_size=None if face is None else face.size,
+    )
 
 
 __all__ = ["Detectors", "ReflexJudge", "Reflexes", "Sighting"]

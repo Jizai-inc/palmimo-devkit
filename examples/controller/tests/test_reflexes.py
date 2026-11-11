@@ -5,6 +5,9 @@ import json
 from typing import Any
 
 from palmimo_controller.ai.reflexes import (
+    BOW_COOLDOWN_S,
+    BOW_NEAR_FACE_FRACTION,
+    BOW_NEAR_HITS,
     GLANCE_COOLDOWN_S,
     GLANCE_FACE_HITS,
     GLANCE_LOST_GRACE_S,
@@ -15,7 +18,8 @@ from palmimo_controller.ai.reflexes import (
     ReflexJudge,
     Sighting,
 )
-from palmimo_controller.session import AI_START_NOD_SECONDS, PilotInput, PilotSession
+from palmimo_controller.ai.vision import FaceBox
+from palmimo_controller.session import AI_START_NOD_SECONDS, GESTURE_PLAY_SECONDS, PilotInput, PilotSession
 from palmimo_controller.telemetry import Telemetry
 
 
@@ -29,6 +33,8 @@ class FakeClock:
 
 FACE_RIGHT = (0.8, 0.5)
 STEP = 0.1
+NEAR = Sighting(face=(0.5, 0.5), face_size=BOW_NEAR_FACE_FRACTION + 0.1)
+FAR = Sighting(face=(0.5, 0.5), face_size=BOW_NEAR_FACE_FRACTION / 2)
 
 
 def _live() -> tuple[PilotSession, FakeClock, list[dict[str, Any]], ReflexJudge]:
@@ -122,6 +128,88 @@ def test_ai_motion_ends_a_glance() -> None:
     assert session.effective_input() == PilotInput(neck_pitch=0.3)
 
 
+def _finish_bow(session: PilotSession, clock: FakeClock) -> None:
+    clock.now += GESTURE_PLAY_SECONDS["bow"]
+    assert not session.ai_busy
+
+
+def test_close_face_is_bowed_to_after_a_few_frames() -> None:
+    session, clock, events, judge = _live()
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS - 1)
+    assert session.effective_input().gesture is None
+    _see(judge, clock, NEAR)
+    assert session.effective_input().gesture == "bow"
+    assert events[-1]["reflex"] == "bow"
+
+
+def test_a_face_that_is_not_close_never_draws_a_bow() -> None:
+    session, clock, _, judge = _live()
+    _see(judge, clock, FAR, frames=BOW_NEAR_HITS * 3)
+    assert session.effective_input().gesture is None
+
+
+def test_bow_fires_once_per_approach_and_rearms_after_moving_back() -> None:
+    session, clock, _, judge = _live()
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    _finish_bow(session, clock)
+    clock.now += BOW_COOLDOWN_S
+    # Still close, past the cooldown: the same approach is not bowed to again.
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    assert session.effective_input().gesture is None
+    _see(judge, clock, FAR)
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    assert session.effective_input().gesture == "bow"
+
+
+def test_bow_rearms_when_the_face_leaves() -> None:
+    session, clock, _, judge = _live()
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    _finish_bow(session, clock)
+    clock.now += BOW_COOLDOWN_S
+    _see(judge, clock, Sighting())
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    assert session.effective_input().gesture == "bow"
+
+
+def test_bow_waits_out_its_cooldown() -> None:
+    session, clock, _, judge = _live()
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    _finish_bow(session, clock)
+    _see(judge, clock, FAR)
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    assert session.effective_input().gesture is None
+    clock.now += BOW_COOLDOWN_S
+    _see(judge, clock, NEAR)
+    assert session.effective_input().gesture == "bow"
+
+
+def test_bow_yields_to_an_ai_intent_and_stays_armed() -> None:
+    session, clock, _, judge = _live()
+    session.set_ai_intent(PilotInput(move="forward"), 3.0)
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    assert session.effective_input().move == "forward"
+    clock.now += 3.0
+    _see(judge, clock, NEAR)
+    assert session.effective_input().gesture == "bow"
+
+
+def test_wave_back_wins_over_a_bow_on_the_same_frame() -> None:
+    session, clock, events, judge = _live()
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS - 1)
+    _see(judge, clock, Sighting(waved=True, face=NEAR.face, face_size=NEAR.face_size))
+    assert session.effective_input().gesture == "wave"
+    assert "bow" not in [e["reflex"] for e in events]
+
+
+def test_bow_ends_a_glance() -> None:
+    session, clock, _, judge = _live()
+    _see(judge, clock, Sighting(face=FACE_RIGHT), frames=GLANCE_FACE_HITS)
+    assert judge.glancing
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    assert not judge.glancing
+    assert session.effective_input() == PilotInput(gesture="bow")
+
+
 class FakeWave:
     def __init__(self, waves: bool = False) -> None:
         self.waves = waves
@@ -131,8 +219,11 @@ class FakeWave:
 
 
 class FakeFace:
-    def locate(self, frame: Any) -> tuple[float, float] | None:
-        return FACE_RIGHT
+    def __init__(self, size: float = 0.1) -> None:
+        self.size = size
+
+    def locate_box(self, frame: Any) -> FaceBox | None:
+        return FaceBox(center=FACE_RIGHT, size=self.size)
 
 
 async def test_reflexes_run_waves_back_from_camera_frames() -> None:
@@ -175,3 +266,14 @@ async def test_reflexes_survive_a_failing_frame_and_recenter_when_cancelled() ->
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     assert session.effective_input() == PilotInput()
+
+
+async def test_reflexes_bow_to_a_close_face_from_camera_frames() -> None:
+    session, _, _, _ = _live()
+    reflexes = Reflexes(session, lambda: object(), lambda: Detectors(FakeWave(), FakeFace(size=0.5)), period=0.001)
+    task = asyncio.create_task(reflexes.run())
+    async with asyncio.timeout(2.0):
+        while session.effective_input().gesture != "bow":
+            await asyncio.sleep(0.005)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)

@@ -202,8 +202,18 @@ class WaveDetector:
         return waved
 
 
+@dataclass(frozen=True)
+class FaceBox:
+    """The largest face in a frame, normalized to the frame."""
+
+    #: Box center `(cx, cy)`, each a fraction of the frame.
+    center: tuple[float, float]
+    #: Box width as a fraction of the frame width: grows as the face comes closer.
+    size: float
+
+
 class FaceLocator:
-    """Finds the largest face's normalized center `(cx, cy)` in a frame."""
+    """Finds the largest face in a frame: its normalized center, and with `locate_box` its size."""
 
     def __init__(self, model_path: str = DEFAULT_FACE_MODEL, *, min_confidence: float = 0.4) -> None:
         import cv2
@@ -224,9 +234,14 @@ class FaceLocator:
 
     def locate(self, frame: Any) -> tuple[float, float] | None:
         """The largest face's normalized `(cx, cy)`, or `None` when no face is in view."""
+        box = self.locate_box(frame)
+        return None if box is None else box.center
+
+    def locate_box(self, frame: Any) -> FaceBox | None:
+        """The largest face's center and size, or `None` when no face is in view."""
         with self._lock:
             detections, width, height = self._detect(frame)
-        return largest_center(detections, width, height)
+        return largest_face(detections, width, height)
 
     def _detect(self, frame: Any) -> tuple[list[Any], int, int]:
         import mediapipe as mp
@@ -241,19 +256,28 @@ class FaceLocator:
         return list(result.detections or []), sw, sh
 
 
-def largest_center(detections: list[Any], width: int, height: int) -> tuple[float, float] | None:
-    """Normalized center of the widest detection's bounding box, or `None` with no detections."""
+def largest_face(detections: list[Any], width: int, height: int) -> FaceBox | None:
+    """The widest detection's normalized center and width, or `None` with no detections."""
     if not detections:
         return None
     box = max(detections, key=lambda d: d.bounding_box.width).bounding_box
-    return ((box.origin_x + box.width / 2) / width, (box.origin_y + box.height / 2) / height)
+    center = ((box.origin_x + box.width / 2) / width, (box.origin_y + box.height / 2) / height)
+    return FaceBox(center=center, size=box.width / width)
+
+
+def largest_center(detections: list[Any], width: int, height: int) -> tuple[float, float] | None:
+    """Normalized center of the widest detection's bounding box, or `None` with no detections."""
+    face = largest_face(detections, width, height)
+    return None if face is None else face.center
 
 
 __all__ = [
     "DEFAULT_FACE_MODEL",
     "DEFAULT_HAND_MODEL",
+    "FaceBox",
     "FaceLocator",
     "ReversalWaveJudge",
     "WaveDetector",
     "largest_center",
+    "largest_face",
 ]

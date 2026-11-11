@@ -9,9 +9,11 @@ from dataclasses import dataclass
 from palmimo_controller.ai.vision import (
     CLEAR_COUNT,
     MOVE_THRESHOLD,
+    FaceBox,
     ReversalWaveJudge,
     WaveDetector,
     largest_center,
+    largest_face,
 )
 
 
@@ -74,3 +76,13 @@ def test_largest_center_picks_the_widest_face() -> None:
 
 def test_largest_center_is_none_without_faces() -> None:
     assert largest_center([], 200, 100) is None
+
+
+def test_largest_face_reports_the_widest_face_center_and_width_fraction() -> None:
+    small = _Detection(_Box(0, 0, 10, 10))
+    big = _Detection(_Box(100, 50, 40, 40))
+    assert largest_face([small, big], 200, 100) == FaceBox(center=(0.6, 0.7), size=0.2)
+
+
+def test_largest_face_is_none_without_faces() -> None:
+    assert largest_face([], 200, 100) is None
