@@ -1,7 +1,7 @@
 """Behavior of `PilotSession`'s teleop/AI mode switching. The clock is injected."""
 
 from palmimo_controller.session import (
-    AI_INTENT_MAX_SECONDS,
+    AI_INTENT_CEILING_S,
     AI_START_NOD_SECONDS,
     CUE_FACE_HOLD_MS,
     FAILED_FACE,
@@ -82,12 +82,14 @@ def test_ai_intent_drives_the_robot_until_it_expires() -> None:
     assert session.effective_input() == PilotInput()
 
 
-def test_ai_intent_is_capped() -> None:
-    # Without this, a model asking to walk for a minute would walk for a minute.
+def test_ai_intent_is_capped_at_the_ceiling() -> None:
+    # Without this, any caller asking to walk for a minute would walk for a minute.
     session, clock = _pilot_session()
     _live_ai(session)
     session.set_ai_intent(PilotInput(move="forward"), 60.0)
-    clock.now = AI_INTENT_MAX_SECONDS
+    clock.now = AI_INTENT_CEILING_S - 0.01
+    assert session.effective_input().move == "forward"
+    clock.now = AI_INTENT_CEILING_S
     assert session.effective_input() == PilotInput()
 
 

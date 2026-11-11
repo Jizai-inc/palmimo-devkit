@@ -5,7 +5,13 @@ import json
 import pytest
 
 from palmimo_controller.ai.tools import TOOL_DEFINITIONS, run_tool
-from palmimo_controller.session import AI_START_NOD_SECONDS, PilotInput, PilotSession
+from palmimo_controller.session import (
+    AI_START_NOD_SECONDS,
+    AI_TOOL_MAX_SECONDS,
+    GESTURE_PLAY_SECONDS,
+    PilotInput,
+    PilotSession,
+)
 
 
 class FakeClock:
@@ -72,3 +78,32 @@ def test_run_tool_refuses_when_ai_mode_has_ended() -> None:
 def test_every_tool_definition_is_runnable() -> None:
     names = {definition["name"] for definition in TOOL_DEFINITIONS}
     assert names == {"walk", "turn", "gesture", "look", "stop"}
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments", "cap"),
+    [
+        ("walk", {"direction": "forward", "seconds": 60}, AI_TOOL_MAX_SECONDS["walk"]),
+        ("turn", {"direction": "left", "seconds": 60}, AI_TOOL_MAX_SECONDS["turn"]),
+        ("look", {"pitch": 0.3, "yaw": 0.3}, AI_TOOL_MAX_SECONDS["look"]),
+        ("gesture", {"name": "bow"}, GESTURE_PLAY_SECONDS["bow"]),
+        ("gesture", {"name": "dance"}, GESTURE_PLAY_SECONDS["dance"]),
+    ],
+)
+def test_each_tool_intent_ends_at_its_own_cap(name: str, arguments: dict, cap: float) -> None:
+    # The schema maximum is only advice to the model, so the cap must hold on its own.
+    session, clock = _ai_session()
+    start = clock.now
+    run_tool(session, name, json.dumps(arguments))
+    clock.now = start + cap - 0.01
+    assert session.effective_input() != PilotInput()
+    clock.now = start + cap
+    assert session.effective_input() == PilotInput()
+
+
+def test_seconds_schema_maximum_matches_each_tool_cap() -> None:
+    by_name = {definition["name"]: definition for definition in TOOL_DEFINITIONS}
+    for tool in ("walk", "turn"):
+        seconds = by_name[tool]["parameters"]["properties"]["seconds"]
+        assert seconds["maximum"] == AI_TOOL_MAX_SECONDS[tool]
+        assert f"{AI_TOOL_MAX_SECONDS[tool]:g}" in seconds["description"]

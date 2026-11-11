@@ -67,9 +67,14 @@ How a switch works:
   when it changes. A face that stops answering is logged and skipped; it never
   counts as a servo fault, so it cannot end an AI session.
 - **The AI moves the robot through tools** (`ai/tools.py`): `walk`, `turn`,
-  `gesture`, `look`, and `stop`. Each records an intent with a time limit of
-  at most `session.AI_INTENT_MAX_SECONDS` (5 s), after which the robot stands
-  still again, so a model never keeps the robot walking.
+  `gesture`, `look`, and `stop`. Each records an intent with its own time
+  limit, after which the robot stands still again, so a model never keeps the
+  robot walking: `walk` at most 3 s, `turn` and `look` 2 s
+  (`session.AI_TOOL_MAX_SECONDS`), and a gesture for its playthrough
+  (`session.GESTURE_PLAY_SECONDS`: about 1.5-2 s for one-shots like wave, nod,
+  clap and bow; 5 s for dance, push-ups and body tilt, which loop until
+  stopped). Short holds free the robot for its reflexes sooner.
+  `session.AI_INTENT_CEILING_S` (5 s) caps any AI intent, whoever writes it.
 - **One switch at a time.** A switch is only accepted from teleop, so a
   double tap cannot start two AI sessions.
 - **Failures fall back to teleop.** A missing or rejected key, an exhausted

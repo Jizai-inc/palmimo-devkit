@@ -20,22 +20,24 @@ from .control import resolve_motion
 #: robot loop treats it as lost and stops translation/rotation.
 DEADMAN_TIMEOUT_S: float = 0.4
 
-#: How long a played gesture (`PilotSession.play`) keeps overriding move/
-#: rotate before falling back to whatever the pilot is currently steering.
-#: `palmimo_sdk` does not expose most motions' own playback length. The
-#: one-shots (wave, nod ~1.5 s, clap ~2 s, bow ~1.7 s) play once and then hold
-#: neutral, so a window longer than the playthrough is harmless; dance,
-#: pushup and body_tilt loop until deselected, so this window is what ends
-#: them. Replace this with SDK introspection if a future release publishes
-#: per-motion play length.
+#: How long a played gesture (`PilotSession.play`, or an AI `gesture` tool call)
+#: keeps overriding move/rotate before falling back to whatever drives the robot
+#: next. `palmimo_sdk` does not expose most motions' own playback length, so the
+#: one-shots use their measured playthrough (wave and nod ~1.5 s, clap ~2 s,
+#: bow ~1.7 s) plus a small margin: a window shorter than the
+#: playthrough would cut the gesture off, and a much longer one keeps an AI
+#: robot "busy" (no reflexes, no idle) while it already stands at neutral.
+#: dance, pushup and body_tilt loop until deselected, so this window is what
+#: ends them. Replace this with SDK introspection if a future release
+#: publishes per-motion play length.
 GESTURE_PLAY_SECONDS: dict[str, float] = {
-    "wave": 5.0,
+    "wave": 1.8,
     "dance": 5.0,
-    "nod": 5.0,
-    "clap": 5.0,
+    "nod": 1.5,
+    "clap": 2.2,
     "pushup": 5.0,
     "body_tilt": 5.0,
-    "bow": 5.0,
+    "bow": 1.9,
 }
 
 #: The pilot's own input drives the robot.
@@ -45,9 +47,14 @@ MODE_AI_STARTING = "ai_starting"
 #: An AI mode is running; only its motion intents drive the robot.
 MODE_AI = "ai"
 
-#: Longest an AI motion intent may run before the robot falls back to still.
-#: A model that asks to walk "for a while" must not walk off a table.
-AI_INTENT_MAX_SECONDS: float = 5.0
+#: Longest each timed AI tool may hold its intent. A model that asks to walk
+#: "for a while" must not walk off a table, and a short hold frees the robot
+#: for reflexes and idle sooner. Gestures use `GESTURE_PLAY_SECONDS` instead.
+AI_TOOL_MAX_SECONDS: dict[str, float] = {"walk": 3.0, "turn": 2.0, "look": 2.0}
+
+#: Backstop for any AI intent, whoever writes it (a tool, a reflex): the longest
+#: per-tool or gesture window. Keeps a future caller from holding an intent forever.
+AI_INTENT_CEILING_S: float = max(*AI_TOOL_MAX_SECONDS.values(), *GESTURE_PLAY_SECONDS.values())
 
 #: How long the nod that greets a live AI session plays before the robot holds still.
 #: Covers one nod (~1.5 s); the AI's first motion intent replaces it early.
@@ -207,7 +214,7 @@ class PilotSession:
         self._mode = _ModeState(notice=notice, since=self._now())
 
     def set_ai_intent(self, intent: PilotInput, seconds: float) -> bool:
-        """Have the robot follow *intent* for up to *seconds* (capped at `AI_INTENT_MAX_SECONDS`).
+        """Have the robot follow *intent* for up to *seconds* (capped at `AI_INTENT_CEILING_S`).
 
         Returns:
             bool: `False` (ignored) unless an AI mode is running.
@@ -215,7 +222,7 @@ class PilotSession:
         current = self._mode
         if current.mode != MODE_AI:
             return False
-        duration = max(0.0, min(seconds, AI_INTENT_MAX_SECONDS))
+        duration = max(0.0, min(seconds, AI_INTENT_CEILING_S))
         self._mode = _ModeState(
             mode=MODE_AI,
             ai_mode=current.ai_mode,
