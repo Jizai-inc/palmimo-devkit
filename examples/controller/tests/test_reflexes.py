@@ -8,6 +8,7 @@ from palmimo_controller.ai.reflexes import (
     BOW_COOLDOWN_S,
     BOW_NEAR_FACE_FRACTION,
     BOW_NEAR_HITS,
+    BOW_REARM_FACE_FRACTION,
     CAMERA_HFOV_DEG,
     GLANCE_COOLDOWN_S,
     GLANCE_DEADBAND,
@@ -316,7 +317,7 @@ def test_reflex_stats_summarise_face_sizes_and_rate() -> None:
     stats.record_error()
     summary = stats.summary(now=1.0)
     assert (summary["frames"], summary["fps"], summary["frame_errors"]) == (5, 5.0, 1)
-    assert (summary["face_frames"], summary["face_size_max"], summary["near_frames"]) == (4, 0.4, 2)
+    assert (summary["face_frames"], summary["face_size_max"], summary["near_frames"]) == (4, 0.4, 1)
     assert summary["face_size_p50"] == 0.3
 
 
@@ -395,3 +396,25 @@ def test_a_new_glance_reports_the_face_once() -> None:
     judge = ReflexJudge(session, on_new_face=lambda: arrivals.append(clock.now))
     _see(judge, clock, Sighting(face=FACE_RIGHT), frames=GLANCE_FACE_HITS + 10)
     assert len(arrivals) == 1
+
+
+def test_a_face_at_talking_distance_is_not_close_enough_to_bow() -> None:
+    # Visitors talking to the robot measured 0.28-0.31; bowing at that size made it bow mid-conversation.
+    _, clock, events, judge = _live()
+    _see(judge, clock, Sighting(face=(0.5, 0.5), face_size=0.31), frames=BOW_NEAR_HITS * 4)
+    assert not any(event.get("reflex") == "bow" for event in events)
+
+
+def test_a_face_hovering_near_the_threshold_does_not_rearm_the_bow() -> None:
+    session, clock, events, judge = _live()
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    assert session.effective_input().gesture == "bow"
+    session.set_ai_intent(PilotInput(), 0.0)  # the bow finished
+    clock.now += BOW_COOLDOWN_S
+    hovering = Sighting(face=(0.5, 0.5), face_size=BOW_REARM_FACE_FRACTION + 0.02)
+    _see(judge, clock, hovering, frames=3)
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    assert [event["reflex"] for event in events if event.get("reflex", "").startswith("bow")] == ["bow"]
+    _see(judge, clock, FAR)
+    _see(judge, clock, NEAR, frames=BOW_NEAR_HITS)
+    assert session.effective_input().gesture == "bow"

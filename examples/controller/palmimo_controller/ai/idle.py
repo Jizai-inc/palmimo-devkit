@@ -2,14 +2,15 @@
 
 Without this the robot freezes whenever the model is quiet, which reads as a
 tool waiting for commands rather than a pet. After `IDLE_AFTER_S` with no AI
-intent and no reflex glance, `IdleJudge` picks a small behaviour now and then:
-a slow look around (neck only), a body tilt, a stretch, or a short face.
+intent and no reflex glance, `IdleJudge` shows a short face now and then, and
+very occasionally stretches. Body and neck movement between replies read as
+restless on the robot, so the only head movement left while quiet is the
+reflex glance.
 
 Idle is the lowest priority in `session.PilotSession.effective_input()`: any
 AI intent or reflex glance drops it at once, and ending the AI session (the
 pilot leaving included) drops it with everything else. Idle never walks or
-turns, and its neck targets stay small and short, because holding the neck
-off-center heats the neck servo.
+turns, and never moves the neck.
 
 Runs as one more task in the AI session's task group, like `reflexes.Reflexes`,
 so it writes the session from the same single writer as everything else.
@@ -34,18 +35,17 @@ _LOG = logging.getLogger(__name__)
 IDLE_AFTER_S: float = 4.0
 #: Range of the random pause between the end of one idle behaviour and the next.
 IDLE_PAUSE_S: tuple[float, float] = (4.0, 10.0)
-#: Largest |pitch| and |yaw| an idle look may use, so the neck servo stays cool.
-IDLE_NECK_MAX: float = 0.3
-#: How long one idle look holds before the neck recenters.
-IDLE_LOOK_SECONDS: float = 2.0
-#: How long an idle body tilt plays. The tilt loops until deselected, so this ends it.
-IDLE_TILT_SECONDS: float = 2.5
 #: How long an idle face shows before the neutral face returns.
 IDLE_FACE_SECONDS: float = 1.5
 #: Expressions an idle face picks from: calm ones, since nothing prompted them.
 IDLE_FACES: tuple[str, ...] = ("SMILE", "THINKING")
-#: The behaviours idle picks from. None walks or turns.
-IDLE_BEHAVIOURS: tuple[str, ...] = ("look_around", "body_tilt", "stretch", "face")
+#: The behaviours idle picks from. None walks, turns or moves the neck.
+IDLE_BEHAVIOURS: tuple[str, ...] = ("face", "stretch")
+#: Least time between two idle stretches: a stretch is the one body movement
+#: idle keeps, and only "once in a blue moon".
+STRETCH_MIN_INTERVAL_S: float = 300.0
+#: Chance that a pick, once `STRETCH_MIN_INTERVAL_S` has passed, is a stretch.
+STRETCH_CHANCE: float = 0.1
 #: How often the runner asks the judge whether to act.
 IDLE_PERIOD_S: float = 0.2
 
@@ -61,6 +61,8 @@ class IdleJudge:
         self._telemetry = telemetry
         self._quiet_since: float | None = None
         self._next_at: float | None = None
+        #: When idle last stretched, `None` before the first stretch.
+        self._last_stretch: float | None = None
         #: The behaviour started last and when it was planned to end, to tell
         #: "ran its course" from "cut short" (and by what) in the logs.
         self._running: tuple[str, float, float] | None = None
@@ -86,7 +88,7 @@ class IdleJudge:
             self._next_at = now
         if now < self._next_at:
             return
-        behaviour = self._rng.choice(IDLE_BEHAVIOURS)
+        behaviour = self._pick(now)
         duration = self._play(behaviour, now)
         pause = self._rng.uniform(*IDLE_PAUSE_S)
         self._next_at = now + duration + pause
@@ -128,21 +130,21 @@ class IdleJudge:
         if self._telemetry is not None:
             self._telemetry.event("idle_end", behaviour=behaviour, reason=reason, ran_s=ran_s)
 
+    def _pick(self, now: float) -> str:
+        """A face, or now and then (at most once per `STRETCH_MIN_INTERVAL_S`) a stretch."""
+        stretch_allowed = self._last_stretch is None or now - self._last_stretch >= STRETCH_MIN_INTERVAL_S
+        if stretch_allowed and self._rng.random() < STRETCH_CHANCE:
+            return "stretch"
+        return "face"
+
     def _play(self, behaviour: str, now: float) -> float:
         """Start *behaviour* and return how long it runs. A refused write just skips this turn."""
         params: dict[str, Any] = {}
-        if behaviour == "look_around":
-            pitch = self._rng.uniform(-IDLE_NECK_MAX, IDLE_NECK_MAX)
-            yaw = self._rng.uniform(-IDLE_NECK_MAX, IDLE_NECK_MAX)
-            params = {"pitch": round(pitch, 3), "yaw": round(yaw, 3)}
-            ok = self._session.set_idle(PilotInput(neck_pitch=pitch, neck_yaw=yaw), IDLE_LOOK_SECONDS)
-            duration = IDLE_LOOK_SECONDS
-        elif behaviour == "body_tilt":
-            ok = self._session.set_idle(PilotInput(gesture="body_tilt"), IDLE_TILT_SECONDS)
-            duration = IDLE_TILT_SECONDS
-        elif behaviour == "stretch":
+        if behaviour == "stretch":
             duration = GESTURE_PLAY_SECONDS["stretch"]
             ok = self._session.set_idle(PilotInput(gesture="stretch"), duration)
+            if ok:
+                self._last_stretch = now
         else:
             expression = self._rng.choice(IDLE_FACES)
             params = {"expression": expression}

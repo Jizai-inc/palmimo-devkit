@@ -21,6 +21,7 @@ import pytest
 from palmimo_controller.ai import controller as controller_module
 from palmimo_controller.ai.audio import API_RATE, to_api_rate
 from palmimo_controller.ai.controller import AiController, OpenMic
+from palmimo_controller.ai.frames import SPEECH_QUIET_S
 from palmimo_controller.ai.protocol import (
     AudioAppend,
     ClientEvent,
@@ -115,6 +116,7 @@ class Harness:
         reflexes_factory: Any = None,
         idle_factory: Any = None,
         frame_source: Any = None,
+        now: Any = None,
     ) -> None:
         self.session = PilotSession()
         self.session.acquire_pilot("a")
@@ -142,6 +144,7 @@ class Harness:
             reflexes_factory=reflexes_factory,
             idle_factory=idle_factory,
             frame_source=frame_source,
+            **({"now": now} if now is not None else {}),
         )
 
     @contextlib.contextmanager
@@ -619,3 +622,20 @@ async def test_reflexes_get_a_new_face_hook_only_when_frames_are_on() -> None:
         await h.ai.stop()
     assert calls[0] == {}
     assert callable(calls[1]["on_new_face"])
+
+
+async def test_the_visitor_speaking_counts_as_busy_for_frames() -> None:
+    # A frame that landed mid-sentence made the model answer the picture
+    # ("I can't hear you") instead of what the visitor said.
+    clock = [100.0]
+    h = Harness(frame_source=lambda: b"jpeg", now=lambda: clock[0])
+    await _live(h)
+    assert not h.ai._visitor_busy()
+    h.client.push({"type": "input_audio_buffer.speech_started"})
+    await _until(h.ai._visitor_busy)
+    h.client.push({"type": "input_audio_buffer.speech_stopped"})
+    await _until(lambda: any(event.get("state") == "stopped" for event in h.events))
+    assert h.ai._visitor_busy()
+    clock[0] += SPEECH_QUIET_S
+    assert not h.ai._visitor_busy()
+    await h.ai.stop()

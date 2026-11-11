@@ -35,6 +35,10 @@ _LOG = logging.getLogger(__name__)
 FRAME_SECONDS: float = 10.0
 #: How soon a frame that was skipped because the robot was busy is tried again.
 BUSY_RETRY_S: float = 1.0
+#: How long after the visitor stops speaking a frame still waits. A frame that
+#: lands mid-sentence, or just before the model answers, makes the model answer
+#: the picture instead of what was said (seen on the robot as "I can't hear you").
+SPEECH_QUIET_S: float = 1.5
 
 #: The tool the model calls for a fresh photo.
 SEE_TOOL: dict[str, Any] = {
@@ -128,12 +132,14 @@ class FramePusher:
             if self._busy():
                 await asyncio.sleep(self._busy_retry)
                 continue
-            await self._send(reason)
+            # A nudge that arrived while busy is answered by this frame; clearing
+            # it here keeps it from sending a second frame right after.
+            await self._send("face" if self._nudged.is_set() else reason)
+            self._nudged.clear()
             with contextlib.suppress(TimeoutError):
                 async with asyncio.timeout(self._interval):
                     await self._nudged.wait()
-            reason = "face" if self._nudged.is_set() else "periodic"
-            self._nudged.clear()
+            reason = "periodic"
 
     async def _send(self, reason: str) -> None:
         if await self._frame.push(self._client):
@@ -143,4 +149,4 @@ class FramePusher:
                 self._telemetry.event("frame_push", reason=reason, pushed=self.pushed)
 
 
-__all__ = ["BUSY_RETRY_S", "FRAME_SECONDS", "SEE_TOOL", "VISION_NOTE", "FramePusher", "LiveFrame"]
+__all__ = ["BUSY_RETRY_S", "FRAME_SECONDS", "SEE_TOOL", "SPEECH_QUIET_S", "VISION_NOTE", "FramePusher", "LiveFrame"]

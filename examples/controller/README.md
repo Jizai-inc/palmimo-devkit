@@ -115,10 +115,12 @@ While an AI mode is live, the robot watches its head camera and reacts on
 its own, without telling the model (`ai/reflexes.py`):
 
 - **Wave back** at a visitor who waves (cooldown `WAVE_COOLDOWN_S`, 8 s).
-- **Bow** when a visitor comes close: the largest face is at least
-  `BOW_NEAR_FACE_FRACTION` (30 %) of the frame width for `BOW_NEAR_HITS`
-  frames in a row. It bows once per approach: the next bow needs the face to
-  move back or leave first, and at least `BOW_COOLDOWN_S` (30 s) to pass.
+- **Bow** when a visitor leans in: the largest face is at least
+  `BOW_NEAR_FACE_FRACTION` (38 %) of the frame width for `BOW_NEAR_HITS`
+  frames in a row. Normal talking distance measured 28-31 %, so a visitor
+  just talking is not bowed to. It bows once per approach: the next bow needs
+  the face to shrink below `BOW_REARM_FACE_FRACTION` (28 %) or leave first,
+  and at least `BOW_COOLDOWN_S` (60 s) to pass.
 - **Glance** at a face for a few seconds, then recenter (cooldown 15 s, so
   the neck is not held off-center). The neck moves part of the way toward
   the face at most every `GLANCE_UPDATE_S` (0.3 s): a camera frame is
@@ -143,9 +145,11 @@ replaces the last, because images are billed as input tokens and the
 Realtime API re-bills the whole conversation on every turn.
 
 - **Every `FRAME_SECONDS` (10 s)** a fresh frame replaces the old one while
-  the robot is quiet (never mid-reply).
-- **When a glance starts at a face**, a frame goes at once, so the model
-  knows who arrived before they speak. A frame never makes the model talk.
+  everyone is quiet: never while the robot replies, and never while the
+  visitor speaks or within `SPEECH_QUIET_S` (1.5 s) after. A frame that landed
+  mid-sentence made the model answer the picture instead of what was said.
+- **When a glance starts at a face**, a frame goes as soon as everyone is
+  quiet, so the model knows who arrived. A frame never makes the model talk.
 - **The `see` tool** lets the model ask for a fresh photo ("what am I
   holding?"). The photo follows the tool result, and the model always gets
   to answer what it saw.
@@ -159,10 +163,13 @@ same stream as the viewer page. **Frames of visitors are sent to OpenAI**;
 ### Idle
 
 Between replies the robot does not stand dead still (`ai/idle.py`). After
-`IDLE_AFTER_S` (4 s) with no AI motion and no reflex glance, it picks a small
-behaviour now and then, with a random 4-10 s pause between them: a slow look
-around (neck only, at most 0.3 of the neck's travel, for 2 s), a short body
-tilt, a stretch, or a brief smile or thinking face. Idle never walks or turns.
+`IDLE_AFTER_S` (4 s) with no AI motion and no reflex glance, it shows a brief
+smile or thinking face now and then, with a random 4-10 s pause between them.
+Body and neck movement between replies read as restless, so idle never moves
+the neck, walks or turns; the only body movement it keeps is a stretch, at
+most once every `STRETCH_MIN_INTERVAL_S` (5 minutes) and then only on a
+`STRETCH_CHANCE` (10 %) pick. Head movement while quiet comes from the reflex
+glance alone.
 
 Idle is the lowest priority: any AI motion or face, or a reflex, cancels it at
 once, and it never replaces a face the model chose. It ends with the AI
@@ -187,7 +194,10 @@ back the shipped prompt. Edits are saved outside the package, in
 `$XDG_DATA_HOME/palmimo/controller/prompts/<mode>.md` (by default
 `~/.local/share/palmimo/controller/prompts/`), so an app update keeps them.
 The shipped files in `palmimo_controller/modes/` are never changed. Only the
-three modes can be edited; the mode list itself is fixed.
+three modes can be edited; the mode list itself is fixed. A saved edit
+replaces the shipped prompt entirely, so an app update that improves a
+shipped prompt (for example how often the robot gestures) does not reach a
+mode with a saved edit until that edit is reset.
 
 ### Choosing the voice
 

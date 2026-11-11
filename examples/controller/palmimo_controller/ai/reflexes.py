@@ -68,12 +68,16 @@ GLANCE_MAX: float = 0.6
 GLANCE_YAW_SIGN: int = 1
 GLANCE_PITCH_SIGN: int = 1
 #: Largest face's width, as a fraction of the frame width, at which a visitor
-#: counts as "close": roughly a face leaning in over the robot.
-BOW_NEAR_FACE_FRACTION: float = 0.3
+#: counts as "close": a face leaning in over the robot. At 0.3 a visitor at
+#: normal talking distance (measured 0.28-0.31) counted as close.
+BOW_NEAR_FACE_FRACTION: float = 0.38
+#: Face width below which a bow re-arms. Kept well under the bow threshold, so
+#: a face hovering near it is not bowed to again and again.
+BOW_REARM_FACE_FRACTION: float = 0.28
 #: Consecutive "close" frames before a bow; filters a face passing by the lens.
 BOW_NEAR_HITS: int = 5
 #: Seconds after a bow before another can start, so a crowd does not keep it bowing.
-BOW_COOLDOWN_S: float = 30.0
+BOW_COOLDOWN_S: float = 60.0
 #: How often `Reflexes` logs what the camera saw (`reflex_stats`), for tuning thresholds.
 REFLEX_STATS_INTERVAL_S: float = 30.0
 #: Minimum gap between two "detector failed" log lines.
@@ -157,10 +161,12 @@ class ReflexJudge:
         wave, not a bow, on that frame.
         """
         near = sighting.face_size is not None and sighting.face_size >= BOW_NEAR_FACE_FRACTION
+        backed_off = sighting.face_size is None or sighting.face_size < BOW_REARM_FACE_FRACTION
         if near:
             self._near_hits += 1
         else:
             self._near_hits = 0
+        if backed_off:
             if not self._bow_armed:
                 # Logged because a flickering detector re-arms here too, which is
                 # what lets a visitor who never left be bowed to again.

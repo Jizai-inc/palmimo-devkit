@@ -95,3 +95,27 @@ async def test_a_nudge_sends_a_frame_without_waiting_for_the_cadence() -> None:
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
     assert [event["reason"] for event in events] == ["start", "face"]
+
+
+async def test_a_nudge_while_busy_sends_exactly_one_frame_once_quiet() -> None:
+    # A periodic frame and a face frame used to go out a few milliseconds apart.
+    client = FakeClient()
+    events: list[dict[str, Any]] = []
+    busy = True
+    pusher = FramePusher(
+        LiveFrame(lambda: b"jpeg"),
+        client,
+        busy=lambda: busy,
+        telemetry=Telemetry(emit=lambda line: events.append(json.loads(line))),
+        interval=60.0,
+        busy_retry=0.005,
+    )
+    task = asyncio.create_task(pusher.run())
+    await asyncio.sleep(0.01)
+    pusher.nudge()
+    await asyncio.sleep(0.01)
+    busy = False
+    await asyncio.sleep(0.03)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert [event["reason"] for event in events] == ["face"]

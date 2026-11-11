@@ -33,7 +33,7 @@ from ..voices import DEFAULT_VOICE
 from . import protocol
 from .audio import API_RATE, MicLevelLike, MicrophoneFeed, MicStreamLike
 from .client import RealtimeClient, RealtimeClientLike
-from .frames import SEE_TOOL, VISION_NOTE, FramePusher, LiveFrame
+from .frames import SEE_TOOL, SPEECH_QUIET_S, VISION_NOTE, FramePusher, LiveFrame
 from .protocol import ItemCreate, ResponseCreate, SessionUpdate
 from .tools import TOOL_DEFINITIONS, run_tool
 
@@ -167,6 +167,10 @@ class AiController:
         self._live_frame: LiveFrame | None = None
         #: Whether a response is being generated, so a frame waits for the robot to be quiet.
         self._responding = False
+        #: Whether the visitor is speaking, and when they last stopped, so a
+        #: frame never lands in the middle of what they say.
+        self._visitor_speaking = False
+        self._visitor_stopped_at: float | None = None
         self._task: asyncio.Task[None] | None = None
         # Per-response bookkeeping for the `ai_response` debug event only;
         # nothing here changes how a turn is handled.
@@ -259,13 +263,15 @@ class AiController:
                 speaker = playback
                 hold = None if mic.echo_cancelled else (lambda: speaker.speaking(tail=_ECHO_TAIL_S))
                 self._responding = False
+                self._visitor_speaking = False
+                self._visitor_stopped_at = None
                 pusher: FramePusher | None = None
                 if self._frame_source is not None:
                     self._live_frame = LiveFrame(self._frame_source)
                     pusher = FramePusher(
                         self._live_frame,
                         client,
-                        busy=lambda: self._responding or speaker.speaking(),
+                        busy=lambda: self._responding or speaker.speaking() or self._visitor_busy(),
                         telemetry=self._telemetry,
                     )
                 async with asyncio.TaskGroup() as group:
@@ -348,11 +354,14 @@ class AiController:
                 self._response_audio_bytes += len(pcm)
                 playback.write(pcm)
             case protocol.SpeechStarted():
+                self._visitor_speaking = True
                 cut_off = playback.speaking()
                 # The visitor started talking: stop speaking over them.
                 playback.interrupt()
                 self._telemetry.event("visitor_speech", state="started", interrupted_robot=cut_off)
             case protocol.SpeechStopped():
+                self._visitor_speaking = False
+                self._visitor_stopped_at = self._now()
                 self._telemetry.event("visitor_speech", state="stopped")
             case protocol.ResponseCreated():
                 self._responding = True
@@ -382,6 +391,13 @@ class AiController:
                     await client.send(ResponseCreate())
             case protocol.ErrorEvent():
                 self._raise_if_fatal(event.error)
+
+    def _visitor_busy(self) -> bool:
+        """Whether the visitor is speaking, or stopped less than `SPEECH_QUIET_S` ago."""
+        if self._visitor_speaking:
+            return True
+        stopped = self._visitor_stopped_at
+        return stopped is not None and self._now() - stopped < SPEECH_QUIET_S
 
     async def _see(self, client: RealtimeClientLike, call_id: str) -> bool:
         """Answer a `see` call: the result, then the photo as its own item, since a result is text only.

@@ -28,7 +28,7 @@ flowchart LR
         Router["_route: audio to Playback,<br/>tool calls to run_tool"]
         Tools["ai/tools.py run_tool<br/>walk, turn, gesture, look,<br/>set_face, stop"]
         Reflexes["ai/reflexes.py Reflexes<br/>wave back, bow, glance"]
-        Idle["ai/idle.py Idle<br/>look around, tilt, stretch, face"]
+        Idle["ai/idle.py Idle<br/>faces, rare stretch"]
         Frames["ai/frames.py FramePusher<br/>one live frame: every 10 s,<br/>on a new face, on see"]
     end
 

@@ -1,14 +1,15 @@
 """Behavior of `palmimo_controller.ai.idle`: small idle behaviours between AI replies, on a fake clock."""
 
 import asyncio
+import itertools
 import json
 import random
 from typing import Any
 
 from palmimo_controller.ai.idle import (
     IDLE_AFTER_S,
-    IDLE_NECK_MAX,
     IDLE_PAUSE_S,
+    STRETCH_MIN_INTERVAL_S,
     Idle,
     IdleJudge,
 )
@@ -101,16 +102,32 @@ def test_idle_does_not_start_during_a_glance() -> None:
     assert events == []
 
 
-def test_idle_never_walks_or_turns_and_keeps_the_neck_small() -> None:
+def test_idle_never_walks_turns_or_moves_the_neck() -> None:
+    # Idle movement read as restless on the robot: only faces and a rare stretch remain.
     session, clock, events, judge = _live(seed=42)
     clock.now = AI_START_NOD_SECONDS
-    for _ in range(round(600 / STEP)):
+    for _ in range(round(1200 / STEP)):
         judge.update(clock.now)
         effective = session.effective_input()
         assert effective.move is None and effective.rotate == 0
-        assert abs(effective.neck_pitch) <= IDLE_NECK_MAX and abs(effective.neck_yaw) <= IDLE_NECK_MAX
+        assert effective.neck_pitch == 0 and effective.neck_yaw == 0
         clock.now += STEP
-    assert {event["behaviour"] for event in events} == {"look_around", "body_tilt", "stretch", "face"}
+    assert {event["behaviour"] for event in events if event["type"] == "idle"} == {"face", "stretch"}
+
+
+def test_idle_stretches_at_most_once_per_interval() -> None:
+    for seed in range(10):
+        _, clock, events, judge = _live(seed)
+        clock.now = AI_START_NOD_SECONDS
+        stretches: list[float] = []
+        for _ in range(round(1800 / STEP)):
+            seen = len(events)
+            judge.update(clock.now)
+            if any(event.get("behaviour") == "stretch" and event["type"] == "idle" for event in events[seen:]):
+                stretches.append(clock.now)
+            clock.now += STEP
+        assert len(stretches) <= 1800 / STRETCH_MIN_INTERVAL_S + 1
+        assert all(later - earlier >= STRETCH_MIN_INTERVAL_S for earlier, later in itertools.pairwise(stretches))
 
 
 def test_idle_never_overrides_an_ai_face() -> None:
@@ -159,9 +176,7 @@ def test_idle_event_carries_its_parameters() -> None:
     _, clock, events, judge = _live(seed=0)
     clock.now = AI_START_NOD_SECONDS
     _run(judge, clock, 120)
-    looks = [event for event in events if event.get("behaviour") == "look_around" and event["type"] == "idle"]
     faces = [event for event in events if event.get("behaviour") == "face" and event["type"] == "idle"]
-    assert looks and all(abs(event["pitch"]) <= IDLE_NECK_MAX for event in looks)
     assert faces and all(event["expression"] in ("SMILE", "THINKING") for event in faces)
     assert all("duration_s" in event for event in events if event["type"] == "idle")
 
