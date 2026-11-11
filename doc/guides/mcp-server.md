@@ -125,7 +125,7 @@ start. The server states this in the `instructions` it returns from
 `initialize`, so a client sees it up front. Without a servo bus (`--no-servo`,
 or a bus that could not be reached), the movement tools still compute the
 motion and succeed, and their result ends with
-`(no servo bus attached; nothing moved)`.
+`(no servo bus connected; nothing moved)`.
 
 ## Tool-Call Logging
 

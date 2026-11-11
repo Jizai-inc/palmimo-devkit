@@ -270,12 +270,12 @@ def _ran(verb: str, seconds: float) -> ToolResult:
     return ToolResult(text=f"{verb} for {seconds}s")
 
 
-_NO_SERVO_NOTE = "no servo bus attached; nothing moved"
+_NO_SERVO_NOTE = "no servo bus connected; nothing moved"
 
 
 def _servo_observation(robot: PalmimoLike, text: str) -> ToolResult:
     """*text*, noting that nothing moved when the robot has no servo bus."""
-    return ToolResult(text=text if robot.driver is not None else f"{text} ({_NO_SERVO_NOTE})")
+    return ToolResult(text=text if robot.is_connected else f"{text} ({_NO_SERVO_NOTE})")
 
 
 # ======================================================================
@@ -415,7 +415,7 @@ class Expressive(Tool):
             say_note = self._finish_say(handle)
         if say_note is not None:
             notes.append(say_note)
-        if robot.driver is None:
+        if not robot.is_connected:
             notes.append(_NO_SERVO_NOTE)
         if not notes:
             return result

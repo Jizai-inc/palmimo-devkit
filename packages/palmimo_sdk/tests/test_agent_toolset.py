@@ -19,7 +19,7 @@ class FakeRobot:
 
     def __init__(self, *, run_raises: BaseException | None = None) -> None:
         self.calls: list[tuple[Any, ...]] = []
-        self.driver = object()
+        self.is_connected = True
         self.display = None
         self.speaker = None
         self.camera = None
