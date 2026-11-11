@@ -12,13 +12,13 @@ thread reads it and talks to `Palmimo`.
 ```mermaid
 flowchart LR
     subgraph Browser["Browser (phone or laptop, same LAN)"]
-        Pilot["/pilot page<br/>d-pad, neck, gestures, AI mode button"]
+        Pilot["/pilot page<br/>d-pad, neck, gestures, AI on/off"]
         Viewer["/ viewer page<br/>video, status, prompt/voice/audio settings"]
     end
 
     subgraph Server["server.py (FastAPI, asyncio event loop)"]
         WS["/api/control WebSocket<br/>pilot frames in, 2 Hz status out"]
-        REST["/api/prompts, /api/voice,<br/>/api/audio, /api/modes"]
+        REST["/api/prompts, /api/voice, /api/voice/preview,<br/>/api/mode, /api/audio, /api/modes"]
         MJPEG["/video.mjpeg"]
     end
 

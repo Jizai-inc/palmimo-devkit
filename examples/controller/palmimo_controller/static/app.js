@@ -351,22 +351,26 @@
 
   // ---- AI mode switching ----
   //
-  // The server owns the mode; this page only asks for a switch and renders
-  // whatever the next status broadcast says. `switchPending` blocks a second
-  // tap until that broadcast arrives, and the server ignores one anyway.
-  // A tapped AI mode shows its starting state at once rather than after the
-  // next broadcast, so the pilot sees the tap land.
+  // The homepage picks which AI mode to run; this page only turns it on and
+  // off. The server owns the mode and names the chosen one in every status
+  // broadcast, so the AI button always says what it will start. Starting
+  // asks first, because AI takes the controls away from the pilot.
+  // `switchPending` blocks a second tap until the next broadcast shows the
+  // switch, and the server ignores one anyway. A confirmed start shows its
+  // starting state at once, so the pilot sees the tap land.
 
   const modeIndicator = document.getElementById("mode-indicator");
   const aiButton = document.getElementById("ai-button");
+  const aiButtonLabel = document.getElementById("ai-button-label");
   const teleopButton = document.getElementById("teleop-button");
-  const modePicker = document.getElementById("mode-picker");
-  const modeList = document.getElementById("mode-list");
-  const modeCancel = document.getElementById("mode-cancel");
+  const aiConfirm = document.getElementById("ai-confirm");
+  const aiConfirmMode = document.getElementById("ai-confirm-mode");
+  const aiConfirmStart = document.getElementById("ai-confirm-start");
+  const aiConfirmCancel = document.getElementById("ai-confirm-cancel");
   const noticeBanner = document.getElementById("notice-banner");
-  const modeLabels = {};
   let aiAvailable = false;
   let currentMode = "teleop";
+  let selectedLabel = "";
   let switchPending = false;
   let pendingTimer = null;
   let liveFlashTimer = null;
@@ -397,9 +401,8 @@
   function renderMode(mode, name) {
     const inTeleop = mode === "teleop";
     const starting = mode === "ai_starting";
-    // In teleop the AI button stands in for the label, so the label hides.
     if (inTeleop) {
-      modeIndicator.textContent = "";
+      modeIndicator.textContent = "手動";
     } else if (starting) {
       modeIndicator.textContent = "AI起動中：" + name;
     } else {
@@ -407,10 +410,14 @@
     }
     document.body.classList.toggle("ai-active", !inTeleop);
     document.body.classList.toggle("ai-starting", starting);
-    modeIndicator.hidden = inTeleop;
     aiButton.hidden = !inTeleop;
     teleopButton.hidden = inTeleop;
-    if (!inTeleop) modePicker.hidden = true;
+    if (!inTeleop) aiConfirm.hidden = true;
+  }
+
+  function renderSelected(label) {
+    selectedLabel = label || "";
+    aiButtonLabel.textContent = selectedLabel ? "AI：" + selectedLabel : "AI";
   }
 
   function flashLive() {
@@ -421,49 +428,34 @@
     }, LIVE_FLASH_MS);
   }
 
-  function renderModeList(modes) {
-    modeList.replaceChildren();
-    modes.forEach(function (mode) {
-      modeLabels[mode.id] = mode.label;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = mode.label;
-      button.addEventListener("click", function () {
-        modePicker.hidden = true;
-        if (switchPending || currentMode !== "teleop") return;
-        sendAi({ ai: "start", mode: mode.id });
-        if (switchPending) {
-          noticeBanner.hidden = true;
-          renderMode("ai_starting", mode.label);
-        }
-      });
-      modeList.appendChild(button);
-    });
-  }
-
-  fetch("/api/modes")
-    .then(function (response) {
-      return response.json();
-    })
-    .then(function (body) {
-      aiAvailable = body.ai_available;
-      renderModeList(body.modes);
-    })
-    .catch(function () {
-      // Mode list unavailable: the AI button stays inert, teleop is unaffected.
-    });
-
   aiButton.addEventListener("click", function () {
+    // Before the first status the key state and the chosen mode are unknown;
+    // judging then would claim a missing key that is not missing.
+    if (lastStatus === null) return;
     if (switchPending || currentMode !== "teleop") return;
     if (!aiAvailable) {
       noticeBanner.textContent = "AIは使用できません：ポータルでAPIキーを設定してください";
       noticeBanner.hidden = false;
       return;
     }
-    modePicker.hidden = false;
+    aiConfirmMode.textContent = selectedLabel;
+    aiConfirm.hidden = false;
+    aiConfirmStart.focus();
   });
-  modeCancel.addEventListener("click", function () {
-    modePicker.hidden = true;
+  aiConfirmCancel.addEventListener("click", function () {
+    aiConfirm.hidden = true;
+  });
+  aiConfirmStart.addEventListener("click", function () {
+    aiConfirm.hidden = true;
+    if (switchPending || currentMode !== "teleop") return;
+    // The label shown is the one confirmed; the server starts its saved
+    // choice, which is the same unless the homepage changed it this instant.
+    const label = selectedLabel;
+    sendAi({ ai: "start" });
+    if (switchPending) {
+      noticeBanner.hidden = true;
+      renderMode("ai_starting", label);
+    }
   });
   teleopButton.addEventListener("click", function () {
     sendAi({ ai: "stop" });
@@ -475,10 +467,11 @@
     if (status.mode !== currentMode) setPending(false);
     currentMode = status.mode;
     aiAvailable = status.ai_available;
+    renderSelected(status.selected_mode_label);
     // Keep the optimistic starting state until the server's mode moves.
     if (switchPending) return;
     const inTeleop = status.mode === "teleop";
-    renderMode(status.mode, modeLabels[status.ai_mode] || status.ai_mode || "");
+    renderMode(status.mode, status.ai_mode_label || "");
     if (status.mode === "ai" && previousMode !== "ai") flashLive();
     if (status.notice && inTeleop) {
       noticeBanner.textContent = status.notice;

@@ -39,12 +39,12 @@ from .audio_levels import (
     default_audio_levels_path,
 )
 from .control import ALLOWED_GESTURES, ALLOWED_MOVES, ALLOWED_ROTATES, clamp_neck
-from .modes import EditablePrompts
+from .modes import EditablePrompts, ModeSetting, default_mode_path
 from .robot_loop import RobotLoop
 from .session import PilotSession
 from .telemetry import Telemetry
 from .video import MJPEG_BOUNDARY, VideoStream, mjpeg_generator
-from .voices import DEFAULT_VOICE, VOICES, VoiceSetting, default_voice_path
+from .voices import DEFAULT_VOICE, VOICES, VoicePreview, VoiceSetting, default_voice_path
 
 
 _LOG = logging.getLogger(__name__)
@@ -229,15 +229,25 @@ def _origin_is_allowed(websocket: WebSocket) -> bool:
     return urlsplit(origin).netloc == websocket.headers.get("host", "")
 
 
-async def _handle_ai_message(message: dict[str, Any], ai: AiController, client_id: int) -> None:
-    """Act on a pilot's `{"ai": "start", "mode": ...}` or `{"ai": "stop"}` message; drop anything else."""
+async def _handle_ai_message(
+    message: dict[str, Any],
+    ai: AiController,
+    client_id: int,
+    mode_setting: ModeSetting | None = None,
+    preview: VoicePreview | None = None,
+) -> None:
+    """Act on a pilot's `{"ai": "start"}` or `{"ai": "stop"}` message; drop anything else.
+
+    Start runs the mode chosen on the homepage (*mode_setting*), and cuts off
+    any voice preview first, since the AI mode needs the speaker.
+    """
     action = message.get("ai")
     if action == "stop":
         await ai.stop(reason="user")
-    elif action == "start":
-        mode = message.get("mode")
-        if isinstance(mode, str):
-            await ai.start(client_id, mode)
+    elif action == "start" and mode_setting is not None:
+        if preview is not None:
+            await preview.stop()
+        await ai.start(client_id, mode_setting.get())
 
 
 async def _control_connection(
@@ -246,6 +256,8 @@ async def _control_connection(
     registry: _ConnectionRegistry,
     client_id: int,
     ai: AiController | None = None,
+    mode_setting: ModeSetting | None = None,
+    preview: VoicePreview | None = None,
 ) -> None:
     """Run one accepted `/api/control` WebSocket's role handshake and read loop.
 
@@ -285,7 +297,7 @@ async def _control_connection(
                 continue
             if isinstance(message, dict) and "ai" in message:
                 if ai is not None:
-                    await _handle_ai_message(message, ai, client_id)
+                    await _handle_ai_message(message, ai, client_id, mode_setting, preview)
                 continue
             if isinstance(message, dict) and "play" in message:
                 # `{"play": ...}` is a one-off gesture-playback request,
@@ -345,9 +357,15 @@ class _PromptBody(BaseModel):
 
 
 class _VoiceBody(BaseModel):
-    """`PUT /api/voice` body."""
+    """`PUT /api/voice` and `POST /api/voice/preview` body."""
 
     voice: str
+
+
+class _ModeBody(BaseModel):
+    """`PUT /api/mode` body."""
+
+    mode: str
 
 
 class _AudioBody(BaseModel):
@@ -369,6 +387,8 @@ def create_app(
     *,
     audio_levels: AudioLevels | None = None,
     mic_level: MicLevel | None = None,
+    mode_setting: ModeSetting | None = None,
+    voice_preview: VoicePreview | None = None,
 ) -> FastAPI:
     """Assemble the FastAPI app around an already-constructed robot loop and video stream.
 
@@ -386,6 +406,10 @@ def create_app(
             `None` uses the ones saved under the data home (`audio_levels.default_audio_levels_path`).
         mic_level (MicLevel | None): The running AI mode's mic loudness, sent to the homepage meter;
             `None` sends no meter updates.
+        mode_setting (ModeSetting | None): The AI mode the homepage picks and the pilot page's AI
+            button starts; `None` uses the one saved under the data home (`modes.default_mode_path`).
+        voice_preview (VoicePreview | None): Plays voice samples on the robot's speaker;
+            `None` leaves `POST /api/voice/preview` unavailable (503).
 
     Returns:
         FastAPI: The assembled app, ready for `uvicorn.run`.
@@ -393,6 +417,7 @@ def create_app(
     registry = _ConnectionRegistry()
     voice_setting = voices if voices is not None else VoiceSetting(default_voice_path())
     levels = audio_levels if audio_levels is not None else AudioLevels(default_audio_levels_path())
+    chosen_mode = mode_setting if mode_setting is not None else ModeSetting(default_mode_path(), prompts)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -401,7 +426,9 @@ def create_app(
         robot_loop.start()
         video.start()
         telemetry.event("session_start", servo_attached=robot.driver is not None, ai_available=ai.available)
-        broadcast_task = asyncio.create_task(_broadcast_loop(robot, session, robot_loop, video, registry, ai))
+        broadcast_task = asyncio.create_task(
+            _broadcast_loop(robot, session, robot_loop, video, registry, ai, chosen_mode)
+        )
         level_task = asyncio.create_task(_mic_level_loop(mic_level, registry, ai)) if mic_level is not None else None
         try:
             yield
@@ -424,6 +451,9 @@ def create_app(
                 # AI first: its audio must stop before the robot parks.
                 with contextlib.suppress(Exception):
                     await ai.stop(reason="shutdown")
+                if voice_preview is not None:
+                    with contextlib.suppress(Exception):
+                        await voice_preview.stop()
                 telemetry.event("session_end")
                 video.stop()
                 if robot_loop.shutdown():
@@ -519,6 +549,46 @@ def create_app(
             raise HTTPException(status_code=500, detail="could not write the voice setting") from exc
         return _voice_entry()
 
+    @app.post("/api/voice/preview")
+    async def preview_voice(body: _VoiceBody) -> dict[str, Any]:
+        if body.voice not in VOICES:
+            raise HTTPException(status_code=422, detail="unknown voice")
+        if voice_preview is None:
+            raise HTTPException(status_code=503, detail="voice preview is not available")
+        # The running AI mode owns the speaker.
+        if ai.running:
+            raise HTTPException(status_code=409, detail="an AI mode is using the speaker")
+        try:
+            seconds = await voice_preview.play(body.voice)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=503, detail="no sample recorded for this voice") from exc
+        except (ValueError, OSError) as exc:
+            _LOG.exception("could not play the sample for voice %r", body.voice)
+            raise HTTPException(status_code=500, detail="could not play the sample") from exc
+        return {"voice": body.voice, "seconds": round(seconds, 2)}
+
+    def _mode_entry() -> dict[str, Any]:
+        return {
+            "mode": chosen_mode.get(),
+            "default_mode": chosen_mode.default(),
+            "modes": [{"id": mode.id, "label": mode.label} for mode in prompts.modes()],
+        }
+
+    @app.get("/api/mode")
+    async def get_mode() -> dict[str, Any]:
+        return _mode_entry()
+
+    @app.put("/api/mode")
+    async def save_mode(body: _ModeBody) -> dict[str, Any]:
+        try:
+            chosen_mode.save(body.mode)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            _LOG.exception("could not save the AI mode")
+            raise HTTPException(status_code=500, detail="could not write the mode setting") from exc
+        return _mode_entry()
+
     def _audio_entry() -> dict[str, Any]:
         current = levels.get()
         return {
@@ -560,7 +630,7 @@ def create_app(
             await websocket.close(code=1008)
             return
         await websocket.accept()
-        await _control_connection(websocket, session, registry, id(websocket), ai)
+        await _control_connection(websocket, session, registry, id(websocket), ai, chosen_mode, voice_preview)
 
     return app
 
@@ -598,6 +668,7 @@ async def _broadcast_loop(
     video: VideoStream,
     registry: _ConnectionRegistry,
     ai: AiController | None = None,
+    mode_setting: ModeSetting | None = None,
 ) -> None:
     """Push the `@2Hz` status payload to every connected client until cancelled.
 
@@ -631,6 +702,15 @@ async def _broadcast_loop(
                     "ai_mode": status.ai_mode,
                     "notice": status.notice,
                     "ai_available": ai is not None and ai.available,
+                    # The homepage's choice, so the pilot page's AI button names
+                    # the mode it will start.
+                    "selected_mode": mode_setting.get() if mode_setting is not None else None,
+                    "selected_mode_label": mode_setting.label() if mode_setting is not None else None,
+                    "ai_mode_label": (
+                        mode_setting.label(status.ai_mode)
+                        if mode_setting is not None and status.ai_mode is not None
+                        else status.ai_mode
+                    ),
                 }
             )
         except Exception:

@@ -4,16 +4,19 @@ no real servo bus, no real camera, no real time."""
 
 import asyncio
 import time
+import wave
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
+from palmimo_controller.ai.audio import API_RATE
 from palmimo_controller.ai.controller import AiController
 from palmimo_controller.audio_levels import MicLevel
-from palmimo_controller.modes import MAX_PROMPT_CHARS, EditablePrompts, default_prompt_dir
+from palmimo_controller.modes import MAX_PROMPT_CHARS, EditablePrompts, ModeSetting, default_prompt_dir
 from palmimo_controller.robot_loop import RobotLoop
 from palmimo_controller.server import (
     _ConnectionRegistry,
@@ -26,6 +29,7 @@ from palmimo_controller.server import (
 from palmimo_controller.session import PilotSession
 from palmimo_controller.telemetry import Telemetry
 from palmimo_controller.video import VideoStream
+from palmimo_controller.voices import VoicePreview
 from palmimo_sdk import Palmimo, ServoDriver
 
 
@@ -551,7 +555,7 @@ def test_ai_start_without_a_key_keeps_teleop_and_explains_why(
     with client.websocket_connect("/api/control") as ws:
         ws.send_json({"role": "pilot"})
         ws.receive_json()
-        ws.send_json({"ai": "start", "mode": "default"})
+        ws.send_json({"ai": "start"})
         assert _wait_for(lambda: session.status().notice is not None)
         assert session.mode == "teleop"
         status = ws.receive_json()
@@ -563,7 +567,7 @@ def test_ai_messages_from_a_viewer_are_ignored(client_and_session: tuple[TestCli
     with client.websocket_connect("/api/control") as ws:
         ws.send_json({"role": "viewer"})
         ws.receive_json()
-        ws.send_json({"ai": "start", "mode": "default"})
+        ws.send_json({"ai": "start"})
         ws.receive_json()
         assert session.status().notice is None
 
@@ -691,3 +695,138 @@ async def test_mic_level_is_sent_only_while_an_ai_mode_has_the_mic_open(
         assert registry.sent[0] == {"mic_level": 0.42}
     else:
         assert registry.sent == []
+
+
+# ---- Mode chosen on the homepage, voice preview ----
+
+
+class _FakePlayback:
+    def __init__(self) -> None:
+        self.written = bytearray()
+        self.closed = False
+
+    def write(self, pcm: bytes) -> None:
+        self.written.extend(pcm)
+
+    def interrupt(self) -> None:
+        pass
+
+    def speaking(self, *, tail: float = 0.0) -> bool:
+        return False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _write_sample(directory: Path, voice: str, frames: int = 2400) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(directory / f"{voice}.wav"), "wb") as clip:
+        clip.setnchannels(1)
+        clip.setsampwidth(2)
+        clip.setframerate(API_RATE)
+        clip.writeframes(b"\x00\x01" * frames)
+
+
+@pytest.fixture
+def homepage_app(tmp_path: Path) -> Iterator[tuple[TestClient, list[str], list[_FakePlayback], AiController]]:
+    """An app with a mode setting, a voice preview over fake playback, and captured telemetry."""
+    robot = Palmimo(driver=None)
+    session = PilotSession()
+    robot_loop = RobotLoop(robot, session, fps=30)
+    video = VideoStream(None)
+    lines: list[str] = []
+    telemetry = Telemetry(emit=lines.append)
+    prompts = EditablePrompts(tmp_path / "prompts")
+    ai = AiController(
+        session, prompts, api_key=None, telemetry=telemetry, mic_factory=_no_mic, playback_factory=_no_playback
+    )
+    _write_sample(tmp_path / "samples", "marin")
+    playbacks: list[_FakePlayback] = []
+
+    def factory() -> _FakePlayback:
+        playbacks.append(_FakePlayback())
+        return playbacks[-1]
+
+    app = create_app(
+        robot,
+        session,
+        robot_loop,
+        video,
+        ai,
+        prompts,
+        telemetry,
+        mode_setting=ModeSetting(tmp_path / "mode.txt", prompts),
+        voice_preview=VoicePreview(factory, sample_dir=tmp_path / "samples", poll_s=0.01),
+    )
+    with TestClient(app) as test_client:
+        yield test_client, lines, playbacks, ai
+
+
+def test_mode_endpoint_lists_presets_and_saves_the_choice(homepage_app: Any) -> None:
+    client = homepage_app[0]
+    body = client.get("/api/mode").json()
+    assert (body["mode"], body["default_mode"]) == ("default", "default")
+    assert [mode["id"] for mode in body["modes"]] == ["default", "kansai", "custom"]
+    saved = client.put("/api/mode", json={"mode": "kansai"})
+    assert (saved.status_code, saved.json()["mode"]) == (200, "kansai")
+    assert client.get("/api/mode").json()["mode"] == "kansai"
+
+
+def test_mode_endpoint_rejects_an_unknown_mode(homepage_app: Any) -> None:
+    client = homepage_app[0]
+    assert client.put("/api/mode", json={"mode": "../evil"}).status_code == 422
+    assert client.get("/api/mode").json()["mode"] == "default"
+
+
+def test_ai_start_runs_the_mode_chosen_on_the_homepage(homepage_app: Any) -> None:
+    # Without this, the pilot page's AI button could start a mode other than the one picked.
+    client, lines = homepage_app[0], homepage_app[1]
+    client.put("/api/mode", json={"mode": "kansai"})
+    with client.websocket_connect("/api/control") as ws:
+        ws.send_json({"role": "pilot"})
+        ws.receive_json()
+        ws.send_json({"ai": "start"})
+        assert _wait_for(lambda: any('"to_mode": "kansai"' in line for line in lines))
+
+
+def test_status_broadcast_names_the_chosen_mode(homepage_app: Any) -> None:
+    client = homepage_app[0]
+    client.put("/api/mode", json={"mode": "kansai"})
+    with client.websocket_connect("/api/control") as ws:
+        ws.send_json({"role": "viewer"})
+        ws.receive_json()
+        status = ws.receive_json()
+    assert (status["selected_mode"], status["selected_mode_label"]) == ("kansai", "関西弁")
+    assert status["ai_mode_label"] is None
+
+
+def test_voice_preview_plays_the_sample_on_the_speaker(homepage_app: Any) -> None:
+    client, playbacks = homepage_app[0], homepage_app[2]
+    response = client.post("/api/voice/preview", json={"voice": "marin"})
+    assert response.status_code == 200
+    assert response.json() == {"voice": "marin", "seconds": 0.1}
+    assert bytes(playbacks[0].written) == b"\x00\x01" * 2400
+    assert _wait_for(lambda: playbacks[0].closed)
+
+
+def test_voice_preview_rejects_an_unknown_voice(homepage_app: Any) -> None:
+    assert homepage_app[0].post("/api/voice/preview", json={"voice": "nobody"}).status_code == 422
+
+
+def test_voice_preview_reports_a_missing_sample(homepage_app: Any) -> None:
+    client, playbacks = homepage_app[0], homepage_app[2]
+    assert client.post("/api/voice/preview", json={"voice": "coral"}).status_code == 503
+    assert playbacks == []
+
+
+def test_voice_preview_is_refused_while_an_ai_mode_runs(homepage_app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Without this, a preview would talk over the AI on the same speaker.
+    client, playbacks, ai = homepage_app[0], homepage_app[2], homepage_app[3]
+    monkeypatch.setattr(type(ai), "running", property(lambda _self: True))
+    response = client.post("/api/voice/preview", json={"voice": "marin"})
+    assert response.status_code == 409
+    assert playbacks == []
+
+
+def test_voice_preview_is_unavailable_without_a_player(client: TestClient) -> None:
+    assert client.post("/api/voice/preview", json={"voice": "marin"}).status_code == 503

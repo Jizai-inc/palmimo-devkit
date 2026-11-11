@@ -4,7 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from palmimo_controller.modes import MAX_PROMPT_CHARS, PRESET_MODES, BundledPrompts, EditablePrompts, default_prompt_dir
+from palmimo_controller.modes import (
+    MAX_PROMPT_CHARS,
+    PRESET_MODES,
+    BundledPrompts,
+    EditablePrompts,
+    ModeSetting,
+    default_mode_path,
+    default_prompt_dir,
+)
 
 
 def test_every_preset_mode_has_a_nonempty_prompt() -> None:
@@ -81,3 +89,33 @@ def test_default_prompt_dir_follows_xdg_data_home(tmp_path: Path, monkeypatch: p
     assert default_prompt_dir() == tmp_path / "palmimo" / "controller" / "prompts"
     monkeypatch.setenv("XDG_DATA_HOME", "relative/path")
     assert default_prompt_dir() == Path.home() / ".local" / "share" / "palmimo" / "controller" / "prompts"
+
+
+def test_mode_setting_defaults_to_the_first_preset_until_one_is_saved(tmp_path: Path) -> None:
+    setting = ModeSetting(tmp_path / "mode.txt", BundledPrompts())
+    assert (setting.get(), setting.label()) == ("default", "標準")
+    setting.save("kansai")
+    assert (setting.get(), setting.label()) == ("kansai", "関西弁")
+
+
+def test_mode_setting_rejects_an_unknown_mode(tmp_path: Path) -> None:
+    setting = ModeSetting(tmp_path / "mode.txt", BundledPrompts())
+    with pytest.raises(ValueError):
+        setting.save("../evil")
+    assert not (tmp_path / "mode.txt").exists()
+
+
+def test_a_hand_edited_unknown_mode_falls_back_to_the_default(tmp_path: Path) -> None:
+    # Without this, a typo in the saved file would leave the AI button with nothing to start.
+    path = tmp_path / "mode.txt"
+    path.write_text("nobody\n", encoding="utf-8")
+    assert ModeSetting(path, BundledPrompts()).get() == "default"
+
+
+def test_mode_label_passes_an_unknown_id_through(tmp_path: Path) -> None:
+    assert ModeSetting(tmp_path / "mode.txt", BundledPrompts()).label("gone") == "gone"
+
+
+def test_default_mode_path_sits_beside_the_prompt_edits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert default_mode_path() == tmp_path / "palmimo" / "controller" / "mode.txt"

@@ -26,12 +26,13 @@ flag list). Then, from a browser on the same network as the robot:
 
 - `http://<robot-ip>:8010/` -- **viewer**: a spectating page with the video in
   a framed window, a "Start piloting" link to `/pilot` (disabled while
-  someone else already holds the pilot slot), and below it the editor for
-  the AI mode prompts (see [Editing prompts](#editing-prompts)).
+  someone else already holds the pilot slot), and below it the AI settings:
+  which mode the AI button starts, the voice (with a preview), and the mode
+  prompts (see [Choosing the mode](#choosing-the-mode)).
 - `http://<robot-ip>:8010/pilot` -- **pilot**: full-screen video with a d-pad,
-  L/R rotate buttons, seven gesture buttons plus the AI mode button, a neck
-  stick, and a Home link back to `/` to drive the robot. The mode bar at the
-  top shows the current mode and the way back to manual control.
+  L/R rotate buttons, seven gesture buttons, a neck stick, and a Home link
+  back to `/` to drive the robot. The mode bar at the top always shows who
+  is driving (manual or AI), with the button that switches between them.
 
 Any number of viewers can watch at once; only one pilot can drive at a time.
 
@@ -46,9 +47,12 @@ Three modes ship with the app, each one prompt in
 | Kansai-ben | `kansai.md` | The same robot, speaking Kansai dialect |
 | Custom | `custom.md` | A starting point meant to be rewritten on the homepage: any character, any language |
 
-On the pilot page, tap the AI mode button in the mode bar, pick a mode, and
-the robot starts listening and talking. The same spot then holds the
-return-to-teleop button; tapping it stops speech and AI motion at once.
+Pick the mode on the homepage (see [Choosing the mode](#choosing-the-mode)).
+On the pilot page, the mode bar's AI button is named after that mode; tap
+it, confirm on the sheet that asks before AI takes the controls, and the
+robot starts listening and talking. The same spot then holds the
+return-to-teleop button; tapping it stops speech and AI motion at once. AI
+still belongs to the pilot: it stops when the pilot page disconnects.
 
 How a switch works:
 
@@ -137,6 +141,16 @@ once, and it never replaces a face the model chose. It ends with the AI
 session. Each behaviour writes an `idle` telemetry event. `--no-idle` turns it
 off.
 
+### Choosing the mode
+
+The homepage's AI mode section picks the mode the pilot page's AI button
+starts (`default` by default). The choice is saved in
+`$XDG_DATA_HOME/palmimo/controller/mode.txt`, beside the prompt edits, and the
+pilot page names it within one status broadcast. The page uses
+`GET /api/mode` and `PUT /api/mode` (body `{"mode": ...}`); the pilot page
+then sends `{"ai": "start"}` with no mode, and the server starts the saved
+one.
+
 ### Editing prompts
 
 The homepage (`/`) lists each mode in a prompt section below the status bar.
@@ -155,6 +169,18 @@ in (`coral` by default). The choice is saved in
 applies the next time an AI mode starts: the Realtime API cannot change a
 session's voice once it has spoken. The page uses `GET /api/voice` and
 `PUT /api/voice` (body `{"voice": ...}`).
+
+Each voice's ▶ button plays a short sample through the robot's speaker, at
+the homepage speaker volume, without starting an AI mode
+(`POST /api/voice/preview`, body `{"voice": ...}`). It is refused while an AI
+mode runs, and starting one cuts off a sample that is playing. The samples
+are bundled in `palmimo_controller/voice_samples/<voice>.wav` (16-bit mono,
+24 kHz), recorded once through the same Realtime API the AI modes speak
+through. Re-record them after changing the sample line or the voice list:
+
+```
+OPENAI_API_KEY=sk-... uv run python scripts/record_voice_samples.py [voice ...]
+```
 
 The page uses `GET /api/prompts`, `PUT /api/prompts/<mode>` (body
 `{"text": ...}`, at most 8000 characters) and `DELETE /api/prompts/<mode>`.

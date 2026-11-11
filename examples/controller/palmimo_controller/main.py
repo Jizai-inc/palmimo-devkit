@@ -39,13 +39,13 @@ from .ai.idle import Idle
 from .ai.reflexes import Detectors, Reflexes
 from .audio_levels import AudioLevels, MicLevel, default_audio_levels_path
 from .control import MAX_GAIT_SPEED
-from .modes import EditablePrompts, default_prompt_dir
+from .modes import EditablePrompts, ModeSetting, default_mode_path, default_prompt_dir
 from .robot_loop import RobotLoop
 from .server import create_app
 from .session import PilotSession
 from .telemetry import Telemetry
 from .video import VideoStream
-from .voices import VoiceSetting, default_voice_path
+from .voices import VoicePreview, VoiceSetting, default_voice_path
 
 
 # Released SDK versions before reservations have no reservation exceptions.
@@ -420,8 +420,23 @@ def main(
     reflexes = _build_reflexes_factory(session, video, telemetry, enabled=not (no_reflexes or no_camera))
     idle = _build_idle_factory(session, telemetry, enabled=not no_idle)
     ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voices, levels, mic_level, idle)
+    # The homepage's mode choice is the one the pilot page's AI button starts.
+    mode_setting = ModeSetting(default_mode_path(), prompts)
+    # Samples play on the same speaker, at the same volume, as AI speech.
+    preview = VoicePreview(functools.partial(_build_playback, AUDIO_DEVICES[audio_device], levels.speaker_gain))
     app_instance = create_app(
-        robot, session, robot_loop, video, ai, prompts, telemetry, voices, audio_levels=levels, mic_level=mic_level
+        robot,
+        session,
+        robot_loop,
+        video,
+        ai,
+        prompts,
+        telemetry,
+        voices,
+        audio_levels=levels,
+        mic_level=mic_level,
+        mode_setting=mode_setting,
+        voice_preview=preview,
     )
 
     mode = "--dry-run" if dry_run else ("compute-only (no servo bus found)" if robot.driver is None else "live")

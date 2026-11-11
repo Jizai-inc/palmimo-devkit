@@ -58,7 +58,7 @@
           <section id="voice-picker" class="settings-card" aria-labelledby="voice-picker-title">
             <div class="settings-head">
               <h2 id="voice-picker-title">AIの声</h2>
-              <p class="settings-note">次にAIモードを開始したときに反映されます。</p>
+              <p class="settings-note">▶で試聴できます（ロボットのスピーカーから流れます）。選んだ声は次にAIモードを開始したときに反映されます。</p>
             </div>
             <p id="voice-load-error" class="settings-error" hidden>声の設定を読み込めませんでした。ページを再読み込みしてください。</p>
             <div id="voice-list" role="radiogroup" aria-labelledby="voice-picker-title"></div>
@@ -68,8 +68,12 @@
           <section id="prompt-editor" class="settings-card" aria-labelledby="prompt-editor-title">
             <div class="settings-head">
               <h2 id="prompt-editor-title">AIモード</h2>
-              <p class="settings-note">キャラクターと話し方を決めるプロンプトです。変更は次にそのモードを開始したときに反映されます。</p>
+              <p class="settings-note">操作画面のAIボタンで、ここで選んだモードが始まります。</p>
             </div>
+            <p id="mode-load-error" class="settings-error" hidden>モードの設定を読み込めませんでした。ページを再読み込みしてください。</p>
+            <div id="mode-select" role="radiogroup" aria-labelledby="prompt-editor-title"></div>
+            <p id="mode-status" class="settings-status" role="status"></p>
+            <p class="settings-note">各モードのプロンプト（キャラクターと話し方）は下で編集できます。変更は次にそのモードを開始したときに反映されます。</p>
             <p id="prompt-load-error" class="settings-error" hidden>プロンプトを読み込めませんでした。ページを再読み込みしてください。</p>
             <div id="prompt-list"></div>
           </section>
@@ -83,6 +87,7 @@
     <script src="/static/app.js"></script>
     <script src="/static/prompts.js"></script>
     <script src="/static/voice.js"></script>
+    <script src="/static/mode.js"></script>
     <script src="/static/audio.js"></script>
   </body>
 </html>

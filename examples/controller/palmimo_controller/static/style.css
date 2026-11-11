@@ -576,6 +576,7 @@ body[data-role="viewer"] {
 }
 
 #voice-load-error[hidden],
+#mode-load-error[hidden],
 #prompt-load-error[hidden],
 #audio-load-error[hidden],
 #mic-meter-hint[hidden] {
@@ -679,17 +680,104 @@ body[data-role="viewer"] {
   color: #ff8a80;
 }
 
-#voice-list {
+#voice-list,
+#mode-select {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-#voice-list.is-busy {
+#mode-select {
+  margin-bottom: 4px;
+}
+
+/* A voice row also holds its play button, so it needs more width than a
+   mode; the grid drops to one column rather than squeezing the label. */
+#voice-list {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.choice-default {
+  white-space: nowrap;
+}
+
+#voice-list.is-busy,
+#mode-select.is-busy {
   opacity: 0.6;
 }
 
-.voice-option {
+/* One voice is one pill: the choice fills it, and the round play button
+   sits inside its right end. Two sibling buttons, since a button cannot
+   hold another button; the row draws the shared outline. */
+.voice-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 44px;
+  padding-right: 4px;
+  border: 1px solid #2a2d35;
+  border-radius: 999px;
+  background: #15171c;
+}
+
+.voice-row:hover {
+  border-color: #474c58;
+}
+
+.voice-row.is-selected {
+  border: 1.5px solid #4f7cff;
+  background: rgba(79, 124, 255, 0.18);
+}
+
+.voice-row .choice-option,
+.voice-row .choice-option.is-selected {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  padding-left: 16px;
+  border: none;
+  border-radius: 999px 0 0 999px;
+  background: transparent;
+}
+
+.voice-play {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #d5d8df;
+  cursor: pointer;
+}
+
+.voice-play:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.voice-play svg {
+  width: 14px;
+  height: 14px;
+  margin-left: 2px;
+  fill: currentColor;
+}
+
+.voice-play.is-playing {
+  background: rgba(143, 224, 168, 0.2);
+  color: #8fe0a8;
+}
+
+.voice-play:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+
+.choice-option {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -705,24 +793,24 @@ body[data-role="viewer"] {
   cursor: pointer;
 }
 
-.voice-option:hover {
+.choice-option:hover {
   border-color: #474c58;
 }
 
-.voice-option.is-selected {
+.choice-option.is-selected {
   border: 1.5px solid #4f7cff;
   background: rgba(79, 124, 255, 0.18);
   color: #fff;
   font-weight: 700;
 }
 
-.voice-default {
+.choice-default {
   font-size: 11px;
   font-weight: 400;
   color: #9aa0ac;
 }
 
-.voice-check {
+.choice-check {
   width: 16px;
   height: 16px;
   margin-left: auto;
@@ -837,7 +925,8 @@ body[data-role="viewer"] {
   cursor: default;
 }
 
-.voice-option:focus-visible,
+.choice-option:focus-visible,
+.voice-play:focus-visible,
 .prompt-card summary:focus-visible,
 .prompt-actions button:focus-visible,
 #pilot-link:focus-visible {
@@ -922,7 +1011,7 @@ body[data-role="viewer"] {
 }
 
 #mode-bar button,
-#mode-picker button {
+#ai-confirm button {
   border: none;
   border-radius: 999px;
   padding: 8px 14px;
@@ -936,10 +1025,20 @@ body[data-role="viewer"] {
   color: #111;
 }
 
-/* The AI button sits in the mode bar while in teleop. It is outlined rather
-   than filled, so it reads as an action and not as AI already being on; the
-   blue accent is kept for the running AI state. Hidden while an AI mode
-   runs, when the teleop button takes its place. */
+/* The mode badge is always shown, so the pilot can tell at a glance who is
+   driving: a neutral manual label in teleop, the blue accent once AI has it. */
+#mode-indicator {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* The AI button sits in the mode bar while in teleop, named after the mode
+   the homepage picked. It is outlined rather than filled, so it reads as an
+   action and not as AI already being on. Hidden while an AI mode runs, when
+   the teleop button takes its place. */
 #mode-bar #ai-button {
   display: inline-flex;
   align-items: center;
@@ -964,8 +1063,8 @@ body[data-role="viewer"] {
 }
 
 body.ai-active #mode-indicator {
-  color: #9fd0ff;
-  font-weight: 700;
+  background: rgba(79, 124, 255, 0.35);
+  color: #cfe4ff;
 }
 
 /* AI starting: a spinner and a pulsing bar, so the wait reads as work. */
@@ -1059,42 +1158,61 @@ body.ai-active #controls {
   pointer-events: none;
 }
 
-#mode-picker {
+/* Asks before AI takes the controls away from the pilot. In-page rather
+   than window.confirm, which can drop a phone out of fullscreen. */
+#ai-confirm {
   position: fixed;
   inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  background: rgba(0, 0, 0, 0.75);
+  gap: 8px;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.78);
   color: #fff;
+  text-align: center;
   z-index: 30;
 }
 
-#mode-picker[hidden],
+#ai-confirm[hidden],
 #notice-banner[hidden] {
   display: none;
 }
 
-#mode-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 220px;
+#ai-confirm-title {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
 }
 
-#mode-list button {
-  background: #fff;
-  color: #111;
+.ai-confirm-note {
+  margin: 0;
+  font-size: 14px;
+  color: #c9cdd6;
+}
+
+.ai-confirm-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+#ai-confirm-start {
+  min-width: 120px;
   padding: 14px 20px;
+  background: #4f7cff;
+  color: #fff;
   font-size: 18px;
 }
 
-#mode-cancel {
+#ai-confirm-cancel {
+  min-width: 120px;
+  padding: 14px 20px;
   background: transparent;
   color: #fff;
-  border: 1px solid #fff !important;
+  box-shadow: inset 0 0 0 1px #fff;
+  font-size: 18px;
 }
 
 #notice-banner {

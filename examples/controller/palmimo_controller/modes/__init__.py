@@ -148,12 +148,72 @@ class EditablePrompts:
         self._check(mode_id).unlink(missing_ok=True)
 
 
+def default_mode_path() -> Path:
+    """Where the homepage's mode choice is saved: beside the prompt edits, so an app update keeps it."""
+    return default_prompt_dir().parent / "mode.txt"
+
+
+class ModeSetting:
+    """The AI mode the pilot page's AI button starts, chosen on the homepage.
+
+    Falls back to the first mode *prompts* lists when nothing valid is saved.
+    """
+
+    def __init__(self, path: Path, prompts: PromptSource) -> None:
+        self._path = path
+        self._prompts = prompts
+
+    def _ids(self) -> list[str]:
+        return [mode.id for mode in self._prompts.modes()]
+
+    def default(self) -> str:
+        """The mode used when none is saved."""
+        return self._ids()[0]
+
+    def get(self) -> str:
+        try:
+            saved = self._path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            return self.default()
+        # A file edited by hand into something unknown falls back rather than
+        # leaving the AI button with nothing to start.
+        return saved if saved in self._ids() else self.default()
+
+    def label(self, mode_id: str | None = None) -> str:
+        """The display label of *mode_id*, or of the chosen mode when `None`; an unknown id is returned as-is."""
+        wanted = self.get() if mode_id is None else mode_id
+        return next((mode.label for mode in self._prompts.modes() if mode.id == wanted), wanted)
+
+    def save(self, mode_id: str) -> None:
+        """Save *mode_id* as the mode the AI button starts.
+
+        Raises:
+            ValueError: *mode_id* is not one of the listed modes.
+            OSError: The settings directory cannot be written.
+        """
+        if mode_id not in self._ids():
+            raise ValueError(f"unknown mode {mode_id!r}")
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        # Written beside the target and renamed over it, so a mode starting
+        # mid-save reads either the old choice or the new one.
+        fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=".mode.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(mode_id + "\n")
+            os.replace(tmp, self._path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+
+
 __all__ = [
     "MAX_PROMPT_CHARS",
     "PRESET_MODES",
     "BundledPrompts",
     "EditablePrompts",
     "Mode",
+    "ModeSetting",
     "PromptSource",
+    "default_mode_path",
     "default_prompt_dir",
 ]

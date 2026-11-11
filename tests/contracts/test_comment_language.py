@@ -42,7 +42,7 @@ SOFTWARE_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_SUFFIXES = frozenset({".toml", ".yaml", ".yml", ".sh", ".json5", ".json", ".cff"})
 # These take `#` comments and carry no suffix to match on.
 CONFIG_NAMES = frozenset({".gitignore", "Makefile"})
-BINARY_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".glb"})
+BINARY_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".glb", ".wav"})
 LOG_METHODS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
 
 JAPANESE = re.compile(r"[぀-ゟ゠-ヿ一-鿿、。〃々〆〇〈-』【-〟！-｠ｦ-ﾟ]")

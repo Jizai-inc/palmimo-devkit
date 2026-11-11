@@ -130,5 +130,5 @@ show_error_codes = true
 explicit_package_bases = true
 namespace_packages = true
 ignore_missing_imports = true
-files = ["palmimo_controller/", "tests/"]
+files = ["palmimo_controller/", "scripts/", "tests/"]
 exclude = ["\\.venv"]
