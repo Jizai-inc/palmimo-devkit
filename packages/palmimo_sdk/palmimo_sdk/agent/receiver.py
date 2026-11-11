@@ -54,7 +54,7 @@ class PalmimoLike(Protocol):
 
     Movement/gesture setters, ``run``/``stop``/``cancel``, neck
     ``look``/``look_center``, ``set_expression``/``say``/``stop_speech``, the
-    ``display``/``camera`` peripherals, ``cancel_checkpoint``/
+    ``driver``/``display``/``camera`` peripherals, ``cancel_checkpoint``/
     ``raise_if_cancelled`` (a custom ``Tool.execute()``'s own cooperative
     loop -- see e.g. ``examples/agents/companion``'s face-tracking tool), and
     the cancel-scope arm/disarm pair :meth:`~palmimo_sdk.agent.toolset.AgentToolSet.call`
@@ -65,6 +65,9 @@ class PalmimoLike(Protocol):
     # Peripheral properties -- only ever compared to ``None`` or (camera)
     # read from, never assigned, so a read-only property is enough.
     # ----------------------------------------------------------------
+    @property
+    def driver(self) -> object | None: ...
+
     @property
     def display(self) -> object | None: ...
 

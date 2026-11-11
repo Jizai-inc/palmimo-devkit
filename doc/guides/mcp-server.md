@@ -122,7 +122,10 @@ A peripheral that was unreachable when the server started is not hidden from
 the tool list: its tools stay listed and answer a call with a descriptive
 not-attached message, rather than disappearing or the server refusing to
 start. The server states this in the `instructions` it returns from
-`initialize`, so a client sees it up front.
+`initialize`, so a client sees it up front. Without a servo bus (`--no-servo`,
+or a bus that could not be reached), the movement tools still compute the
+motion and succeed, and their result ends with
+`(no servo bus attached; nothing moved)`.
 
 ## Tool-Call Logging
 
