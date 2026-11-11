@@ -35,6 +35,7 @@ from palmimo_sdk import (
 
 from .ai.audio import Playback
 from .ai.controller import DEFAULT_MODEL, AiController, OpenMic
+from .ai.idle import Idle
 from .ai.reflexes import Detectors, Reflexes
 from .audio_levels import AudioLevels, MicLevel, default_audio_levels_path
 from .control import MAX_GAIT_SPEED
@@ -318,6 +319,17 @@ def _build_reflexes_factory(
     return factory
 
 
+def _build_idle_factory(session: PilotSession, telemetry: Telemetry, *, enabled: bool) -> Callable[[], Idle] | None:
+    """Build the per-session idle factory, or `None` when idle is off."""
+    if not enabled:
+        return None
+
+    def factory() -> Idle:
+        return Idle(session, telemetry=telemetry)
+
+    return factory
+
+
 def _build_ai(
     session: PilotSession,
     telemetry: Telemetry,
@@ -327,6 +339,7 @@ def _build_ai(
     voices: VoiceSetting | None = None,
     levels: AudioLevels | None = None,
     mic_level: MicLevel | None = None,
+    idle_factory: Callable[[], Idle] | None = None,
 ) -> AiController:
     """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop.
 
@@ -343,6 +356,7 @@ def _build_ai(
         model=os.environ.get("CONTROLLER_REALTIME_MODEL") or DEFAULT_MODEL,
         voice=(voices if voices is not None else VoiceSetting(default_voice_path())).get,
         reflexes_factory=reflexes_factory,
+        idle_factory=idle_factory,
         mic_gain=levels.mic_gain if levels else lambda: 1.0,
         mic_level=mic_level,
     )
@@ -363,6 +377,9 @@ def main(
     no_face: bool = typer.Option(False, "--no-face", help="Never attach the face display."),
     no_reflexes: bool = typer.Option(
         False, "--no-reflexes", help="In AI modes, do not wave back, bow to close visitors, or glance at faces."
+    ),
+    no_idle: bool = typer.Option(
+        False, "--no-idle", help="In AI modes, stand still between replies instead of small idle movements."
     ),
     servo_port: str | None = typer.Option(
         None, "--servo-port", help="Servo bus serial port, e.g. /dev/ttyACM0 (auto-detected if omitted)."
@@ -389,7 +406,8 @@ def main(
     levels = AudioLevels(default_audio_levels_path())
     mic_level = MicLevel()
     reflexes = _build_reflexes_factory(session, video, telemetry, enabled=not (no_reflexes or no_camera))
-    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voices, levels, mic_level)
+    idle = _build_idle_factory(session, telemetry, enabled=not no_idle)
+    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voices, levels, mic_level, idle)
     app_instance = create_app(
         robot, session, robot_loop, video, ai, prompts, telemetry, voices, audio_levels=levels, mic_level=mic_level
     )

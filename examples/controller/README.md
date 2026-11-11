@@ -55,8 +55,9 @@ How a switch works:
 - **The robot connection never changes.** `RobotLoop` is the only thread
   that drives `Palmimo`, in every mode. An AI mode only changes which input
   `PilotSession.effective_input()` returns: the pilot's d-pad in teleop,
-  nothing while the AI session connects, and the AI's latest motion intent
-  once it is live. Going live starts with one nod
+  nothing while the AI session connects, and once it is live, in order: the
+  AI's latest motion intent, a reflex glance, then an idle behaviour (see
+  [Reflexes](#reflexes) and [Idle](#idle)). Going live starts with one nod
   (`session.AI_START_NOD_SECONDS`), which the AI's first motion replaces.
 - **The switch shows its progress.** The pilot page shows a spinner from the
   tap until the session is live. When a face display is attached, the face
@@ -122,6 +123,19 @@ overrides the model. Wave-back wins when a wave and a bow trigger on the same
 frame. A detector that fails is logged and skipped; it never ends the AI
 session. Each reflex writes a `reflex` telemetry event. `--no-reflexes` (or
 `--no-camera`) turns them off.
+
+### Idle
+
+Between replies the robot does not stand dead still (`ai/idle.py`). After
+`IDLE_AFTER_S` (4 s) with no AI motion and no reflex glance, it picks a small
+behaviour now and then, with a random 4-10 s pause between them: a slow look
+around (neck only, at most 0.3 of the neck's travel, for 2 s), a short body
+tilt, a stretch, or a brief smile or thinking face. Idle never walks or turns.
+
+Idle is the lowest priority: any AI motion or face, or a reflex, cancels it at
+once, and it never replaces a face the model chose. It ends with the AI
+session. Each behaviour writes an `idle` telemetry event. `--no-idle` turns it
+off.
 
 ### Editing prompts
 
@@ -351,6 +365,7 @@ uv run --with-editable ../../packages/palmimo_sdk python -m palmimo_controller.m
 | `--no-camera` | off | Never attach the head camera |
 | `--no-face` | off | Never attach the face display. Without this flag, a face display is attached only when one is plugged in and opens, so a robot without a face still starts |
 | `--no-reflexes` | off | In AI modes, do not wave back, bow, or glance at faces |
+| `--no-idle` | off | In AI modes, stand still between replies instead of small idle movements |
 | `--servo-port` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0`; ignored under `--dry-run` |
 | `--audio-device` | `respeaker` | AI mode mic and speaker. `respeaker`: a development robot's ReSpeaker 4 Mic Array, with echo cancellation. `booth-usb`: an exhibition robot's push-to-talk USB mic ("USB PnP", 48 kHz, no echo cancellation; hold its button while talking) and USB speaker ("Composite") |
 

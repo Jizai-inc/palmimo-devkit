@@ -239,3 +239,20 @@ def test_ai_face_is_refused_outside_ai_or_for_an_unknown_expression() -> None:
     _live_ai(session)
     assert session.set_ai_face("SMIRK", 1.0) is False
     assert session.face_cue().expression == LIVE_FACE
+
+
+def test_idle_is_the_lowest_priority_and_ends_with_the_ai_session() -> None:
+    session, clock = _pilot_session()
+    _live_ai(session)
+    clock.now = AI_START_NOD_SECONDS
+    assert session.set_idle(PilotInput(gesture="stretch"), 3.0)
+    assert session.effective_input() == PilotInput(gesture="stretch")
+    # Idle never starts over a glance, and a glance ends it.
+    session.set_gaze(0.1, 0.1)
+    assert session.effective_input() == PilotInput(neck_pitch=0.1, neck_yaw=0.1)
+    assert session.set_idle(PilotInput(gesture="stretch"), 3.0) is False
+    session.clear_gaze()
+    assert session.set_idle(PilotInput(gesture="body_tilt"), 3.0)
+    # The pilot leaving (or any other end) drops idle with the rest of the AI state.
+    session.end_ai()
+    assert session.effective_input() == PilotInput()

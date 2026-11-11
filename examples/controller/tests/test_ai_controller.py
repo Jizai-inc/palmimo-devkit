@@ -113,6 +113,7 @@ class Harness:
         echo_cancelled: bool = True,
         voice: str = "coral",
         reflexes_factory: Any = None,
+        idle_factory: Any = None,
     ) -> None:
         self.session = PilotSession()
         self.session.acquire_pilot("a")
@@ -138,6 +139,7 @@ class Harness:
             voice=lambda: self.voice,
             start_timeout=1.0,
             reflexes_factory=reflexes_factory,
+            idle_factory=idle_factory,
         )
 
     @contextlib.contextmanager
@@ -446,6 +448,15 @@ async def test_reflexes_run_while_ai_is_live_and_stop_with_it() -> None:
     await asyncio.wait_for(reflexes.started.wait(), 2.0)
     await h.ai.stop()
     assert reflexes.cancelled
+
+
+async def test_idle_runs_while_ai_is_live_and_stops_with_it() -> None:
+    idle = _FakeReflexes()
+    h = Harness(idle_factory=lambda: idle)
+    await _live(h)
+    await asyncio.wait_for(idle.started.wait(), 2.0)
+    await h.ai.stop()
+    assert idle.cancelled
 
 
 async def test_each_start_uses_the_voice_chosen_at_that_moment() -> None:

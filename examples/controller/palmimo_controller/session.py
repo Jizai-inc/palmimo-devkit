@@ -158,6 +158,11 @@ class _ModeState:
     face_until: float | None = None
     #: Counts face overrides in this mode state, so each one gets its own cue key.
     face_seq: int = 0
+    #: Whether the current face override came from the idle layer, which anything else cancels.
+    face_from_idle: bool = False
+    #: Idle-layer intent (`set_idle`), the lowest priority: below AI intents and gaze.
+    idle_input: PilotInput | None = None
+    idle_until: float | None = None
 
 
 @dataclass
@@ -251,11 +256,20 @@ class PilotSession:
         current = self._mode
         if current.mode != MODE_AI:
             return False
+        now = self._now()
         duration = max(0.0, min(seconds, AI_INTENT_CEILING_S))
-        # A new intent ends a reflex glance but keeps the face: a gesture
-        # chosen with an expression must not wipe that expression.
-        self._mode = replace(current, ai_input=intent, ai_until=self._now() + duration, gaze=None)
+        # A new intent ends a reflex glance and any idle behaviour, but keeps
+        # an AI face: a gesture chosen with an expression must not wipe it.
+        self._mode = replace(self._without_idle(current, now), ai_input=intent, ai_until=now + duration, gaze=None)
         return True
+
+    @staticmethod
+    def _without_idle(current: _ModeState, now: float) -> _ModeState:
+        """*current* with the idle layer dropped, ending an idle face at *now* too."""
+        face_until = current.face_until
+        if current.face_from_idle and face_until is not None and now < face_until:
+            face_until = now
+        return replace(current, idle_input=None, idle_until=None, face_until=face_until, face_from_idle=False)
 
     def set_ai_face(self, expression: str, seconds: float) -> bool:
         """Show *expression* for up to *seconds* (capped at `AI_FACE_MAX_SECONDS`), then the neutral face.
@@ -270,9 +284,83 @@ class PilotSession:
         current = self._mode
         if current.mode != MODE_AI or expression not in FACE_EXPRESSIONS:
             return False
-        duration = max(0.0, min(seconds, AI_FACE_MAX_SECONDS))
-        self._mode = replace(current, face=expression, face_until=self._now() + duration, face_seq=current.face_seq + 1)
+        # The model is acting, so idle gives way, as it does to a motion intent.
+        self._mode = self._with_face(self._without_idle(current, self._now()), expression, seconds, from_idle=False)
         return True
+
+    def _with_face(self, current: _ModeState, expression: str, seconds: float, *, from_idle: bool) -> _ModeState:
+        duration = max(0.0, min(seconds, AI_FACE_MAX_SECONDS))
+        return replace(
+            current,
+            face=expression,
+            face_until=self._now() + duration,
+            face_seq=current.face_seq + 1,
+            face_from_idle=from_idle,
+        )
+
+    @property
+    def face_active(self) -> bool:
+        """Whether a face override (AI or idle) is still showing."""
+        mode = self._mode
+        return mode.mode == MODE_AI and mode.face_until is not None and self._now() < mode.face_until
+
+    def set_idle(self, intent: PilotInput, seconds: float) -> bool:
+        """Have the robot follow idle *intent* for up to *seconds*, at the lowest priority.
+
+        Idle fills the quiet between replies. It never moves the robot across
+        the floor, and it never starts over something else: any AI intent or
+        reflex glance drops it at once (`set_ai_intent`, `set_gaze`).
+
+        Returns:
+            bool: `False` (ignored) unless an AI mode is running with no AI
+                intent and no glance, and *intent* neither walks nor turns.
+        """
+        current = self._mode
+        if current.mode != MODE_AI or self.ai_busy or current.gaze is not None:
+            return False
+        if intent.move is not None or intent.rotate != 0:
+            return False
+        duration = max(0.0, min(seconds, AI_INTENT_CEILING_S))
+        self._mode = replace(current, idle_input=intent, idle_until=self._now() + duration)
+        return True
+
+    def set_idle_face(self, expression: str, seconds: float) -> bool:
+        """Show *expression* as an idle behaviour; never over a face that is already showing.
+
+        Returns:
+            bool: `False` (ignored) unless an AI mode is idle (no AI intent,
+                no glance, no face showing) and *expression* is known.
+        """
+        current = self._mode
+        if current.mode != MODE_AI or self.ai_busy or current.gaze is not None or self.face_active:
+            return False
+        if expression not in FACE_EXPRESSIONS:
+            return False
+        self._mode = self._with_face(current, expression, seconds, from_idle=True)
+        return True
+
+    def clear_idle(self) -> None:
+        """End any idle behaviour; the robot holds still unless something else drives it."""
+        current = self._mode
+        if current.idle_input is not None or current.face_from_idle:
+            self._mode = self._without_idle(current, self._now())
+
+    @property
+    def idle_active(self) -> bool:
+        """Whether an idle intent is still running."""
+        mode = self._mode
+        return (
+            mode.mode == MODE_AI
+            and mode.idle_input is not None
+            and mode.idle_until is not None
+            and self._now() < mode.idle_until
+        )
+
+    @property
+    def gazing(self) -> bool:
+        """Whether a reflex glance holds the neck."""
+        mode = self._mode
+        return mode.mode == MODE_AI and mode.gaze is not None
 
     @property
     def ai_busy(self) -> bool:
@@ -292,7 +380,7 @@ class PilotSession:
         current = self._mode
         if current.mode != MODE_AI:
             return False
-        self._mode = replace(current, gaze=(pitch, yaw))
+        self._mode = replace(self._without_idle(current, self._now()), gaze=(pitch, yaw))
         return True
 
     def clear_gaze(self) -> None:
@@ -459,7 +547,8 @@ class PilotSession:
         In an AI mode the pilot's input is ignored: the robot holds still
         while the AI session connects, then follows the AI's latest intent
         until that intent's time runs out. Between intents, a reflex glance's
-        gaze (`set_gaze`) points the neck; otherwise the robot holds still.
+        gaze (`set_gaze`) points the neck; failing that, an idle behaviour
+        (`set_idle`) runs; otherwise the robot holds still.
 
         In teleop, move/rotate/gesture/neck all collapse to inert
         (translation, rotation, gesture off, neck centered) when there is no pilot or the deadman has expired. The neck used to hold its last-known target
@@ -485,6 +574,8 @@ class PilotSession:
                 return mode.ai_input
             if mode.gaze is not None:
                 return PilotInput(neck_pitch=mode.gaze[0], neck_yaw=mode.gaze[1])
+            if mode.idle_input is not None and mode.idle_until is not None and self._now() < mode.idle_until:
+                return mode.idle_input
             return PilotInput()
         state = self._state
         current = state.input

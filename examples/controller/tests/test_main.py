@@ -85,3 +85,14 @@ def test_build_face_attaches_the_probed_face() -> None:
 
     assert main._build_face(no_face=False, find_port=lambda: "/dev/ttyACM1", probe=probe) is sentinel
     assert probed == ["/dev/ttyACM1"]
+
+
+def test_build_idle_factory_is_none_when_no_idle_is_passed() -> None:
+    from palmimo_controller.ai.idle import Idle
+    from palmimo_controller.session import PilotSession
+    from palmimo_controller.telemetry import Telemetry
+
+    session, telemetry = PilotSession(), Telemetry(emit=lambda _line: None)
+    assert main._build_idle_factory(session, telemetry, enabled=False) is None
+    factory = main._build_idle_factory(session, telemetry, enabled=True)
+    assert factory is not None and isinstance(factory(), Idle)

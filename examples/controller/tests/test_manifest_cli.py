@@ -71,6 +71,10 @@ def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.Monk
         captured["reflexes"] = enabled
         return None
 
+    def fake_build_idle(session: object, telemetry: object, *, enabled: bool) -> None:
+        captured["idle"] = enabled
+        return None
+
     def fake_build_camera(no_camera: bool) -> None:
         captured["no_camera"] = no_camera
         return None
@@ -82,6 +86,7 @@ def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.Monk
     monkeypatch.setattr(main_module, "_build_robot", fake_build_robot)
     monkeypatch.setattr(main_module, "_build_camera", fake_build_camera)
     monkeypatch.setattr(main_module, "_build_reflexes_factory", fake_build_reflexes)
+    monkeypatch.setattr(main_module, "_build_idle_factory", fake_build_idle)
     monkeypatch.setattr(main_module.uvicorn, "run", fake_uvicorn_run)
 
     result = CliRunner().invoke(main_module.app, argv)
@@ -92,6 +97,7 @@ def test_manifest_defaults_parse_and_match_cli_defaults(monkeypatch: pytest.Monk
     assert captured["fps"] == 60
     assert captured["no_face"] is False
     assert captured["reflexes"] is True
+    assert captured["idle"] is True
     assert captured["gait_speed"] == pytest.approx(main_module.DEFAULT_GAIT_SPEED)
     assert captured["dry_run"] is False
     assert captured["no_camera"] is False

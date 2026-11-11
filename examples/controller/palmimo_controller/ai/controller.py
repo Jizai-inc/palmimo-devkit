@@ -87,7 +87,7 @@ class PlaybackLike(Protocol):
 
 
 class ReflexesLike(Protocol):
-    """The part of `reflexes.Reflexes` the controller runs."""
+    """The part of `reflexes.Reflexes` (and `idle.Idle`) the controller runs."""
 
     async def run(self) -> None: ...
 
@@ -136,6 +136,7 @@ class AiController:
         start_timeout: float = START_TIMEOUT_S,
         now: Callable[[], float] = time.monotonic,
         reflexes_factory: Callable[[], ReflexesLike] | None = None,
+        idle_factory: Callable[[], ReflexesLike] | None = None,
         mic_gain: Callable[[], float] = lambda: 1.0,
         mic_level: MicLevelLike | None = None,
     ) -> None:
@@ -151,6 +152,7 @@ class AiController:
         self._start_timeout = start_timeout
         self._now = now
         self._reflexes_factory = reflexes_factory
+        self._idle_factory = idle_factory
         self._mic_gain = mic_gain
         self._mic_level = mic_level
         self._task: asyncio.Task[None] | None = None
@@ -247,6 +249,9 @@ class AiController:
                         # Reflexes.run() only ever ends by cancellation, so it
                         # cannot take the mode down with it.
                         group.create_task(self._reflexes_factory().run())
+                    if self._idle_factory is not None:
+                        # Idle.run() likewise only ends by cancellation.
+                        group.create_task(self._idle_factory().run())
         except Exception as exc:
             # The TaskGroup wraps a task's failure in an ExceptionGroup;
             # the first one is what ended the mode.
