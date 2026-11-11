@@ -12,7 +12,14 @@ import json
 from typing import Any
 
 from ..control import clamp_neck
-from ..session import AI_TOOL_MAX_SECONDS, GESTURE_PLAY_SECONDS, PilotInput, PilotSession
+from ..session import (
+    AI_FACE_MAX_SECONDS,
+    AI_TOOL_MAX_SECONDS,
+    FACE_EXPRESSIONS,
+    GESTURE_PLAY_SECONDS,
+    PilotInput,
+    PilotSession,
+)
 
 
 _WALK_MOVES: dict[str, str] = {
@@ -64,7 +71,8 @@ _FUNCTIONS: list[dict[str, Any]] = [
     {
         "name": "gesture",
         "description": (
-            "Play a gesture: wave hello, a short dance, nod yes, clap, do push-ups, tilt the body (curious), or bow."
+            "Play a gesture: wave hello, wave with both arms (big hello), a short dance, nod yes, "
+            "shake the head no, clap, do push-ups, tilt the body (curious), stretch, or bow."
         ),
         "parameters": {
             "type": "object",
@@ -85,6 +93,25 @@ _FUNCTIONS: list[dict[str, Any]] = [
                 "yaw": {"type": "number", "minimum": -1, "maximum": 1},
             },
             "required": ["pitch", "yaw"],
+        },
+    },
+    {
+        "name": "set_face",
+        "description": (
+            "Show a facial expression on the face display for a few seconds, then the face returns to neutral."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "expression": {"type": "string", "enum": list(FACE_EXPRESSIONS)},
+                "seconds": {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": AI_FACE_MAX_SECONDS,
+                    "description": f"How long to show it, in seconds (at most {AI_FACE_MAX_SECONDS:g}).",
+                },
+            },
+            "required": ["expression", "seconds"],
         },
     },
     {
@@ -114,7 +141,7 @@ def run_tool(session: PilotSession, name: str, arguments: str) -> str:
     string, so it can correct itself rather than ending the session.
 
     Args:
-        session (PilotSession): Receives the motion intent.
+        session (PilotSession): Receives the motion intent or face.
         name (str): The tool name the model called.
         arguments (str): The call's JSON-encoded arguments.
 
@@ -125,12 +152,28 @@ def run_tool(session: PilotSession, name: str, arguments: str) -> str:
         args = json.loads(arguments or "{}")
         if not isinstance(args, dict):
             raise ValueError("arguments must be an object")
-        intent, seconds = _intent_for(name, args)
+        if name == "set_face":
+            # A face is not a motion: it must not end a gesture the robot is playing.
+            expression, seconds = _face_for(args)
+            applied = session.set_ai_face(expression, seconds)
+        else:
+            intent, seconds = _intent_for(name, args)
+            applied = session.set_ai_intent(intent, seconds)
     except (ValueError, KeyError, TypeError) as exc:
         return json.dumps({"ok": False, "error": str(exc)})
-    if not session.set_ai_intent(intent, seconds):
+    if not applied:
         return json.dumps({"ok": False, "error": "AI mode is not running"})
     return json.dumps({"ok": True})
+
+
+def _face_for(args: dict[str, Any]) -> tuple[str, float]:
+    expression = args["expression"]
+    if not isinstance(expression, str) or expression.upper() not in FACE_EXPRESSIONS:
+        raise ValueError(f"expression must be one of {', '.join(FACE_EXPRESSIONS)}")
+    value = args.get("seconds", 2.0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("seconds must be a number")
+    return expression.upper(), max(0.0, min(float(value), AI_FACE_MAX_SECONDS))
 
 
 def _intent_for(name: str, args: dict[str, Any]) -> tuple[PilotInput, float]:
@@ -140,6 +183,8 @@ def _intent_for(name: str, args: dict[str, Any]) -> tuple[PilotInput, float]:
         return PilotInput(rotate=_TURNS[args["direction"]]), _seconds("turn", args)
     if name == "gesture":
         gesture = args["name"]
+        if gesture not in GESTURE_PLAY_SECONDS:
+            raise ValueError(f"unknown gesture: {gesture}")
         return PilotInput(gesture=gesture), GESTURE_PLAY_SECONDS[gesture]
     if name == "look":
         pitch, yaw = args["pitch"], args["yaw"]

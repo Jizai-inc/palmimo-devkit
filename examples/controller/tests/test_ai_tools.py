@@ -40,6 +40,9 @@ def _ai_session() -> tuple[PilotSession, FakeClock]:
         ("walk", {"direction": "left", "seconds": 2}, PilotInput(move="strafe_left")),
         ("turn", {"direction": "right", "seconds": 1}, PilotInput(rotate=1)),
         ("gesture", {"name": "wave"}, PilotInput(gesture="wave")),
+        ("gesture", {"name": "stretch"}, PilotInput(gesture="stretch")),
+        ("gesture", {"name": "wave_both"}, PilotInput(gesture="wave_both")),
+        ("gesture", {"name": "head_shake"}, PilotInput(gesture="head_shake")),
         ("look", {"pitch": 0.5, "yaw": -2}, PilotInput(neck_pitch=0.5, neck_yaw=-1.0)),
         ("stop", {}, PilotInput()),
     ],
@@ -59,6 +62,12 @@ def test_run_tool_sets_the_matching_intent(name: str, arguments: dict, expected:
         ("look", '{"pitch": true, "yaw": 0}'),
         ("walk", "not json"),
         ("walk", "[]"),
+        ("gesture", '{"name": "moonwalk"}'),
+        ("gesture", '{"name": ["wave"]}'),
+        ("set_face", '{"expression": "SMIRK", "seconds": 1}'),
+        ("set_face", '{"expression": 3, "seconds": 1}'),
+        ("set_face", '{"expression": "HAPPY", "seconds": "long"}'),
+        ("set_face", '{"seconds": 1}'),
     ],
 )
 def test_run_tool_reports_a_bad_call_to_the_model(name: str, arguments: str) -> None:
@@ -77,7 +86,27 @@ def test_run_tool_refuses_when_ai_mode_has_ended() -> None:
 
 def test_every_tool_definition_is_runnable() -> None:
     names = {definition["name"] for definition in TOOL_DEFINITIONS}
-    assert names == {"walk", "turn", "gesture", "look", "stop"}
+    assert names == {"walk", "turn", "gesture", "look", "set_face", "stop"}
+
+
+def test_set_face_shows_the_expression_without_moving() -> None:
+    session, _ = _ai_session()
+    run_tool(session, "gesture", '{"name": "bow"}')
+    assert json.loads(run_tool(session, "set_face", '{"expression": "smile", "seconds": 2}')) == {"ok": True}
+    assert session.face_cue().expression == "SMILE"
+    # The face must not cut off the bow that is playing.
+    assert session.effective_input() == PilotInput(gesture="bow")
+
+
+def test_set_face_refuses_when_ai_mode_has_ended() -> None:
+    session, _ = _ai_session()
+    session.end_ai()
+    assert json.loads(run_tool(session, "set_face", '{"expression": "HAPPY", "seconds": 1}'))["ok"] is False
+
+
+def test_gesture_enum_offers_every_timed_gesture() -> None:
+    by_name = {definition["name"]: definition for definition in TOOL_DEFINITIONS}
+    assert set(by_name["gesture"]["parameters"]["properties"]["name"]["enum"]) == set(GESTURE_PLAY_SECONDS)
 
 
 @pytest.mark.parametrize(

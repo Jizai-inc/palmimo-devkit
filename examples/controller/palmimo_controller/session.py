@@ -38,6 +38,10 @@ GESTURE_PLAY_SECONDS: dict[str, float] = {
     "pushup": 5.0,
     "body_tilt": 5.0,
     "bow": 1.9,
+    # AI-only for now: the pilot page has no buttons for these (see `control.ALLOWED_GESTURES`).
+    "stretch": 3.0,
+    "wave_both": 2.0,
+    "head_shake": 1.5,
 }
 
 #: The pilot's own input drives the robot.
@@ -71,6 +75,26 @@ LIVE_FACE: str = "HAPPY"
 FAILED_FACE: str = "SAD"
 #: How long `LIVE_FACE` / `FAILED_FACE` hold before the firmware returns to IDLE.
 CUE_FACE_HOLD_MS: int = 2000
+
+#: Expressions the face display firmware knows. A copy of
+#: `palmimo_sdk.io.display.EXPRESSIONS`: this app may only import the SDK's
+#: public surface, which does not export that list. Update it with the SDK.
+FACE_EXPRESSIONS: tuple[str, ...] = (
+    "HAPPY",
+    "SMILE",
+    "LAUGH",
+    "LOVE",
+    "SAD",
+    "ANGRY",
+    "SURPRISED",
+    "THINKING",
+    "SLEEPY",
+    "SLEEP",
+    "IDEA",
+    "HEART",
+)
+#: Longest an AI-chosen face (`PilotSession.set_ai_face`) shows before the neutral face returns.
+AI_FACE_MAX_SECONDS: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -129,6 +153,11 @@ class _ModeState:
     since: float | None = None
     #: Neck target `(pitch, yaw)` a reflex glance holds while no AI intent is running.
     gaze: tuple[float, float] | None = None
+    #: Expression an AI face override shows until `face_until`; `None` before the first one.
+    face: str | None = None
+    face_until: float | None = None
+    #: Counts face overrides in this mode state, so each one gets its own cue key.
+    face_seq: int = 0
 
 
 @dataclass
@@ -223,13 +252,26 @@ class PilotSession:
         if current.mode != MODE_AI:
             return False
         duration = max(0.0, min(seconds, AI_INTENT_CEILING_S))
-        self._mode = _ModeState(
-            mode=MODE_AI,
-            ai_mode=current.ai_mode,
-            ai_input=intent,
-            ai_until=self._now() + duration,
-            since=current.since,
-        )
+        # A new intent ends a reflex glance but keeps the face: a gesture
+        # chosen with an expression must not wipe that expression.
+        self._mode = replace(current, ai_input=intent, ai_until=self._now() + duration, gaze=None)
+        return True
+
+    def set_ai_face(self, expression: str, seconds: float) -> bool:
+        """Show *expression* for up to *seconds* (capped at `AI_FACE_MAX_SECONDS`), then the neutral face.
+
+        Only state changes here; `robot_loop.RobotLoop` sends it and swallows
+        display errors, so a bad face can never fail a control cycle.
+
+        Returns:
+            bool: `False` (ignored) unless an AI mode is running and
+                *expression* is one of `FACE_EXPRESSIONS`.
+        """
+        current = self._mode
+        if current.mode != MODE_AI or expression not in FACE_EXPRESSIONS:
+            return False
+        duration = max(0.0, min(seconds, AI_FACE_MAX_SECONDS))
+        self._mode = replace(current, face=expression, face_until=self._now() + duration, face_seq=current.face_seq + 1)
         return True
 
     @property
@@ -264,8 +306,10 @@ class PilotSession:
 
         While an AI session connects, the face cycles through `STARTING_FACES`;
         each step has its own key, so the robot loop sends every step once.
-        A live session shows `LIVE_FACE`, a session that ended with a notice
-        shows `FAILED_FACE`, and plain teleop is the neutral IDLE face.
+        A live session shows `LIVE_FACE`, then any AI face override
+        (`set_ai_face`) while it lasts, then the neutral face. A session that
+        ended with a notice shows `FAILED_FACE`, and plain teleop is the
+        neutral IDLE face.
         """
         mode = self._mode
         if mode.mode == MODE_AI_STARTING:
@@ -275,7 +319,12 @@ class PilotSession:
         # `since` keeps the key distinct per switch: two failed starts in a row
         # must each show the face, not leave the second one unsent.
         if mode.mode == MODE_AI:
-            return FaceCue(key=f"live:{mode.since}", expression=LIVE_FACE, hold_ms=CUE_FACE_HOLD_MS)
+            if mode.face_seq == 0:
+                return FaceCue(key=f"live:{mode.since}", expression=LIVE_FACE, hold_ms=CUE_FACE_HOLD_MS)
+            if mode.face_until is not None and self._now() < mode.face_until:
+                return FaceCue(key=f"ai_face:{mode.since}:{mode.face_seq}", expression=mode.face)
+            # A distinct key once the override ends, so the neutral face is sent exactly once.
+            return FaceCue(key=f"ai_face_done:{mode.since}:{mode.face_seq}")
         if mode.notice is not None:
             return FaceCue(key=f"failed:{mode.since}", expression=FAILED_FACE, hold_ms=CUE_FACE_HOLD_MS)
         return IDLE_FACE_CUE

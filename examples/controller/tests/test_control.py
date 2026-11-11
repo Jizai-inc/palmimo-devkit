@@ -72,4 +72,13 @@ def test_every_allowed_gesture_is_a_palmimo_motion_with_a_play_window() -> None:
     from palmimo_sdk import Palmimo
 
     assert set(Palmimo._MOTION_MAP) >= ALLOWED_GESTURES
-    assert set(GESTURE_PLAY_SECONDS) == ALLOWED_GESTURES
+    assert set(GESTURE_PLAY_SECONDS) >= ALLOWED_GESTURES
+
+
+def test_every_timed_gesture_is_a_palmimo_motion() -> None:
+    # The AI path plays any `GESTURE_PLAY_SECONDS` key, including ones the
+    # pilot has no button for, so each must be a motion `Palmimo` knows.
+    from palmimo_controller.session import GESTURE_PLAY_SECONDS
+    from palmimo_sdk import Palmimo
+
+    assert set(Palmimo._MOTION_MAP) >= set(GESTURE_PLAY_SECONDS)

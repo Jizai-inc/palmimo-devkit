@@ -1,6 +1,7 @@
 """Behavior of `PilotSession`'s teleop/AI mode switching. The clock is injected."""
 
 from palmimo_controller.session import (
+    AI_FACE_MAX_SECONDS,
     AI_INTENT_CEILING_S,
     AI_START_NOD_SECONDS,
     CUE_FACE_HOLD_MS,
@@ -198,3 +199,43 @@ def test_gaze_is_ignored_outside_a_live_ai_mode() -> None:
     session.begin_ai("a", "default")
     assert session.set_gaze(0.2, 0.2) is False
     assert session.effective_input() == PilotInput()
+
+
+def test_ai_face_shows_while_it_lasts_then_returns_to_neutral_once() -> None:
+    session, clock = _pilot_session()
+    _live_ai(session)
+    assert session.set_ai_face("THINKING", 2.0)
+    shown = session.face_cue()
+    assert shown.expression == "THINKING"
+    clock.now = 2.0
+    done = session.face_cue()
+    assert done.expression is None and done.key != shown.key
+    clock.now = 3.0
+    assert session.face_cue() == done
+
+
+def test_ai_face_is_capped_and_each_override_gets_its_own_key() -> None:
+    session, clock = _pilot_session()
+    _live_ai(session)
+    session.set_ai_face("SMILE", 60.0)
+    first = session.face_cue()
+    session.set_ai_face("SMILE", 60.0)
+    assert session.face_cue().key != first.key
+    clock.now = AI_FACE_MAX_SECONDS
+    assert session.face_cue().expression is None
+
+
+def test_ai_face_survives_a_motion_intent() -> None:
+    session, _ = _pilot_session()
+    _live_ai(session)
+    session.set_ai_face("HAPPY", 3.0)
+    session.set_ai_intent(PilotInput(gesture="dance"), 2.0)
+    assert session.face_cue().expression == "HAPPY"
+
+
+def test_ai_face_is_refused_outside_ai_or_for_an_unknown_expression() -> None:
+    session, _ = _pilot_session()
+    assert session.set_ai_face("HAPPY", 1.0) is False
+    _live_ai(session)
+    assert session.set_ai_face("SMIRK", 1.0) is False
+    assert session.face_cue().expression == LIVE_FACE

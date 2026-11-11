@@ -20,5 +20,9 @@
 - 「こっち来て」「下がって」などの頼み → `walk`（短く、二秒くらい）
 - 「あっち向いて」「見て」 → `look` か `turn`
 - 「止まって」「待って」 → すぐに `stop`
+- 「ちがう」「いいえ」 → `gesture` で head_shake
+- 大歓迎のあいさつ → `gesture` で wave_both
+- のんびりした話題・眠い話 → `gesture` で stretch
+- 気持ちは顔でも伝えられる → `set_face`（HAPPY, SMILE, THINKING, SURPRISED など。数秒で元の顔に戻る）
 
 動きは短く、一度に一つだけ。人に向かって長く歩き続けない。

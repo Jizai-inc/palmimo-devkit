@@ -67,7 +67,12 @@ How a switch works:
   when it changes. A face that stops answering is logged and skipped; it never
   counts as a servo fault, so it cannot end an AI session.
 - **The AI moves the robot through tools** (`ai/tools.py`): `walk`, `turn`,
-  `gesture`, `look`, and `stop`. Each records an intent with its own time
+  `gesture`, `look`, `set_face`, and `stop`. `gesture` offers every key of
+  `session.GESTURE_PLAY_SECONDS`, including `stretch`, `wave_both` and
+  `head_shake`, which the pilot page has no buttons for. `set_face` shows one
+  of the face display's expressions (`session.FACE_EXPRESSIONS`) for up to
+  5 s, then the neutral face returns; it changes only the face, so it never
+  cuts off a gesture. The motion tools each record an intent with its own time
   limit, after which the robot stands still again, so a model never keeps the
   robot walking: `walk` at most 3 s, `turn` and `look` 2 s
   (`session.AI_TOOL_MAX_SECONDS`), and a gesture for its playthrough
