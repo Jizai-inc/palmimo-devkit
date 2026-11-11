@@ -307,14 +307,14 @@ class _CachedDetectors:
 
 def _build_reflexes_factory(
     session: PilotSession, video: VideoStream, telemetry: Telemetry, *, enabled: bool
-) -> Callable[[], Reflexes] | None:
+) -> Callable[..., Reflexes] | None:
     """Build the per-session reflexes factory, or `None` when reflexes are off or there is no camera."""
     if not enabled:
         return None
     detectors = _CachedDetectors()
 
-    def factory() -> Reflexes:
-        return Reflexes(session, video.latest_frame, detectors, telemetry=telemetry)
+    def factory(on_new_face: Callable[[], None] | None = None) -> Reflexes:
+        return Reflexes(session, video.latest_frame, detectors, telemetry=telemetry, on_new_face=on_new_face)
 
     return factory
 
@@ -335,11 +335,12 @@ def _build_ai(
     telemetry: Telemetry,
     prompts: EditablePrompts,
     audio: AudioDevice,
-    reflexes_factory: Callable[[], Reflexes] | None = None,
+    reflexes_factory: Callable[..., Reflexes] | None = None,
     voices: VoiceSetting | None = None,
     levels: AudioLevels | None = None,
     mic_level: MicLevel | None = None,
     idle_factory: Callable[[], Idle] | None = None,
+    frame_source: Callable[[], bytes | None] | None = None,
 ) -> AiController:
     """Build the AI controller. A missing `OPENAI_API_KEY` leaves AI unavailable, never teleop.
 
@@ -359,6 +360,7 @@ def _build_ai(
         idle_factory=idle_factory,
         mic_gain=levels.mic_gain if levels else lambda: 1.0,
         mic_level=mic_level,
+        frame_source=frame_source,
     )
 
 
@@ -380,6 +382,11 @@ def main(
     ),
     no_idle: bool = typer.Option(
         False, "--no-idle", help="In AI modes, stand still between replies instead of small idle movements."
+    ),
+    no_vision: bool = typer.Option(
+        False,
+        "--no-vision",
+        help="In AI modes, never send head-camera frames to OpenAI (the model then cannot see).",
     ),
     log_level: str = typer.Option(
         "info",
@@ -419,7 +426,11 @@ def main(
     mic_level = MicLevel()
     reflexes = _build_reflexes_factory(session, video, telemetry, enabled=not (no_reflexes or no_camera))
     idle = _build_idle_factory(session, telemetry, enabled=not no_idle)
-    ai = _build_ai(session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voices, levels, mic_level, idle)
+    # Frames go to OpenAI, so they are opt-out with --no-vision; without a camera there is nothing to send.
+    frames = None if (no_vision or no_camera) else video.latest_jpeg
+    ai = _build_ai(
+        session, telemetry, prompts, AUDIO_DEVICES[audio_device], reflexes, voices, levels, mic_level, idle, frames
+    )
     # The homepage's mode choice is the one the pilot page's AI button starts.
     mode_setting = ModeSetting(default_mode_path(), prompts)
     # Samples play on the same speaker, at the same volume, as AI speech.

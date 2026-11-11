@@ -120,13 +120,41 @@ its own, without telling the model (`ai/reflexes.py`):
   frames in a row. It bows once per approach: the next bow needs the face to
   move back or leave first, and at least `BOW_COOLDOWN_S` (30 s) to pass.
 - **Glance** at a face for a few seconds, then recenter (cooldown 15 s, so
-  the neck is not held off-center).
+  the neck is not held off-center). The neck moves part of the way toward
+  the face at most every `GLANCE_UPDATE_S` (0.3 s): a camera frame is
+  several frames old by the time its face is found, so correcting on every
+  frame stacked the same correction and ran the neck into its stop. A glance
+  turns at most `GLANCE_MAX` (0.6) of the neck's travel. If a glance turns
+  away from the face, flip `GLANCE_YAW_SIGN` (or `GLANCE_PITCH_SIGN`) in
+  `ai/reflexes.py`: `Palmimo.look` leaves the yaw direction unspecified.
+  `--log-level debug` logs each correction.
 
 A reflex is skipped, never queued, while an AI motion runs, so it never
 overrides the model. Wave-back wins when a wave and a bow trigger on the same
 frame. A detector that fails is logged and skipped; it never ends the AI
 session. Each reflex writes a `reflex` telemetry event. `--no-reflexes` (or
 `--no-camera`) turns them off.
+
+### Camera frames
+
+While an AI mode is live, the model sees through the head camera
+(`ai/frames.py`). Only one image is ever in the conversation: each new frame
+replaces the last, because images are billed as input tokens and the
+Realtime API re-bills the whole conversation on every turn.
+
+- **Every `FRAME_SECONDS` (10 s)** a fresh frame replaces the old one while
+  the robot is quiet (never mid-reply).
+- **When a glance starts at a face**, a frame goes at once, so the model
+  knows who arrived before they speak. A frame never makes the model talk.
+- **The `see` tool** lets the model ask for a fresh photo ("what am I
+  holding?"). The photo follows the tool result, and the model always gets
+  to answer what it saw.
+
+Every mode's prompt gets a short note saying what the images are, so a
+prompt edited on the homepage still knows. Frames are 640x480 JPEGs from the
+same stream as the viewer page. **Frames of visitors are sent to OpenAI**;
+`--no-vision` (or `--no-camera`) keeps the model blind. Each frame writes a
+`frame_push` telemetry event.
 
 ### Idle
 
@@ -199,6 +227,7 @@ to read with `jq`.
 | `ai_error` | An AI session fails | `mode`, `error` |
 | `ai_response` | The model finishes a reply | `response_id`, `status`, `spoke`, `tools`, `duration_ms`, `audio_out_s`, token counts (`input_tokens`, `cached_tokens`, `output_tokens`, `output_audio_tokens`, `reasoning_tokens`) |
 | `ai_said` | The robot finishes saying something | `response_id`, `text` (the robot's own words) |
+| `frame_push` | A camera frame is sent to the model | `reason` (`start` / `periodic` / `face` / `see`), `pushed` (count this session; not on `see`) |
 | `tool_call` | The model calls a tool | `name`, `args` (as sent), `ok`, `error`, `applied_seconds` (after the per-tool cap) |
 | `visitor_speech` | The visitor starts / stops talking | `state`, `interrupted_robot` |
 | `reflex` | A reflex decision | `reflex`: `wave` (`waves_skipped`, `since_last_s`), `bow` (`face_size`, `near_frames`, `since_last_s`), `bow_rearm` (`reason`: `face_far` / `face_lost`), `glance` (`face`, `face_size`, `target_pitch`, `target_yaw`), `glance_end` (`reason`, `duration_s`) |
@@ -417,6 +446,7 @@ uv run --with-editable ../../packages/palmimo_sdk python -m palmimo_controller.m
 | `--no-face` | off | Never attach the face display. Without this flag, a face display is attached only when one is plugged in and opens, so a robot without a face still starts |
 | `--no-reflexes` | off | In AI modes, do not wave back, bow, or glance at faces |
 | `--no-idle` | off | In AI modes, stand still between replies instead of small idle movements |
+| `--no-vision` | off | In AI modes, never send head-camera frames to OpenAI (the model then cannot see) |
 | `--log-level` | `info` | Log level for this app's loggers; `debug` adds per-change lines (motion, face, skipped reflexes and idle) |
 | `--servo-port` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0`; ignored under `--dry-run` |
 | `--audio-device` | `respeaker` | AI mode mic and speaker. `respeaker`: a development robot's ReSpeaker 4 Mic Array, with echo cancellation. `booth-usb`: an exhibition robot's push-to-talk USB mic ("USB PnP", 48 kHz, no echo cancellation; hold its button while talking) and USB speaker ("Composite") |

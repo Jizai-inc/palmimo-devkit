@@ -8,10 +8,15 @@ from palmimo_controller.ai.reflexes import (
     BOW_COOLDOWN_S,
     BOW_NEAR_FACE_FRACTION,
     BOW_NEAR_HITS,
+    CAMERA_HFOV_DEG,
     GLANCE_COOLDOWN_S,
+    GLANCE_DEADBAND,
     GLANCE_FACE_HITS,
     GLANCE_LOST_GRACE_S,
+    GLANCE_MAX,
     GLANCE_SECONDS,
+    GLANCE_UPDATE_S,
+    GLANCE_YAW_SIGN,
     WAVE_COOLDOWN_S,
     Detectors,
     Reflexes,
@@ -22,6 +27,7 @@ from palmimo_controller.ai.reflexes import (
 from palmimo_controller.ai.vision import FaceBox
 from palmimo_controller.session import AI_START_NOD_SECONDS, GESTURE_PLAY_SECONDS, PilotInput, PilotSession
 from palmimo_controller.telemetry import Telemetry
+from palmimo_sdk.engine import MotionEngine
 
 
 class FakeClock:
@@ -332,3 +338,60 @@ async def test_reflexes_log_detector_load_and_final_stats() -> None:
     await asyncio.gather(task, return_exceptions=True)
     types = [event["type"] for event in events]
     assert types[0] == "reflex_ready" and "reflex_stats" in types
+
+
+def test_glance_corrects_at_most_once_per_update_interval() -> None:
+    # Without this, every frame would stack the same correction onto the neck.
+    session, clock, _, judge = _live()
+    _see(judge, clock, Sighting(face=FACE_RIGHT), frames=GLANCE_FACE_HITS)
+    first = session.effective_input().neck_yaw
+    frame = 1.0 / 15
+    clock.now -= STEP  # back to the moment of the first correction
+    for _ in range(int(GLANCE_UPDATE_S / frame) - 1):
+        clock.now += frame
+        judge.update(Sighting(face=FACE_RIGHT), clock.now)
+    assert session.effective_input().neck_yaw == first
+
+
+def test_glance_stops_at_its_cap_when_the_face_never_moves() -> None:
+    # A face that never centers (a stale frame, a reversed yaw sign) used to
+    # drive the neck into its mechanical stop; now it stops at GLANCE_MAX.
+    session, clock, _, judge = _live()
+    _see(judge, clock, Sighting(face=(0.95, 0.05)), frames=int(GLANCE_SECONDS / STEP) - 1)
+    neck = session.effective_input()
+    assert abs(neck.neck_yaw) == GLANCE_MAX and abs(neck.neck_pitch) == GLANCE_MAX
+
+
+def test_glance_settles_on_the_face_despite_camera_delay() -> None:
+    # The neck as on hardware: frames reach the judge 0.25 s late, and the
+    # neck takes about a third of a second for its full travel. The old
+    # every-frame correction ran to the stop under exactly this delay.
+    session, clock, _, judge = _live()
+    frame_s, delay_s, neck_speed = 1.0 / 15, 0.25, 3.0  # neck_speed: normalized travel per second
+    face_deg = 15.0  # the visitor stands 15 degrees to the robot's right
+    neck = 0.0
+    history: list[tuple[float, float]] = []
+    yaws: list[float] = []
+    for _ in range(int(GLANCE_SECONDS / frame_s) - 1):
+        target = session.effective_input().neck_yaw
+        neck += max(-neck_speed * frame_s, min(neck_speed * frame_s, target - neck))
+        history.append((clock.now, neck))
+        seen = next((n for t, n in reversed(history) if t <= clock.now - delay_s), 0.0)
+        offset = (face_deg - GLANCE_YAW_SIGN * seen * MotionEngine.NECK_YAW_TRAVEL_DEG) / CAMERA_HFOV_DEG
+        judge.update(Sighting(face=(0.5 + offset, 0.5)), clock.now)
+        yaws.append(session.effective_input().neck_yaw)
+        clock.now += frame_s
+    settled = face_deg / MotionEngine.NECK_YAW_TRAVEL_DEG
+    assert max(abs(yaw) for yaw in yaws) < GLANCE_MAX
+    assert (
+        abs(yaws[-1] - GLANCE_YAW_SIGN * settled) < GLANCE_DEADBAND * CAMERA_HFOV_DEG / MotionEngine.NECK_YAW_TRAVEL_DEG
+    )
+
+
+def test_a_new_glance_reports_the_face_once() -> None:
+    # The hook sends the model a frame of who just arrived; it must not fire every frame.
+    session, clock, _, _ = _live()
+    arrivals: list[float] = []
+    judge = ReflexJudge(session, on_new_face=lambda: arrivals.append(clock.now))
+    _see(judge, clock, Sighting(face=FACE_RIGHT), frames=GLANCE_FACE_HITS + 10)
+    assert len(arrivals) == 1

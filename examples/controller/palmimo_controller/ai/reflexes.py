@@ -22,6 +22,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from palmimo_sdk.engine import MotionEngine
+
 from ..session import GESTURE_PLAY_SECONDS, PilotInput, PilotSession
 from ..telemetry import Telemetry
 from .vision import FaceBox
@@ -43,10 +45,28 @@ GLANCE_FACE_HITS: int = 3
 GLANCE_SECONDS: float = 3.0
 #: How long a glance tolerates losing the face before ending early.
 GLANCE_LOST_GRACE_S: float = 1.0
-#: Proportional gain from the face's offset (fraction of the frame) to the neck target.
-GLANCE_GAIN: float = 0.6
 #: Offset from the frame center below which the neck does not move.
 GLANCE_DEADBAND: float = 0.04
+#: Least time between two neck corrections. A frame is several frames old by
+#: the time its face is located, so correcting on every frame stacks the same
+#: correction again and again and runs the neck into its stop; waiting lets
+#: the neck arrive and the camera catch up before the next look.
+GLANCE_UPDATE_S: float = 0.3
+#: The head camera's approximate field of view, used to turn a face's offset
+#: in the frame into neck travel. Not measured; `GLANCE_DAMPING` keeps an
+#: estimate that is off by up to 2x from overshooting.
+CAMERA_HFOV_DEG: float = 60.0
+CAMERA_VFOV_DEG: float = 45.0
+#: Fraction of the measured offset each correction removes.
+GLANCE_DAMPING: float = 0.5
+#: Furthest a glance turns the neck on either axis, as a fraction of its
+#: travel: clear of the mechanical stops, and easier on the neck's heat.
+GLANCE_MAX: float = 0.6
+#: Which way the neck turns for a face right of / below the frame center.
+#: `Palmimo.look` leaves the yaw sign-to-direction mapping unspecified, so
+#: flip a sign here if a glance turns away from the face.
+GLANCE_YAW_SIGN: int = 1
+GLANCE_PITCH_SIGN: int = 1
 #: Largest face's width, as a fraction of the frame width, at which a visitor
 #: counts as "close": roughly a face leaning in over the robot.
 BOW_NEAR_FACE_FRACTION: float = 0.3
@@ -86,22 +106,32 @@ class Sighting:
     face_size: float | None = None
 
 
-def _clamp(value: float) -> float:
-    return max(-1.0, min(1.0, value))
+def _clamp(value: float, limit: float = 1.0) -> float:
+    return max(-limit, min(limit, value))
 
 
 class ReflexJudge:
     """Turns per-frame sightings into session writes. Pure: no I/O, clock passed in."""
 
-    def __init__(self, session: PilotSession, *, telemetry: Telemetry | None = None) -> None:
+    def __init__(
+        self,
+        session: PilotSession,
+        *,
+        telemetry: Telemetry | None = None,
+        on_new_face: Callable[[], None] | None = None,
+    ) -> None:
         self._session = session
         self._telemetry = telemetry
+        #: Called when a glance starts at a face, so the model can be shown who arrived.
+        self._on_new_face = on_new_face
         self._last_wave: float | None = None
         self._last_glance: float | None = None
         self._face_hits = 0
         self._glance_started: float | None = None
         self._glance_face_size: float | None = None
         self._face_seen_at = 0.0
+        #: When the glance last corrected the neck, `None` before its first correction.
+        self._last_correction: float | None = None
         self._pitch = 0.0
         self._yaw = 0.0
         self._last_bow: float | None = None
@@ -212,7 +242,10 @@ class ReflexJudge:
         self._glance_started = now
         self._glance_face_size = sighting.face_size
         self._pitch, self._yaw = 0.0, 0.0
+        self._last_correction = None
         self._track(face, now)
+        if self._on_new_face is not None:
+            self._on_new_face()
         _LOG.info("AI reflex: glancing at a face")
         self._event(
             "glance",
@@ -236,13 +269,27 @@ class ReflexJudge:
             self._end_glance("face_lost", now)
 
     def _track(self, face: tuple[float, float], now: float) -> None:
+        """Move the neck part of the way toward *face*, at most once per `GLANCE_UPDATE_S`.
+
+        The offset is measured from where the neck already points, so a
+        correction is the face's remaining distance, converted from a
+        fraction of the frame to a fraction of neck travel.
+        """
         self._face_seen_at = now
+        if self._last_correction is not None and now - self._last_correction < GLANCE_UPDATE_S:
+            return
+        self._last_correction = now
         ex, ey = face[0] - 0.5, face[1] - 0.5
         if abs(ex) >= GLANCE_DEADBAND:
-            self._yaw = _clamp(self._yaw + ex * GLANCE_GAIN)
+            step = ex * CAMERA_HFOV_DEG / MotionEngine.NECK_YAW_TRAVEL_DEG * GLANCE_DAMPING
+            self._yaw = _clamp(self._yaw + GLANCE_YAW_SIGN * step, GLANCE_MAX)
         if abs(ey) >= GLANCE_DEADBAND:
-            self._pitch = _clamp(self._pitch + ey * GLANCE_GAIN)
+            step = ey * CAMERA_VFOV_DEG / MotionEngine.NECK_PITCH_TRAVEL_DEG * GLANCE_DAMPING
+            self._pitch = _clamp(self._pitch + GLANCE_PITCH_SIGN * step, GLANCE_MAX)
         self._session.set_gaze(self._pitch, self._yaw)
+        _LOG.debug(
+            "AI reflex: glance face=(%.3f, %.3f) -> pitch=%.3f yaw=%.3f", face[0], face[1], self._pitch, self._yaw
+        )
 
     def _end_glance(self, reason: str, now: float | None) -> None:
         started = self._glance_started
@@ -329,6 +376,7 @@ class Reflexes:
         session: The pilot session reflexes write intents and gaze to.
         frame_source: Returns the newest camera frame, or `None`. Blocking; runs on a worker thread.
         load_detectors: Builds (or returns cached) `Detectors`. Blocking; runs on a worker thread.
+        on_new_face: Called when a glance starts at a face (see `frames.FramePusher.nudge`).
     """
 
     def __init__(
@@ -340,10 +388,11 @@ class Reflexes:
         telemetry: Telemetry | None = None,
         period: float = REFLEX_PERIOD_S,
         now: Callable[[], float] = time.monotonic,
+        on_new_face: Callable[[], None] | None = None,
     ) -> None:
         self._frame_source = frame_source
         self._load_detectors = load_detectors
-        self._judge = ReflexJudge(session, telemetry=telemetry)
+        self._judge = ReflexJudge(session, telemetry=telemetry, on_new_face=on_new_face)
         self._telemetry = telemetry
         self._period = period
         self._now = now

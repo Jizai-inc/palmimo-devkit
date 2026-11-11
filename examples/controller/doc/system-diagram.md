@@ -29,6 +29,7 @@ flowchart LR
         Tools["ai/tools.py run_tool<br/>walk, turn, gesture, look,<br/>set_face, stop"]
         Reflexes["ai/reflexes.py Reflexes<br/>wave back, bow, glance"]
         Idle["ai/idle.py Idle<br/>look around, tilt, stretch, face"]
+        Frames["ai/frames.py FramePusher<br/>one live frame: every 10 s,<br/>on a new face, on see"]
     end
 
     Session[("session.py PilotSession<br/>single writer, mode state,<br/>effective_input(), face_cue()")]
@@ -57,6 +58,9 @@ flowchart LR
     Reflexes --> Vision
     Reflexes -->|set_ai_intent, set_gaze| Session
     Idle -->|set_idle, set_idle_face| Session
+    Video -->|latest JPEG| Frames
+    Reflexes -->|new face| Frames
+    Frames -->|image item| Realtime
 
     Session -->|effective_input, face_cue| Loop
     Loop -->|set_motion, look, step,<br/>display.set_expression| Robot

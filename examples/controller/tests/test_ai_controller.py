@@ -114,6 +114,7 @@ class Harness:
         voice: str = "coral",
         reflexes_factory: Any = None,
         idle_factory: Any = None,
+        frame_source: Any = None,
     ) -> None:
         self.session = PilotSession()
         self.session.acquire_pilot("a")
@@ -140,6 +141,7 @@ class Harness:
             start_timeout=1.0,
             reflexes_factory=reflexes_factory,
             idle_factory=idle_factory,
+            frame_source=frame_source,
         )
 
     @contextlib.contextmanager
@@ -526,3 +528,94 @@ async def test_visitor_speech_is_logged_with_whether_it_cut_the_robot_off() -> N
     assert (started["state"], started["interrupted_robot"]) == ("started", True)
     assert stopped["state"] == "stopped"
     await h.ai.stop()
+
+
+# ---- Camera frames ----
+
+
+def _session_update(h: Harness) -> SessionUpdate:
+    return next(event for event in h.client.sent if isinstance(event, SessionUpdate))
+
+
+def _images(h: Harness) -> list[ItemCreate]:
+    return [event for event in h.client.sent if isinstance(event, ItemCreate) and event.item.get("type") == "message"]
+
+
+async def test_without_frames_the_model_gets_no_see_tool_and_no_images() -> None:
+    h = Harness()
+    await _live(h)
+    await asyncio.sleep(0.02)
+    update = _session_update(h)
+    assert update.tools == TOOL_DEFINITIONS
+    assert "head camera" not in update.instructions
+    assert _images(h) == []
+    await h.ai.stop()
+
+
+async def test_with_frames_the_model_is_told_and_shown_the_room() -> None:
+    h = Harness(frame_source=lambda: b"jpeg")
+    await _live(h)
+    await _until(lambda: bool(_images(h)))
+    update = _session_update(h)
+    assert "see" in [tool["name"] for tool in update.tools]
+    assert "head camera" in update.instructions
+    assert _images(h)[0].item["content"][0]["type"] == "input_image"
+    await h.ai.stop()
+
+
+async def test_see_answers_then_shows_the_photo_and_asks_for_a_reply() -> None:
+    # The photo must follow the call it answers, and the model must get to
+    # describe it even when it already spoke ("let me look").
+    h = Harness(frame_source=lambda: b"jpeg")
+    await _live(h)
+    await _until(lambda: bool(_images(h)))
+    h.client.sent.clear()
+    h.client.push(
+        {
+            "type": "response.done",
+            "response": {
+                "output": [
+                    {"type": "message", "role": "assistant", "content": []},
+                    {"type": "function_call", "name": "see", "arguments": "{}", "call_id": "c1"},
+                ]
+            },
+        }
+    )
+    await _until(lambda: any(isinstance(event, ResponseCreate) for event in h.client.sent))
+    created = [event for event in h.client.sent if isinstance(event, ItemCreate)]
+    assert created[0].item == {"type": "function_call_output", "call_id": "c1", "output": '{"ok": true}'}
+    assert created[1].item["content"][0]["type"] == "input_image"
+    assert isinstance(h.client.sent[-1], ResponseCreate)
+    await h.ai.stop()
+
+
+async def test_see_without_a_frame_reports_an_error_to_the_model() -> None:
+    h = Harness(frame_source=lambda: None)
+    await _live(h)
+    h.client.push(
+        {
+            "type": "response.done",
+            "response": {"output": [{"type": "function_call", "name": "see", "arguments": "{}", "call_id": "c1"}]},
+        }
+    )
+    await _until(lambda: any(isinstance(event, ResponseCreate) for event in h.client.sent))
+    outputs = [event.item for event in h.client.sent if isinstance(event, ItemCreate)]
+    assert json.loads(outputs[0]["output"]) == {"ok": False, "error": "no camera frame available"}
+    assert _images(h) == []
+    await h.ai.stop()
+
+
+async def test_reflexes_get_a_new_face_hook_only_when_frames_are_on() -> None:
+    calls: list[dict[str, Any]] = []
+
+    def factory(**kwargs: Any) -> _FakeReflexes:
+        calls.append(kwargs)
+        return _FakeReflexes()
+
+    for expected, frames in ((1, None), (2, lambda: b"jpeg")):
+        h = Harness(reflexes_factory=factory, frame_source=frames)
+        await _live(h)
+        await _until(lambda count=expected: len(calls) == count)
+        await h.ai.stop()
+    assert calls[0] == {}
+    assert callable(calls[1]["on_new_face"])

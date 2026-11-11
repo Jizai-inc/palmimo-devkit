@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import json
 import logging
 import time
 from collections.abc import Callable, Hashable
@@ -32,6 +33,7 @@ from ..voices import DEFAULT_VOICE
 from . import protocol
 from .audio import API_RATE, MicLevelLike, MicrophoneFeed, MicStreamLike
 from .client import RealtimeClient, RealtimeClientLike
+from .frames import SEE_TOOL, VISION_NOTE, FramePusher, LiveFrame
 from .protocol import ItemCreate, ResponseCreate, SessionUpdate
 from .tools import TOOL_DEFINITIONS, run_tool
 
@@ -93,6 +95,9 @@ class ReflexesLike(Protocol):
 
 
 Connect = Callable[..., AbstractAsyncContextManager[RealtimeClientLike]]
+#: Builds a session's reflexes; called with `on_new_face=` when frames are on,
+#: so a newly noticed face sends the model a frame at once.
+ReflexesFactory = Callable[..., ReflexesLike]
 
 
 class _AiStopped(Exception):  # noqa: N818 -- control flow carrying the pilot's notice
@@ -135,10 +140,11 @@ class AiController:
         voice: Callable[[], str] = lambda: DEFAULT_VOICE,
         start_timeout: float = START_TIMEOUT_S,
         now: Callable[[], float] = time.monotonic,
-        reflexes_factory: Callable[[], ReflexesLike] | None = None,
+        reflexes_factory: ReflexesFactory | None = None,
         idle_factory: Callable[[], ReflexesLike] | None = None,
         mic_gain: Callable[[], float] = lambda: 1.0,
         mic_level: MicLevelLike | None = None,
+        frame_source: Callable[[], bytes | None] | None = None,
     ) -> None:
         self._session = session
         self._prompts = prompts
@@ -155,6 +161,12 @@ class AiController:
         self._idle_factory = idle_factory
         self._mic_gain = mic_gain
         self._mic_level = mic_level
+        #: The newest head-camera JPEG, or `None` to keep the model blind (see `frames`).
+        self._frame_source = frame_source
+        #: This session's frame, while a session with frames on runs.
+        self._live_frame: LiveFrame | None = None
+        #: Whether a response is being generated, so a frame waits for the robot to be quiet.
+        self._responding = False
         self._task: asyncio.Task[None] | None = None
         # Per-response bookkeeping for the `ai_response` debug event only;
         # nothing here changes how a turn is handled.
@@ -224,10 +236,11 @@ class AiController:
                 mic = await self._enter(stack, self._mic_factory(), NOTICE_MIC, "mic_unavailable")
                 async with asyncio.timeout(self._start_timeout):
                     client = await stack.enter_async_context(self._connect(model=self._model, api_key=api_key))
+                    vision = self._frame_source is not None
                     await client.send(
                         SessionUpdate(
-                            instructions=prompt,
-                            tools=TOOL_DEFINITIONS,
+                            instructions=prompt + VISION_NOTE if vision else prompt,
+                            tools=[*TOOL_DEFINITIONS, SEE_TOOL] if vision else TOOL_DEFINITIONS,
                             voice=voice,
                             rate=API_RATE,
                         )
@@ -245,15 +258,33 @@ class AiController:
                 )
                 speaker = playback
                 hold = None if mic.echo_cancelled else (lambda: speaker.speaking(tail=_ECHO_TAIL_S))
+                self._responding = False
+                pusher: FramePusher | None = None
+                if self._frame_source is not None:
+                    self._live_frame = LiveFrame(self._frame_source)
+                    pusher = FramePusher(
+                        self._live_frame,
+                        client,
+                        busy=lambda: self._responding or speaker.speaking(),
+                        telemetry=self._telemetry,
+                    )
                 async with asyncio.TaskGroup() as group:
                     group.create_task(
                         MicrophoneFeed(mic.stream, client, hold=hold, gain=self._mic_gain, level=self._mic_level).run()
                     )
                     group.create_task(self._route(client, playback))
+                    if pusher is not None:
+                        # FramePusher.run() only ever ends by cancellation.
+                        group.create_task(pusher.run())
                     if self._reflexes_factory is not None:
                         # Reflexes.run() only ever ends by cancellation, so it
                         # cannot take the mode down with it.
-                        group.create_task(self._reflexes_factory().run())
+                        reflexes = (
+                            self._reflexes_factory(on_new_face=pusher.nudge)
+                            if pusher is not None
+                            else self._reflexes_factory()
+                        )
+                        group.create_task(reflexes.run())
                     if self._idle_factory is not None:
                         # Idle.run() likewise only ends by cancellation.
                         group.create_task(self._idle_factory().run())
@@ -272,6 +303,7 @@ class AiController:
             if self._task is asyncio.current_task():
                 self._task = None
         finally:
+            self._live_frame = None
             if playback is not None:
                 playback.interrupt()
                 await asyncio.to_thread(playback.close)
@@ -323,6 +355,7 @@ class AiController:
             case protocol.SpeechStopped():
                 self._telemetry.event("visitor_speech", state="stopped")
             case protocol.ResponseCreated():
+                self._responding = True
                 self._response_started[event.response.id] = self._now()
                 self._response_audio_bytes = 0
                 self._current_response_id = event.response.id
@@ -331,17 +364,44 @@ class AiController:
                 _LOG.info("AI said: %s", event.transcript)
                 self._telemetry.event("ai_said", response_id=self._current_response_id, text=event.transcript)
             case protocol.ResponseDone():
+                self._responding = False
                 self._log_response(event.response)
                 calls = event.response.function_calls
+                saw_photo = False
                 for call in calls:
+                    if call.name == SEE_TOOL["name"]:
+                        saw_photo = await self._see(client, call.call_id) or saw_photo
+                        continue
                     output = run_tool(self._session, call.name, call.arguments, telemetry=self._telemetry)
                     await client.send(ItemCreate.function_call_output(call.call_id, output))
                 # Once something was said, the tool results only need to be on
                 # record: asking for another response would make it talk twice.
-                if calls and not event.response.has_message:
+                # A photo is the exception: the model asked to look, so it
+                # still has to answer what it saw.
+                if calls and (saw_photo or not event.response.has_message):
                     await client.send(ResponseCreate())
             case protocol.ErrorEvent():
                 self._raise_if_fatal(event.error)
+
+    async def _see(self, client: RealtimeClientLike, call_id: str) -> bool:
+        """Answer a `see` call: the result, then the photo as its own item, since a result is text only.
+
+        Returns:
+            bool: Whether a photo was sent.
+        """
+        frame = self._live_frame
+        jpeg = frame.newest() if frame is not None else None
+        error = None if jpeg is not None else "no camera frame available"
+        output = {"ok": True} if error is None else {"ok": False, "error": error}
+        # The result goes first, so the photo follows the call it answers.
+        await client.send(ItemCreate.function_call_output(call_id, json.dumps(output)))
+        if frame is not None and jpeg is not None:
+            await frame.replace(client, jpeg)
+        _LOG.info("AI tool call: see() -> %s", "photo sent" if error is None else f"error: {error}")
+        self._telemetry.event("tool_call", name="see", args={}, ok=error is None, error=error)
+        if error is None:
+            self._telemetry.event("frame_push", reason="see")
+        return error is None
 
     def _log_response(self, response: protocol.Response) -> None:
         """Emit one `ai_response` event: what the reply did, how long it took, and what it cost."""
