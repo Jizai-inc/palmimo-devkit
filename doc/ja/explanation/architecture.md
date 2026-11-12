@@ -149,3 +149,5 @@ scripts/                                # Supported user diagnostics (diagnose_s
 - **ランタイム** — `uv`（[ソフトウェアのセットアップ](../guides/installation.md)が成功する必要があります）
 - **シリアルの権限** — 実行ユーザーが `dialout` グループに所属していること
 - **デバイス名** — `udev` による安定した OpenRB-150 のポート名（USB の抜き差しで番号が変わらないよう固定します）
+
+顔のバックエンドはプロトコル 2 のアセットプレーヤーです。platform が FW とアセットの保存を所有し、FaceDisplay が直列化した再生命令とタップ通知を所有します。目録は宣言と実機の情報を照合するため、語彙は実際に入っているアセットに追従します。[FaceDisplay](../reference/api-reference.md#facedisplay) を参照してください。

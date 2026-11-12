@@ -413,6 +413,11 @@ stops or an SSH session drops.
   whether the robot is bearing load. That is not in tension with leaving torque on
   above: a guard acts while control still works, this is what happens when it does not
 
+The face backend is a protocol 2 asset player. The platform owns firmware and
+asset storage; FaceDisplay owns serialized playback commands and tap delivery.
+Its catalog joins declarations with live firmware metadata, so vocabulary follows
+the assets actually installed. See [FaceDisplay](../reference/api-reference.md#facedisplay).
+
 ## I/O Runtime Environment Requirements
 
 `palmimo_sdk`'s core is hardware-independent, but the execution host that drives real

@@ -667,10 +667,11 @@ so guarding each step against `Exception` alone let it escape with the
 peripherals half-closed and the servos still energised.
 
 ### `robot.set_expression(name: str, hold_ms: int = 0) -> str | None`
-Show a face expression. `name` is case-insensitive; firmware aliases resolve
-on-device. `hold_ms > 0` auto-returns the face to IDLE after that many ms; `0`
-(default) holds until the next expression. Returns the firmware reply line, or
-`None` when no display is attached (a no-op).
+Deprecated display alias for `robot.display.play("palmimo/" + name.lower())`;
+when attached, the display emits `DeprecationWarning`. `hold_ms > 0` returns to
+idle after that many milliseconds; `0` holds until another display command.
+Returns the firmware reply, or `None` when no display is attached.
+See [FaceDisplay](#facedisplay) for the asset API.
 
 ### `robot.say(text: str, lang: str | None = None) -> SpeechHandle | None`
 Speak `text` through the attached speaker (non-blocking). `lang` (`"en"` /
@@ -1579,6 +1580,68 @@ Raises `PortDetectionError` when zero or multiple candidates are found.
 Calling it yourself is only needed to print or log the resolved path —
 `DynamixelDriver(port=None)` (the default) runs the same detection at
 `connect()` time, mirroring `FaceDisplay(port=None)`.
+
+## FaceDisplay
+
+`FaceDisplay(port=None, *, timeout=1.0, on_power_event=None,
+serial_factory=None, connect_timeout=5.0)` is the protocol 2 client. `connect()`
+reserves the display, opens its serial port, starts the event reader, and checks
+`HELLO`. An incompatible protocol (including v1's `ERR HELLO (try LIST)`) raises
+`FaceDisplayFirmwareError`, a `FaceDisplayError` subclass, and closes the port.
+The platform must switch the firmware before the app starts. The SDK ships
+`palmimo_sdk/display_firmware.json` declaring schema 1, protocol 2;
+[the protocol reference](display-protocol.md) owns the wire and firmware-selection
+contract. `disconnect()` closes the port and invalidates the catalog cache.
+
+| Method | Result and behavior |
+|---|---|
+| `play(id, hold_ms=None)` | Reply string. Loops a standard asset or a present, described asset of the current app. A positive integer `hold_ms` returns to idle afterwards; `None` holds indefinitely. Standard names are always allowed, including ones absent from the catalog; firmware reports missing assets. Other IDs raise `ValueError` before sending PLAY |
+| `stop()` / `idle()` | Reply string. Idle screen, leaving live frames and resetting parameters; `idle()` is a compatibility alias |
+| `param(sid, *values)` | Reply string. Finite decimal slot values. `ERR PARAM NOSLOT` logs a warning and is returned without an exception, allowing standard assets to be replaced by images |
+| `on_tap(callback)` | Registers `callback(x, y)`, or `None` to unsubscribe. Coordinates are panel pixels, 0–479 |
+| `power(on)` / `wake()` | Reply string. Change power / play the wake screen |
+| `set_brightness(percent)` | Reply string. Integer 0–100; invalid input raises `ValueError` |
+| `ping()` | `True` after PONG; failures raise `FaceDisplayError` |
+| `version()` | Firmware version string |
+| `stat()` | Dictionary of firmware status strings, including `power` and `proto` |
+| `assets()` | All ASSET LIST pages as dictionaries with `id`, `kind`, `bytes`, `crc32` |
+| `asset_info(id)` | The same metadata plus `params`, a dictionary from slot IDs to integer dimensions; follows every slot page |
+| `stream_frame(w, h, rgb565_bytes)` | Reply string. One RGB565 little-endian frame, integer dimensions 1–169 and exactly `w * h * 2` bytes. Transfers at most 16 KiB ahead of ACKs and waits for the final response |
+| `catalog(tags=(), locale=None)` | List of the described entries below, matching **all** requested tags |
+| `set_expression(name, hold_ms=0)` | Deprecated alias for `play("palmimo/" + name.lower())`, with `0` mapped to an indefinite hold. Emits `DeprecationWarning`; no firmware expression aliases |
+| `list_expressions()` | Deprecated space-separated standard names from `catalog()`. Emits `DeprecationWarning`; use `catalog()` for metadata |
+
+The reader always runs, including while no command is pending. Tap callbacks and
+`on_power_event(bool)` run on that thread; keep them short and thread-safe and
+send heavy work to the app's event loop. Synchronous display commands from a
+callback raise `FaceDisplayError`. Callback exceptions are logged; the reader
+continues. Commands are serialized through their final replies, with events
+skipped. `timeout` bounds each command or whole frame transfer; the serial open
+has the separate `connect_timeout` deadline. Firmware final errors raise
+`FaceDisplayError` except NOSLOT above. Timeouts, malformed replies, interrupted
+transfers, I/O failures, and `ERR XFER TIMEOUT` close the connection; reconnect
+before reuse so a delayed reply cannot satisfy another command. Asset storage
+commands (PUT, DEL, READ) are not exposed.
+
+### Catalog entries
+
+`catalog()` joins the platform's standard declarations and the current app's
+resolved declarations with ASSET LIST and ASSET INFO. The declaration format and
+paths belong to [Display assets](app-manifest.md#display-assets).
+`PALMIMO_APP_ID` selects the app; when unset there are no app assets. Only standard
+and that app's described, present assets are offered. Declared IDs absent from
+firmware are omitted with a counted diagnostic identifying synchronization as the
+reason. Missing or malformed declaration files and invalid entries are logged.
+The first catalog query caches declarations and live metadata until reconnect.
+
+Each entry has `id`, `kind` (`vector`, `image`, `gif`), `description`, `tags`,
+`params` (slot ID → `{"description": str, "dim": int}`), and `translations`.
+Only declared slots that remain in the live asset are included. `kind` and `dim`
+come from firmware, so replacing a vector asset with an image removes its slots.
+`translations` retains the declaration's locale map. `locale` selects each
+asset/parameter description by exact locale, then base language, then original
+text; `None` uses the original. Returned entries can be modified without changing
+the cached catalog.
 
 ### `find_face_port() -> str | None`
 Return the serial device path of the attached face display, or `None` when none is found. It matches the face display's USB vendor ID (`0x2E8A`), so on a Pi, where the face and the servo bus both appear as `/dev/ttyACM*`, it picks the face and not the bus. With several face displays attached it logs a warning and returns the first.

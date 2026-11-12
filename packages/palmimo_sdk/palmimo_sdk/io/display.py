@@ -1,39 +1,28 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Jizai Inc.
-"""FaceDisplay — the thin host-side client for the face display.
+"""Asset playback client for the face display protocol v2.
 
-The face is its own microcontroller (the face-display MCU) running the
-face-display firmware and exposing a 1-line serial contract over USB-CDC. Emotion
-*decisions* live on the host (Pi/PC); this class just speaks that contract — one
-method per firmware command (``set_expression`` → ``EXPR``, ``wake`` → ``WAKE``,
-…). The display draws; we tell it what.
-
-    from palmimo_sdk import FaceDisplay
-
-    with FaceDisplay() as face:        # auto-detects the face-display USB-CDC port
-        face.wake()                    # boot animation → yellow IDLE
-        face.set_expression("happy", hold_ms=3000)   # 3s smile, then auto-IDLE
-
-The display also *emits* one event: a screen double-tap → power-toggle confirm
-dialog sends ``EVT POWER ON|OFF``. Pass ``on_power_event=`` to react to it (the
-read thread invokes the callback off the main thread).
-
-``pyserial`` is a base dependency (the ``palmimo-sdk[face]`` extra names it so a
-project driving the face declares what it uses). It is imported lazily in
-:meth:`connect`, so compute-only use never opens the serial stack — mirroring
-how :class:`DynamixelDriver` defers ``dynamixel_sdk``.
-
-Protocol contract: the face-display firmware's README, published with the
-firmware release.
+The wire contract is documented in ``doc/reference/display-protocol.md``.
+The SDK owns playback and events; asset storage is managed by the platform.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import math
+import os
 import queue
+import re
 import threading
-from collections.abc import Callable
-from typing import Any
+import time
+import warnings
+import zlib
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, NoReturn
 
 from ..reservation import Reservation, acquire_resource
 from ._timeout import ProbeTimeoutError, run_with_timeout
@@ -56,23 +45,13 @@ BAUDRATE = 115200
 # (see _timeout.py).
 _CONNECT_TIMEOUT_S = 5.0
 
-# The 12 expressions baked into the firmware. Aliases the
-# firmware also accepts (GRIN, JOY, …) are resolved on-device, so they work too;
-# this set is just what `LIST` would return and what we validate against.
-EXPRESSIONS = (
-    "HAPPY",
-    "SMILE",
-    "LAUGH",
-    "LOVE",
-    "SAD",
-    "ANGRY",
-    "SURPRISED",
-    "THINKING",
-    "SLEEPY",
-    "SLEEP",
-    "IDEA",
-    "HEART",
-)
+STANDARD_CATALOG_PATH = Path("/usr/local/share/palmimo/display-assets/catalog.json")
+APP_ASSETS_ROOT = Path("/run/palmimo/apps")
+_ASSET_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[a-z0-9][a-z0-9._-]{0,39}")
+_APP_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}")
+_SLOT_ID = re.compile(r"[a-z0-9_]{1,32}")
+_CRC = re.compile(r"[0-9a-f]{8}")
+_KINDS = {"vector", "image", "gif"}
 
 
 class FaceDisplayError(RuntimeError):
@@ -87,6 +66,14 @@ class FaceDisplayConnectTimeoutError(FaceDisplayError):
     this fires when a port WAS resolved but opening it never completed -- e.g.
     no face attached, or the matched port belongs to a different device.
     """
+
+
+class _FirmwareReplyError(FaceDisplayError):
+    """A consumed firmware error leaves the line protocol synchronized."""
+
+
+class FaceDisplayFirmwareError(FaceDisplayError):
+    """Firmware is incompatible; the platform must switch to protocol 2."""
 
 
 def find_face_port() -> str | None:
@@ -111,23 +98,19 @@ def find_face_port() -> str | None:
 
 
 class FaceDisplay:
-    """Host-side serial client for the face display.
+    """Serial client for protocol 2 asset playback.
 
     Args:
-        port (str | None): Serial device of the face (e.g. ``/dev/ttyACM0`` / ``COM3``). When
-            ``None`` (default) the port is auto-detected by USB vendor id at
-            :meth:`connect` time (see :func:`find_face_port`).
-        timeout (float): Read timeout in seconds for command replies / event polling.
-        on_power_event (callable | None): Called as ``on_power_event(power_on: bool)`` when the display sends
-            ``EVT POWER ON|OFF`` (screen double-tap → confirm dialog YES). When set,
-            a daemon reader thread starts on :meth:`connect`; the callback runs on
-            that thread, so keep it short / thread-safe.
-        serial_factory (callable): Seam for tests — builds the underlying serial object. Defaults to
-            ``serial.Serial``; a fake implementing ``write``/``readline``/``close``
-            can be injected without hardware.
-        connect_timeout (float): Seconds before :meth:`connect` gives up with
-            :class:`FaceDisplayConnectTimeoutError` instead of hanging (default
-            :data:`_CONNECT_TIMEOUT_S`; contract details in :mod:`palmimo_sdk.io._timeout`).
+        port: Serial device, or None for USB vendor auto-detection.
+        timeout: Command deadline in seconds, including transfer progress.
+        on_power_event: Optional power callback, called on the reader thread.
+            Keep callbacks short and thread-safe; enqueue work on your event loop.
+        serial_factory: Injectable serial transport factory for hardware-free use.
+        connect_timeout: Deadline for port detection and opening, in seconds.
+            HELLO additionally uses the command timeout.
+
+    Synchronous commands from reader callbacks raise FaceDisplayError. The client
+    closes on I/O failure, timeout, or malformed replies; reconnect before reuse.
     """
 
     def __init__(
@@ -139,6 +122,8 @@ class FaceDisplay:
         serial_factory: Callable[..., Any] | None = None,
         connect_timeout: float = _CONNECT_TIMEOUT_S,
     ) -> None:
+        if timeout <= 0 or not math.isfinite(timeout):
+            raise ValueError("timeout must be finite and positive")
         self._port = port
         self._timeout = timeout
         self._on_power_event = on_power_event
@@ -146,13 +131,14 @@ class FaceDisplay:
         self._connect_timeout = connect_timeout
         self._ser: Any = None
         self._reservation: Reservation | None = None
-        # The reader thread (when on_power_event is set), a lock that serializes
-        # command writes + their reply wait, and the queue the reader hands
-        # command replies back on (reads happen only on the reader thread).
         self._reader: threading.Thread | None = None
         self._stop = threading.Event()
-        self._io_lock = threading.Lock()
-        self._reply_queue: queue.Queue[str] = queue.Queue()
+        self._io_lock = threading.RLock()
+        self._state_lock = threading.RLock()
+        self._reply_queue: queue.Queue[str | FaceDisplayError] = queue.Queue()
+        self._on_tap: Callable[[int, int], None] | None = None
+        self._catalog: list[dict[str, Any]] | None = None
+        self._app_id: str | None = None
 
     # ---- lifecycle ----------------------------------------------------
 
@@ -161,19 +147,27 @@ class FaceDisplay:
         return self._ser is not None
 
     def connect(self) -> None:
-        """Open the serial port (auto-detecting it when *port* was ``None``).
+        """Open, reserve, and check HELLO; reject firmware other than protocol 2."""
+        if threading.current_thread() is self._reader:
+            raise FaceDisplayError("Cannot connect from a display callback")
+        with self._io_lock:
+            self._connect()
 
-        Starts the ``EVT POWER`` reader thread when an ``on_power_event``
-        callback was given. Raises :class:`FaceDisplayError` if no face can be
-        found or the port cannot be opened, and
-        :class:`FaceDisplayConnectTimeoutError` (a subclass of
-        :class:`FaceDisplayError`) if port auto-detection + the serial open
-        together exceed :attr:`_connect_timeout` seconds — see
-        :mod:`palmimo_sdk.io._timeout`.
-        """
+    def _connect(self) -> None:
         if self.is_connected:
             return
 
+        if self._reader is not None and self._reader.is_alive():
+            if self._reader is threading.current_thread():
+                raise FaceDisplayError("Cannot reconnect from a display callback")
+            self._reader.join(timeout=self._timeout + 0.5)
+            if self._reader.is_alive():
+                raise FaceDisplayError("Previous display reader has not stopped")
+        self._reply_queue = queue.Queue()
+        self._stop = threading.Event()
+        self._catalog = None
+        app_id = os.environ.get("PALMIMO_APP_ID")
+        self._app_id = app_id if app_id and "." in app_id and _APP_ID.fullmatch(app_id) else None
         factory = self._serial_factory
         if factory is None:
             import serial  # lazy: keeps `import palmimo_sdk` dependency-free
@@ -194,7 +188,7 @@ class FaceDisplay:
             resolved_port.append(port)
             reservation = acquire_resource("display")
             try:
-                ser = factory(port, BAUDRATE, timeout=self._timeout)
+                ser = factory(port, BAUDRATE, timeout=min(self._timeout, 0.1))
             except BaseException as exc:
                 reservation.release()
                 if not isinstance(exc, Exception):
@@ -235,32 +229,61 @@ class FaceDisplay:
             previous_reservation.release()
         self._port = port
 
-        if self._on_power_event is not None:
-            self._stop.clear()
-            self._reader = threading.Thread(target=self._read_loop, name="face-evt", daemon=True)
+        self._reader = threading.Thread(
+            target=self._read_loop,
+            args=(self._ser, self._stop, self._reply_queue),
+            name="face-evt",
+            daemon=True,
+        )
+        try:
             try:
-                self._reader.start()
-            except BaseException:
-                self._reader = None
-                self.disconnect()
-                raise
+                self._ser.write_timeout = self._timeout
+            except Exception as exc:
+                raise FaceDisplayError(f"Could not configure face display: {exc}") from exc
+            self._reader.start()
+            reply = self._command("HELLO", "OK HELLO ", allow_error=True)
+            if reply == "ERR HELLO (try LIST)" or (
+                reply.startswith("OK HELLO ") and self._fields(reply[9:]).get("proto") != "2"
+            ):
+                raise FaceDisplayFirmwareError(
+                    "Face display requires protocol 2. The platform must switch the display firmware "
+                    "before starting this app (palmimo-display-firmware desire 2 --by app-start, then ensure)."
+                )
+            if reply.startswith("ERR "):
+                raise FaceDisplayError(reply)
+            if set(self._fields(reply[9:])) != {"proto", "fw", "caps"}:
+                self._protocol_error("Invalid HELLO fields")
+        except BaseException:
+            self.disconnect()
+            raise
 
-    def disconnect(self) -> None:
-        """Stop the reader thread (if any) and close the port.
-
-        A failed close clears the connection but retains its reservation until
-        a successful reconnect and disconnect.
-        """
-        self._stop.set()
-        if self._reader is not None:
-            self._reader.join(timeout=self._timeout + 0.5)
-            self._reader = None
-        if self._ser is not None:
-            ser, self._ser = self._ser, None
+    def _drop(self, ser: Any) -> None:
+        with self._state_lock:
+            if self._ser is not ser:
+                return
+            self._stop.set()
+            self._ser = None
+            self._catalog = None
             ser.close()
             if self._reservation is not None:
                 self._reservation.release()
                 self._reservation = None
+
+    def disconnect(self) -> None:
+        """Close the port, stop events, and discard the connection's catalog.
+
+        A failed close retains the reservation until a successful reconnect.
+        Calling from an event callback is supported.
+        """
+        with self._state_lock:
+            reader, stop = self._reader, self._stop
+            try:
+                if self._ser is not None:
+                    self._drop(self._ser)
+            finally:
+                stop.set()
+        if reader is not None and reader.ident is not None and reader is not threading.current_thread():
+            reader.join(timeout=self._timeout + 0.5)
 
     def __enter__(self) -> FaceDisplay:
         self.connect()
@@ -269,133 +292,431 @@ class FaceDisplay:
     def __exit__(self, *exc: object) -> None:
         self.disconnect()
 
-    # ---- commands (one per firmware verb) -----------------------------
+    def play(self, id: str, hold_ms: int | None = None) -> str:
+        """Play a standard asset or a present, described asset belonging to this app.
+
+        Standard names are always permitted. A positive hold_ms returns to idle
+        afterwards; None holds until the next command.
+        """
+        self._validate_id(id)
+        owner = id.split("/", 1)[0]
+        if owner != "palmimo" and (owner != self._app_id or not any(asset["id"] == id for asset in self.catalog())):
+            raise ValueError("Asset is outside the standard and current app catalog")
+        if hold_ms is not None and (type(hold_ms) is not int or hold_ms <= 0):
+            raise ValueError("hold_ms must be a positive integer or None")
+        command = f"PLAY {id}" + (f" {hold_ms}" if hold_ms is not None else "")
+        return self._command(command, f"OK PLAY {id}")
 
     def set_expression(self, name: str, hold_ms: int = 0) -> str:
-        """Show an expression. ``hold_ms > 0`` auto-returns to IDLE after that.
+        """Deprecated alias for play('palmimo/' + name.lower())."""
+        warnings.warn("set_expression() is deprecated; use play()", DeprecationWarning, stacklevel=2)
+        return self.play("palmimo/" + name.lower(), hold_ms=None if hold_ms == 0 else hold_ms)
 
-        *name* is case-insensitive; firmware aliases (e.g. ``grin``, ``zzz``)
-        are accepted and resolved on-device. ``hold_ms=0`` (default) holds the
-        expression until the next command. Returns the firmware reply line.
-        """
-        arg = name.strip().upper()
-        return self._command(f"EXPR {arg} {hold_ms}" if hold_ms > 0 else f"EXPR {arg}")
+    def stop(self) -> str:
+        """Return to idle and reset all slot overrides."""
+        return self._command("STOP", "OK STOP")
 
     def idle(self) -> str:
-        """Return to the yellow IDLE (neutral) waiting face."""
-        return self._command("IDLE")
+        """Compatibility alias for stop()."""
+        return self.stop()
 
     def wake(self) -> str:
-        """Signal host-boot-complete: 💡IDEA for 3s, then rise to yellow IDLE."""
-        return self._command("WAKE")
+        """Play the wake screen, followed by idle."""
+        return self._command("WAKE", "OK WAKE")
 
     def power(self, on: bool) -> str:
-        """Sync power state: ``on=False`` → 💤SLEEP face; off→on triggers the 💡wake-up."""
-        return self._command("POWER ON" if on else "POWER OFF")
+        """Set the display power state."""
+        state = "ON" if on else "OFF"
+        return self._command(f"POWER {state}", f"OK POWER {state}")
 
     def set_brightness(self, percent: int) -> str:
-        """Set backlight brightness (0–100, clamped on-device)."""
-        return self._command(f"BL {int(percent)}")
+        """Set backlight brightness from 0 to 100."""
+        if type(percent) is not int or not 0 <= percent <= 100:
+            raise ValueError("Brightness must be an integer from 0 to 100")
+        return self._command(f"BL {percent}", f"OK BL {percent}")
 
-    def list_expressions(self) -> str:
-        """Ask the firmware for its expression vocabulary (the ``LIST`` reply)."""
-        return self._command("LIST")
+    def param(self, sid: str, *values: float) -> str:
+        """Override a playing vector slot; NOSLOT logs a warning and returns its reply."""
+        if not _SLOT_ID.fullmatch(sid) or not values or any(not math.isfinite(v) for v in values):
+            raise ValueError("PARAM requires a slot id and finite numeric values")
+        numbers = " ".join(format(Decimal(str(v)), "f") for v in values)
+        reply = self._command(f"PARAM {sid} {numbers}", f"OK PARAM {sid}", allow_error=True)
+        if reply == "ERR PARAM NOSLOT":
+            logger.warning("Display slot %s is absent from the playing asset", sid)
+        elif reply.startswith("ERR "):
+            raise FaceDisplayError(reply)
+        return reply
+
+    def on_tap(self, callback: Callable[[int, int], None] | None) -> None:
+        """Set the tap callback (panel x, y, 0–479), or None to unsubscribe.
+
+        Called on the reader thread. Do not perform heavy work or synchronous
+        display commands here; dispatch that work to your application event loop.
+        """
+        self._on_tap = callback
 
     def ping(self) -> bool:
-        """Liveness check — ``True`` when the display answers ``PONG``."""
-        return self._command("PING").strip().upper() == "PONG"
+        """Return True after PONG; failures raise FaceDisplayError."""
+        return self._command("PING", "PONG") == "PONG"
 
-    def version(self) -> str | None:
-        """Return the firmware version string, or ``None`` if the display doesn't report one.
+    def version(self) -> str:
+        """Return the firmware's version string."""
+        return self._command("VERSION", "VERSION ")[8:]
 
-        Firmware that predates the ``VERSION`` command answers with an ``ERR`` line
-        (or nothing before the timeout), which is reported as ``None``, not an error.
+    def stat(self) -> dict[str, str]:
+        """Return the firmware status key/value fields."""
+        reply = self._command("STAT", "STAT ")
+        fields = self._fields(reply[5:])
+        if fields.get("power") not in ("ON", "OFF") or fields.get("proto") != "2":
+            self._protocol_error("Invalid STAT fields")
+        return fields
+
+    def list_expressions(self) -> str:
+        """Deprecated: return space-separated standard names from the live catalog."""
+        warnings.warn("list_expressions() is deprecated; use catalog()", DeprecationWarning, stacklevel=2)
+        return " ".join(a["id"].split("/", 1)[1] for a in self.catalog() if a["id"].startswith("palmimo/"))
+
+    @staticmethod
+    def _validate_id(id: str) -> None:
+        if not _ASSET_ID.fullmatch(id) or len(id) > 127:
+            raise ValueError("Invalid display asset id")
+
+    def _fields(self, text: str) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for token in text.split(" "):
+            key, sep, value = token.partition("=")
+            if not sep or not key or not value or key in result:
+                self._protocol_error("Malformed display fields")
+            result[key] = value
+        return result
+
+    def _cursor(self, value: str, current: int) -> int | None:
+        if value == "-":
+            return None
+        if not value.isascii() or not value.isdecimal() or int(value) <= current:
+            self._protocol_error("Invalid asset pagination cursor")
+        return int(value)
+
+    def _asset(self, id: str, kind: str, size: str, crc: str) -> dict[str, Any]:
+        try:
+            self._validate_id(id)
+        except ValueError:
+            self._protocol_error("Invalid asset id in reply")
+        if kind not in _KINDS or not size.isascii() or not size.isdecimal() or not _CRC.fullmatch(crc):
+            self._protocol_error("Invalid asset metadata")
+        return {"id": id, "kind": kind, "bytes": int(size), "crc32": crc}
+
+    def assets(self) -> list[dict[str, Any]]:
+        """Return all ASSET LIST pages as id/kind/bytes/crc32 dictionaries."""
+        self._check_caller()
+        with self._io_lock:
+            return self._assets()
+
+    def _assets(self) -> list[dict[str, Any]]:
+        """Return all ASSET LIST pages as id/kind/bytes/crc32 dictionaries."""
+        result: dict[str, dict[str, Any]] = {}
+        index = 0
+        while True:
+            reply = self._command("ASSET LIST" + (f" {index}" if index else ""), "OK ASSET LIST ")
+            tokens = reply[14:].split(" ")
+            if not tokens[0].startswith("next="):
+                self._protocol_error("Missing ASSET LIST cursor")
+            for token in tokens[1:]:
+                parts = token.split(":")
+                if len(parts) != 4:
+                    self._protocol_error("Malformed ASSET LIST entry")
+                asset = self._asset(*parts)
+                if asset["id"] in result:
+                    self._protocol_error("Duplicate ASSET LIST id")
+                result[asset["id"]] = asset
+            next_index = self._cursor(tokens[0][5:], index)
+            if next_index is None:
+                return list(result.values())
+            index = next_index
+
+    def asset_info(self, id: str) -> dict[str, Any]:
+        """Return metadata and every slot page; params maps slot ids to dimensions."""
+        self._check_caller()
+        with self._io_lock:
+            return self._asset_info(id)
+
+    def _asset_info(self, id: str) -> dict[str, Any]:
+        """Return metadata and every slot page; params maps slot ids to dimensions."""
+        self._validate_id(id)
+        result: dict[str, Any] | None = None
+        params: dict[str, int] = {}
+        index = 0
+        while True:
+            prefix = f"OK ASSET INFO {id} "
+            reply = self._command(f"ASSET INFO {id}" + (f" {index}" if index else ""), prefix)
+            fields = self._fields(reply[len(prefix) :])
+            if set(fields) != {"kind", "bytes", "crc32", "next", "params"}:
+                self._protocol_error("Invalid ASSET INFO fields")
+            asset = self._asset(id, fields["kind"], fields["bytes"], fields["crc32"])
+            if result is not None and result != asset:
+                self._protocol_error("Asset metadata changed across pages")
+            result = asset
+            if fields["params"] != "-":
+                for slot in fields["params"].split(","):
+                    sid, sep, dim = slot.partition("/")
+                    if (
+                        not sep
+                        or not _SLOT_ID.fullmatch(sid)
+                        or not dim.isascii()
+                        or not dim.isdecimal()
+                        or not 1 <= int(dim) <= 144
+                        or sid in params
+                    ):
+                        self._protocol_error("Invalid asset slot metadata")
+                    params[sid] = int(dim)
+            next_index = self._cursor(fields["next"], index)
+            if next_index is None:
+                return {**result, "params": params}
+            index = next_index
+
+    def stream_frame(self, w: int, h: int, rgb565_bytes: bytes) -> str:
+        """Show one RGB565 little-endian frame, with acknowledged 16 KiB flow control."""
+        if type(w) is not int or type(h) is not int or not (1 <= w <= 169 and 1 <= h <= 169):
+            raise ValueError("STREAM dimensions must be integers from 1 to 169")
+        if len(rgb565_bytes) != w * h * 2:
+            raise ValueError("STREAM requires exactly w * h * 2 bytes")
+        with self._transaction() as deadline:
+            total = len(rgb565_bytes)
+            self._write(f"STREAM {w} {h} RGB565 {zlib.crc32(rgb565_bytes):08x}\n".encode(), deadline)
+            begin = self._reply(deadline)
+            self._check_error(begin)
+            if begin != f"OK XFER BEGIN {total} ACK=4096":
+                self._protocol_error("Invalid STREAM transfer begin")
+            sent = acknowledged = 0
+            while acknowledged < total:
+                limit = min(total, acknowledged + 16384)
+                if sent < limit:
+                    self._write(rgb565_bytes[sent:limit], deadline)
+                    sent = limit
+                line = self._reply(deadline)
+                self._check_error(line)
+                expected = min(total, acknowledged + 4096)
+                if line != f"ACK {expected}" or expected > sent:
+                    self._protocol_error("Invalid STREAM acknowledgement")
+                acknowledged = expected
+            reply = self._reply(deadline)
+            self._check_error(reply)
+            if reply != "OK STREAM":
+                self._protocol_error("Invalid STREAM final reply")
+            return reply
+
+    def catalog(self, *, tags: Iterable[str] = (), locale: str | None = None) -> list[dict[str, Any]]:
+        """Return present, described standard/current-app assets matching every tag.
+
+        Entries include id, kind, description, tags, params (description/dim), and
+        translations. Descriptions select exact locale, base language, then source.
+        Declarations and live metadata are cached until disconnect/reconnect.
         """
-        prefix = "VERSION "
-        reply = self._command("VERSION")
-        if reply.upper().startswith(prefix):
-            return reply[len(prefix) :].strip() or None
-        return None
+        self._check_caller()
+        with self._io_lock:
+            ser = self._ser
+            if self._catalog is None:
+                entries = self._load_catalog()
+                with self._state_lock:
+                    if self._ser is not ser:
+                        raise FaceDisplayError("Display disconnected while loading catalog")
+                    self._catalog = entries
+            sources = self._catalog
+        requested = set(tags)
+        result = []
+        for source in sources:
+            if not requested.issubset(source["tags"]):
+                continue
+            entry = json.loads(json.dumps(source))
+            translations = entry["translations"]
 
-    # ---- transport ----------------------------------------------------
+            def localized(key: str, original: str, translations: dict[str, Any] = translations) -> str:
+                if locale:
+                    for candidate in (locale.lower(), locale.lower().split("-", 1)[0]):
+                        value = translations.get(candidate, {}).get(key)
+                        if isinstance(value, str) and value.strip():
+                            return value
+                return original
 
-    def _command(self, line: str) -> str:
-        """Send one command line and return the firmware's reply (stripped).
+            entry["description"] = localized("description", entry["description"])
+            for sid, param in entry["params"].items():
+                param["description"] = localized(f"params.{sid}", param["description"])
+            result.append(entry)
+        return result
 
-        ``_io_lock`` serializes command writes (and the reply wait that follows),
-        so concurrent callers can't grab each other's replies. When the ``EVT``
-        reader thread is running it owns the port's *reads*, so we wait for the
-        reply on :attr:`_reply_queue`; otherwise we read it inline. Returns
-        ``""`` if no reply arrives within *timeout* — the same as a serial read
-        timeout — so liveness checks like :meth:`ping` stay boolean either way.
-        """
+    def _declarations(self, path: Path, owner: str) -> list[dict[str, Any]]:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or data.get("schema") != 1 or not isinstance(data.get("assets"), list):
+                raise ValueError("Expected catalog schema 1 with an assets array")
+        except (OSError, ValueError) as exc:
+            logger.warning("Display catalog unavailable at %s: %s", path, exc)
+            return []
+        result = []
+        for entry in data["assets"]:
+            if not isinstance(entry, dict):
+                logger.warning("Ignoring malformed display catalog entry at %s", path)
+                continue
+            id = entry.get("id")
+            description = entry.get("description")
+            tags = entry.get("tags", [])
+            params = entry.get("params", {})
+            translations = entry.get("translations", {})
+            if (
+                not isinstance(id, str)
+                or not _ASSET_ID.fullmatch(id)
+                or len(id) > 127
+                or id.split("/", 1)[0] != owner
+                or not isinstance(description, str)
+                or not description.strip()
+                or not isinstance(tags, list)
+                or any(not isinstance(tag, str) for tag in tags)
+                or not isinstance(params, dict)
+                or any(
+                    not isinstance(sid, str)
+                    or not _SLOT_ID.fullmatch(sid)
+                    or not isinstance(param, dict)
+                    or not isinstance(param.get("description"), str)
+                    or not param["description"].strip()
+                    for sid, param in params.items()
+                )
+                or not isinstance(translations, dict)
+            ):
+                logger.warning("Ignoring malformed or unowned display catalog entry at %s", path)
+                continue
+            translations = {loc: fields for loc, fields in translations.items() if isinstance(fields, dict)}
+            result.append(
+                {"id": id, "description": description, "tags": tags, "params": params, "translations": translations}
+            )
+        return result
+
+    def _load_catalog(self) -> list[dict[str, Any]]:
+        declarations = self._declarations(STANDARD_CATALOG_PATH, "palmimo")
+        if self._app_id:
+            declarations += self._declarations(APP_ASSETS_ROOT / self._app_id / "assets.json", self._app_id)
+        present = {asset["id"] for asset in self.assets()}
+        missing = sum(entry["id"] not in present for entry in declarations)
+        if missing:
+            logger.warning(
+                "Omitting %d display catalog assets: absent from firmware (not synchronized or sync failed)", missing
+            )
+        result: dict[str, dict[str, Any]] = {}
+        for entry in declarations:
+            if entry["id"] not in present:
+                continue
+            info = self.asset_info(entry["id"])
+            params = {
+                sid: {"description": param["description"], "dim": info["params"][sid]}
+                for sid, param in entry["params"].items()
+                if sid in info["params"]
+            }
+            result[entry["id"]] = {**entry, "kind": info["kind"], "params": params}
+        return list(result.values())
+
+    def _check_caller(self) -> None:
+        if threading.current_thread() is self._reader:
+            raise FaceDisplayError("Synchronous display commands cannot run on the reader callback thread")
         if self._ser is None:
             raise FaceDisplayError("Not connected. Call connect() before sending commands.")
-        payload = (line.rstrip("\r\n") + "\n").encode("ascii", "ignore")
+
+    def _protocol_error(self, message: str) -> NoReturn:
+        self.disconnect()
+        raise FaceDisplayError(message)
+
+    def _write(self, payload: bytes, deadline: float) -> None:
+        self._check_caller()
+        ser = self._ser
+        offset = 0
+        try:
+            while offset < len(payload):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Display write deadline exceeded")
+                ser.write_timeout = remaining
+                count = ser.write(payload[offset:])
+                if not isinstance(count, int) or not 0 < count <= len(payload) - offset:
+                    raise OSError("Invalid serial write count")
+                offset += count
+        except Exception as exc:
+            self.disconnect()
+            raise FaceDisplayError(f"Display write failed: {exc}") from exc
+
+    def _reply(self, deadline: float) -> str:
+        try:
+            reply = self._reply_queue.get(timeout=max(0, deadline - time.monotonic()))
+        except queue.Empty:
+            self._protocol_error("Display reply timed out; reconnect before sending another command")
+        if isinstance(reply, FaceDisplayError):
+            self._protocol_error(str(reply))
+        return reply
+
+    def _check_error(self, reply: str, *, allow_error: bool = False) -> None:
+        if reply == "ERR XFER TIMEOUT":
+            self._protocol_error(reply)
+        if reply.startswith("ERR ") and not allow_error:
+            raise _FirmwareReplyError(reply)
+
+    @contextmanager
+    def _transaction(self) -> Iterator[float]:
+        self._check_caller()
         with self._io_lock:
+            self._check_caller()
             try:
-                if self._reader is not None:
-                    # Drop any unsolicited line so we match THIS command's reply
-                    # (we're the only consumer, so draining under the lock is safe).
-                    while not self._reply_queue.empty():
-                        self._reply_queue.get_nowait()
-                    self._ser.write(payload)
-                    try:
-                        return self._reply_queue.get(timeout=self._timeout).strip()
-                    except queue.Empty:
-                        return ""
-                self._ser.write(payload)
-                reply = self._ser.readline()
-            except Exception as exc:  # re-raised as our error type
-                raise FaceDisplayError(f"Serial I/O failed for {line!r}: {exc}") from exc
-        return reply.decode("ascii", "ignore").strip()
+                yield time.monotonic() + self._timeout
+            except _FirmwareReplyError:
+                raise
+            except BaseException:
+                self.disconnect()
+                raise
 
-    def _read_loop(self) -> None:
-        """Background reader (runs only when an ``on_power_event`` callback is set).
+    def _command(self, line: str, expected: str, *, allow_error: bool = False) -> str:
+        with self._transaction() as deadline:
+            self._write((line + "\n").encode("ascii"), deadline)
+            reply = self._reply(deadline)
+            self._check_error(reply, allow_error=allow_error)
+            if reply.startswith("ERR "):
+                return reply
+            if not (reply.startswith(expected) if expected.endswith(" ") else reply == expected):
+                self._protocol_error(f"Unexpected display reply to {line!r}: {reply!r}")
+            return reply
 
-        Owns every read on the port: dispatches ``EVT POWER ON|OFF`` to the
-        callback and routes other lines (command replies / ``LIST`` output) to
-        :attr:`_reply_queue` for :meth:`_command`. Reads run *without* holding
-        ``_io_lock`` — pyserial permits a concurrent read and write — so a
-        blocking ``readline`` never stalls a command write.
-
-        A read error (USB unplugged, device reset) ends the thread *and* clears
-        the port so :attr:`is_connected` flips to ``False`` — the SDK does not
-        auto-reconnect, so a caller watching ``is_connected`` can re-``connect``.
-        """
-        while not self._stop.is_set():
-            ser = self._ser
-            if ser is None:  # mid-shutdown: wait for _stop, don't busy-spin
-                self._stop.wait(0.1)
-                continue
-            try:
+    def _read_loop(self, ser: Any, stop: threading.Event, replies: queue.Queue[str | FaceDisplayError]) -> None:
+        pending = bytearray()
+        try:
+            while not stop.is_set():
                 raw = ser.readline()
-            except Exception as exc:  # USB yank etc.: tear the connection down so
-                # is_connected reports False — callers can detect the drop and
-                # decide whether to reconnect (the SDK doesn't auto-retry).
-                logger.debug("face read loop stopped: %s", exc)
-                try:
-                    ser.close()
-                except Exception:
-                    logger.exception("Display reader cleanup failed; retaining display reservation")
-                else:
-                    self._ser = None
-                    if self._reservation is not None:
-                        self._reservation.release()
-                        self._reservation = None
-                return
-            line = raw.decode("ascii", "ignore").strip()
-            if not line:
-                continue  # idle timeout — loop and re-check _stop
-            upper = line.upper()
-            if upper.startswith("EVT POWER "):
-                arg = line[len("EVT POWER ") :].strip().upper()
-                if arg in ("ON", "OFF") and self._on_power_event is not None:
-                    try:
-                        self._on_power_event(arg == "ON")
-                    except Exception:  # never let a callback kill the reader
-                        logger.exception("on_power_event callback raised")
-            elif upper.startswith(("EVT ", "DBG")):
-                logger.debug("face: %s", line)  # other events / debug noise — not a reply
-            else:
-                self._reply_queue.put(line)  # command reply, handed to _command()
+                if not raw:
+                    continue
+                pending.extend(raw)
+                while b"\n" in pending:
+                    raw_line, _, rest = pending.partition(b"\n")
+                    pending = bytearray(rest)
+                    if len(raw_line) + 1 > 1024 or b"\r" in raw_line:
+                        raise ValueError("Invalid display line framing")
+                    line = raw_line.decode("ascii")
+                    if not line or any(ord(c) < 32 or ord(c) > 126 for c in line):
+                        raise ValueError("Invalid display reply characters")
+                    if line.startswith("EVT "):
+                        self._event(line)
+                    else:
+                        replies.put(line)
+                if len(pending) >= 1024:
+                    raise ValueError("Display line exceeds 1024 bytes")
+        except Exception as exc:
+            replies.put(FaceDisplayError(f"Display read failed: {exc}"))
+            try:
+                self._drop(ser)
+            except Exception:
+                logger.exception("Display reader cleanup failed; retaining display reservation")
+
+    def _event(self, line: str) -> None:
+        parts = line.split(" ")
+        try:
+            if len(parts) == 4 and parts[:2] == ["EVT", "TAP"] and self._on_tap:
+                x, y = int(parts[2]), int(parts[3])
+                if 0 <= x <= 479 and 0 <= y <= 479:
+                    self._on_tap(x, y)
+            elif line in ("EVT POWER ON", "EVT POWER OFF") and self._on_power_event:
+                self._on_power_event(line == "EVT POWER ON")
+        except Exception:
+            logger.exception("Display event callback failed")

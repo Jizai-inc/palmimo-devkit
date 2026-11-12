@@ -109,6 +109,7 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:FaceDisplay": frozenset({"face"}),
     "palmimo_sdk:FaceDisplayConnectTimeoutError": frozenset({"face"}),
     "palmimo_sdk:FaceDisplayError": frozenset({"face"}),
+    "palmimo_sdk:FaceDisplayFirmwareError": frozenset({"face"}),
     "palmimo_sdk:find_face_port": frozenset({"face"}),
     # -- [vision]: the head camera, over cv2.
     "palmimo_sdk:HeadCamera": frozenset({"vision"}),

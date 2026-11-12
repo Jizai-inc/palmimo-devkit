@@ -164,6 +164,10 @@ call.
 | `LEFT_LEGS` / `RIGHT_LEGS` | [1,2,3] / [4,5,6] | Side groups |
 | `self.NEUTRAL` | 2048 | Center position constant |
 
+For a motion tool that also changes the face, choose a standard or app asset
+through [FaceDisplay](../reference/api-reference.md#facedisplay); keep display I/O
+in the tool layer rather than in the engine gait.
+
 ## Choreography
 
 Once tested, add your motion to choreography sequences:

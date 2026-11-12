@@ -248,7 +248,7 @@ LeRobot プラグインのスクリプトは LeRobot の `DynamixelMotorsBus` �
 終了処理のある段階で `BaseException` が送出されても、途中で処理を終えません。例えば、Ctrl+C の連打で周辺機器のクローズ中に `KeyboardInterrupt` が届いた場合です。残りの処理も実行し、ドライバーの切断でトルクを切ってから再送出します（複数届いた場合は最初のもの）。これは `connect()` 自身の `BaseException` に対するロールバックと同じです。割り込みは `Exception` ではないため、各段階を `Exception` だけで保護すると、周辺機器が半分閉じたまま、サーボが通電した状態で抜けてしまいます。
 
 ### `robot.set_expression(name: str, hold_ms: int = 0) -> str | None`
-表情を表示します。`name` は大文字・小文字を区別せず、ファームウェアのエイリアスはデバイス上で解決します。`hold_ms > 0` では、そのミリ秒数の後に自動で IDLE へ戻ります。 `0`（デフォルト）では、次の表情まで保持します。ファームウェアの応答行を返し、ディスプレイが取り付けられていなければ `None` を返します（何もしません）。
+`robot.display.play("palmimo/" + name.lower())` に相当する非推奨の別名です。ディスプレイが接続されている場合は `DeprecationWarning` を出します。`hold_ms > 0` ならそのミリ秒数の後に待機画面へ戻り、`0` なら次の表示コマンドまで保持します。FW の応答行を返し、ディスプレイがなければ `None` を返します。[FaceDisplay](#facedisplay) のアセット API を参照してください。
 
 ### `robot.say(text: str, lang: str | None = None) -> SpeechHandle | None`
 取り付けたスピーカーで `text` を話します（ノンブロッキング）。`lang`（`"en"` / `"ja"`）はスピーカーのデフォルト音声を上書きします。キューに入れた発話の `SpeechHandle` を返し、スピーカーが取り付けられていなければ `None` です（何もしません）。
@@ -691,6 +691,36 @@ except PortDetectionError as e:
 候補がちょうど 1 つ見つかると、デバイスパス（例: `"/dev/ttyACM0"`）を返します。候補が 0 または複数ある場合は、`PortDetectionError` を送出します。
 
 自分で呼ぶ必要があるのは、解決したパスを表示したりログに記録したりする場合だけです。 `DynamixelDriver(port=None)`（デフォルト）は、`FaceDisplay(port=None)` と同様、 `connect()` 時に同じ検出を実行します。
+
+## FaceDisplay
+
+`FaceDisplay(port=None, *, timeout=1.0, on_power_event=None, serial_factory=None, connect_timeout=5.0)` はプロトコル 2 のクライアントです。`connect()` はリソースを予約してシリアルポートを開き、イベントの受信スレッドを起動し、`HELLO` を検査します。互換性のないプロトコル（v1 の `ERR HELLO (try LIST)` を含む）には `FaceDisplayError` のサブクラス `FaceDisplayFirmwareError` を送出し、ポートを閉じます。platform がアプリの起動前に FW を切り替える必要があります。SDK は schema 1、protocol 2 の `palmimo_sdk/display_firmware.json` を同梱します。通信と FW 選択の契約の正本は[通信仕様](display-protocol.md)です。`disconnect()` はポートを閉じて目録キャッシュを無効化します。
+
+| メソッド | 戻り値と動作 |
+|---|---|
+| `play(id, hold_ms=None)` | 応答文字列。標準アセット、または実機と説明のある自分のアプリのアセットをループ再生します。正の整数 `hold_ms` を指定するとその時間の後に待機画面へ戻ります。`None` は無期限です。標準の名前は目録になくても常に許可し、存在しなければ FW がエラーを返します。それ以外の ID は PLAY を送る前に `ValueError` で拒否します |
+| `stop()` / `idle()` | 応答文字列。ライブフレームを終了して待機画面へ戻り、パラメーターをリセットします。`idle()` は互換用の別名です |
+| `param(sid, *values)` | 応答文字列。有限の十進数値をスロットへ設定します。`ERR PARAM NOSLOT` は警告ログを出してそのまま返し、例外にしません。標準アセットを画像に差し替えられます |
+| `on_tap(callback)` | `callback(x, y)` を登録し、`None` で解除します。座標はパネルの画素、0〜479 です |
+| `power(on)` / `wake()` | 応答文字列。電源の変更 / 起き上がり画面の再生です |
+| `set_brightness(percent)` | 応答文字列。0〜100 の整数です。不正な入力は `ValueError` になります |
+| `ping()` | PONG で `True` を返し、失敗時は `FaceDisplayError` を送出します |
+| `version()` | FW のバージョン文字列です |
+| `stat()` | `power` と `proto` を含む状態フィールドの文字列辞書です |
+| `assets()` | ASSET LIST の全ページを `id`、`kind`、`bytes`、`crc32` の辞書の一覧として返します |
+| `asset_info(id)` | 同じメタデータと、スロット ID を整数の次元へ対応付ける `params` を返します。スロットの全ページをたどります |
+| `stream_frame(w, h, rgb565_bytes)` | 応答文字列。RGB565 little-endian の 1 フレームです。整数の寸法は 1〜169、長さはちょうど `w * h * 2` バイトです。ACK より最大 16 KiB まで先行し、最終応答を待ちます |
+| `catalog(tags=(), locale=None)` | 下記のエントリーの一覧です。指定した**すべての**タグに一致するものを返します |
+| `set_expression(name, hold_ms=0)` | 非推奨の `play("palmimo/" + name.lower())` の別名です。`0` は無期限に対応します。`DeprecationWarning` を出し、FW の表情の別名は解決しません |
+| `list_expressions()` | 非推奨の、`catalog()` にある標準名をスペースで区切った文字列です。`DeprecationWarning` を出します。メタデータには `catalog()` を使います |
+
+受信スレッドは、コマンドの待機中でなくても常に動きます。タップと `on_power_event(bool)` のコールバックはこのスレッドで実行します。短くスレッドセーフにし、重い処理はアプリのイベントループへ渡してください。コールバックから同期的な表示コマンドを呼ぶと `FaceDisplayError` になります。コールバックの例外はログに記録し、受信は継続します。コマンドは最終応答まで直列化し、イベントを読み飛ばします。`timeout` は各コマンドまたはフレーム転送全体の上限です。ポートを開く処理には別の `connect_timeout` を使います。FW の最終エラーは上記の NOSLOT を除いて `FaceDisplayError` になります。タイムアウト、不正な応答、転送の中断、I/O の失敗、`ERR XFER TIMEOUT` では接続を閉じます。遅延応答を別のコマンドの応答として扱わないよう、再利用の前に再接続してください。保存用の PUT、DEL、READ は公開しません。
+
+### 目録のエントリー
+
+`catalog()` は platform の標準宣言と自分のアプリの解決済み宣言を、ASSET LIST と ASSET INFO に照合します。宣言形式とパスの正本は[ディスプレイのアセット](app-manifest.md#ディスプレイのアセット)です。`PALMIMO_APP_ID` でアプリを選び、未設定ならアプリのアセットはありません。標準とそのアプリのもので、説明があり実機に存在するものだけを提示します。宣言があって実機にない ID は省き、件数と同期に起因する理由をログに出します。宣言ファイルの欠落・不正や不正なエントリーもログに出します。最初の問い合わせで宣言と実機の情報をキャッシュし、再接続で読み直します。
+
+各エントリーは `id`、`kind`（`vector`、`image`、`gif`）、`description`、`tags`、`params`（スロット ID → `{"description": str, "dim": int}`）、`translations` を持ちます。宣言され、現在のアセットにも残っているスロットだけを含みます。`kind` と `dim` は実機から取得するため、ベクターから画像へ差し替えるとスロットはなくなります。`translations` は宣言のロケールマップを保持します。`locale` はアセットと各パラメーターの説明を、完全一致、基本言語、元の文の順に選びます。`None` は元の文です。返されたエントリーを変更しても、キャッシュには影響しません。
 
 ### `find_face_port() -> str | None`
 接続されているフェイスディスプレイのシリアルデバイスパスを返します。見つからない場合は `None` を返します。フェイスディスプレイの USB ベンダー ID（`0x2E8A`）で照合するため、Pi のようにフェイスとサーボバスがどちらも `/dev/ttyACM*` として現れる環境でも、バスではなくフェイスを選びます。複数のフェイスディスプレイが接続されている場合は、警告を記録して最初の 1 つを返します。

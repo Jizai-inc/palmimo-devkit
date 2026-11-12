@@ -131,3 +131,5 @@ routine = [
 for pos in robot.play(routine, fps=60):
     send_to_hardware(pos)
 ```
+
+顔も変えるモーションツールでは、[FaceDisplay](../reference/api-reference.md#facedisplay) で標準または自分のアプリのアセットを選びます。表示の I/O はエンジンの歩容ではなくツール層に置いてください。

@@ -2224,9 +2224,9 @@ class Palmimo:
     def set_expression(self, name: str, hold_ms: int = 0) -> str | None:
         """Show a face expression on the attached display.
 
-        *name* is case-insensitive; firmware aliases are resolved on-device.
-        ``hold_ms > 0`` auto-returns the face to IDLE after that many ms;
-        ``0`` (default) holds until the next expression. Returns the firmware
+        Deprecated display alias: plays ``palmimo/<name.lower()>``.
+        ``hold_ms > 0`` returns to idle after that many ms;
+        ``0`` (default) holds until the next display command. Returns the firmware
         reply line, or ``None`` when no display is attached (a no-op, mirroring
         :meth:`set_p_gain` with no driver).
         """
