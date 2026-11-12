@@ -112,6 +112,7 @@ description = "Disable the head camera video feed."
 | パス | 役割 |
 |---|---|
 | [examples/teleop/palmimo.toml](../../../examples/teleop/palmimo.toml) | 上記の例 |
+| [examples/controller/palmimo.toml](../../../examples/controller/palmimo.toml) | コントローラーのマニフェスト。遠隔操作に AI 音声モードを加えたもので、`OPENAI_API_KEY` は任意です |
 | [examples/agents/companion/palmimo.toml](../../../examples/agents/companion/palmimo.toml) | コンパニオンエージェントのマニフェスト |
 | [examples/agents/companion/palmimo.realtime.toml](../../../examples/agents/companion/palmimo.realtime.toml) | コンパニオンの OpenAI Realtime 音声ランタイム。同じディレクトリ内の別アプリです |
 | [examples/agents/wakeword/palmimo.toml](../../../examples/agents/wakeword/palmimo.toml) | ウェイクワードエージェントのマニフェスト |

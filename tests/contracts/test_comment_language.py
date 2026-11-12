@@ -42,7 +42,7 @@ SOFTWARE_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_SUFFIXES = frozenset({".toml", ".yaml", ".yml", ".sh", ".json5", ".json", ".cff"})
 # These take `#` comments and carry no suffix to match on.
 CONFIG_NAMES = frozenset({".gitignore", "Makefile"})
-BINARY_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".glb"})
+BINARY_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".glb", ".wav"})
 LOG_METHODS = frozenset({"debug", "info", "warning", "error", "exception", "critical"})
 
 JAPANESE = re.compile(r"[぀-ゟ゠-ヿ一-鿿、。〃々〆〇〈-』【-〟！-｠ｦ-ﾟ]")
@@ -68,6 +68,10 @@ RUNTIME_TEXT_FILES: frozenset[str] = frozenset(
         "examples/agents/companion/palmimo_companion_agent/core/prompts/identity.md",
         "examples/agents/companion/palmimo_companion_agent/core/prompts/idle.md",
         "examples/agents/companion/palmimo_companion_agent/core/prompts/respond.md",
+        # The controller's AI mode prompts: the character each mode speaks as.
+        "examples/controller/palmimo_controller/modes/default.md",
+        "examples/controller/palmimo_controller/modes/kansai.md",
+        "examples/controller/palmimo_controller/modes/custom.md",
     }
 )
 
@@ -82,6 +86,7 @@ UNCHECKED_BY_DESIGN: Mapping[str, str] = {
             "integrations/lerobot/uv.lock",
             # Each standalone example project resolves its own.
             "examples/teleop/uv.lock",
+            "examples/controller/uv.lock",
             "examples/agents/wakeword/uv.lock",
             "examples/agents/companion/uv.lock",
         ),

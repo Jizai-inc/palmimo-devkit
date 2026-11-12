@@ -215,6 +215,7 @@ release.
 | Path | Role |
 |---|---|
 | [examples/teleop/palmimo.toml](../../examples/teleop/palmimo.toml) | The example above |
+| [examples/controller/palmimo.toml](../../examples/controller/palmimo.toml) | Controller manifest: teleop plus AI voice modes, with an optional `OPENAI_API_KEY` |
 | [examples/agents/companion/palmimo.toml](../../examples/agents/companion/palmimo.toml) | Companion agent manifest |
 | [examples/agents/companion/palmimo.realtime.toml](../../examples/agents/companion/palmimo.realtime.toml) | Companion OpenAI Realtime voice runtime, a separate app in the same directory |
 | [examples/agents/wakeword/palmimo.toml](../../examples/agents/wakeword/palmimo.toml) | Wake-word agent manifest |

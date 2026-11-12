@@ -1,0 +1,17 @@
+schema = 1
+name = "controller"
+description = "Drive Palmimo from a phone or laptop browser, then switch to an AI voice mode with one tap. Teleop works without an API key."
+command = ["palmimo-controller", "--port", "8010", "--audio-device", "{audio_device}"]
+url = "http://{host}:8010/"
+devices = ["camera", "audio", "motor_display"]
+
+[params.audio_device]
+type = "enum"
+choices = ["respeaker", "booth-usb"]
+default = "respeaker"
+description = "Mic and speaker for AI modes: respeaker for a development robot with a ReSpeaker 4 Mic Array, or booth-usb for an exhibition robot with a push-to-talk USB microphone and USB speaker (hold the mic button while talking)."
+
+[env.OPENAI_API_KEY]
+required = false
+description = "OpenAI API key for the AI voice modes. Without it, manual control still works and AI modes stay off."
+help_url = "https://platform.openai.com/api-keys"
