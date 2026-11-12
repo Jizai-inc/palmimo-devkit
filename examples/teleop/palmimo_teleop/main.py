@@ -14,8 +14,9 @@ from collections.abc import Callable
 import typer
 import uvicorn
 
-from palmimo_sdk import DynamixelDriver, HeadCamera, Palmimo, ServoDriver
+from palmimo_sdk import DynamixelDriver, FaceDisplay, HeadCamera, Palmimo, ServoDriver, find_face_port
 
+from .control import MAX_GAIT_SPEED
 from .robot_loop import RobotLoop
 from .server import create_app
 from .session import PilotSession
@@ -34,9 +35,9 @@ else:
 
 _LOG = logging.getLogger(__name__)
 
-#: Default gait speed applied to every teleop-driven motion. There is no
-#: per-frame speed scaling here (unlike the gamepad example's stick
-#: deflection) -- buttons are on/off, so one fixed speed is the whole knob.
+#: Default gait speed applied to every teleop-driven motion: the 1x that the
+#: pilot page's speed multiplier scales. There is no per-frame speed scaling
+#: (unlike the gamepad example's stick deflection) -- buttons are on/off.
 DEFAULT_GAIT_SPEED: float = 0.012
 
 #: Avoids 8765 (the MCP server) and 80/8080 (Palmimo Portal).
@@ -105,10 +106,56 @@ def _build_servo_driver(
     return None
 
 
+def _probe_face_display(port: str) -> Exception | None:
+    """Attempt one connect/disconnect probe of a fresh `FaceDisplay` on *port*.
+
+    `Palmimo.connect()` opens an attached display before the servo bus and
+    rolls everything back if it fails, so an attached display that cannot
+    open would take the servos down with it. Probing first keeps a missing
+    or broken face from costing the pilot the legs.
+    """
+    display = FaceDisplay(port=port)
+    try:
+        display.connect()
+        display.disconnect()
+    except _RESERVATION_ERRORS:
+        raise
+    except Exception as exc:  # serial-layer error, connect timeout, missing hardware extra, etc.
+        return exc
+    return None
+
+
+def _build_face_display(
+    *,
+    find_port: Callable[[], str | None] = find_face_port,
+    probe: Callable[[str], Exception | None] = _probe_face_display,
+) -> FaceDisplay | None:
+    """Build a `FaceDisplay` if one is attached and opens, else `None` (run without a face).
+
+    Attached to `Palmimo`, the display plays its wake-up animation when the
+    robot connects at server start and returns to its idle face when it
+    disconnects at shutdown. *find_port* and *probe* are injected so tests
+    run without real hardware.
+    """
+    port = find_port()
+    if port is None:
+        print("face display not found -- running without it", flush=True)
+        return None
+    exc = probe(port)
+    if exc is not None:
+        print(f"face display on {port} did not open -- running without it ({exc})", flush=True)
+        return None
+    return FaceDisplay(port=port)
+
+
 def _build_robot(*, dry_run: bool, gait_speed: float, fps: int, servo_port: str | None) -> Palmimo:
-    """Build the `Palmimo` facade: compute-only under `--dry-run`, else a probed `DynamixelDriver`."""
-    driver = None if dry_run else _build_servo_driver(servo_port)
-    return Palmimo(gait_speed=gait_speed, fps=fps, driver=driver)
+    """Build the `Palmimo` facade: compute-only with no face under `--dry-run`, else a probed
+    `DynamixelDriver` and face display."""
+    if dry_run:
+        return Palmimo(gait_speed=gait_speed, fps=fps)
+    return Palmimo(
+        gait_speed=gait_speed, fps=fps, driver=_build_servo_driver(servo_port), display=_build_face_display()
+    )
 
 
 def _build_camera(no_camera: bool) -> HeadCamera | None:
@@ -132,9 +179,11 @@ def main(
     port: int = typer.Option(DEFAULT_PORT, "--port", help="HTTP/WebSocket port to serve on."),
     fps: int = typer.Option(60, "--fps", help="Robot control loop rate in cycles per second.", min=1),
     gait_speed: float = typer.Option(
-        DEFAULT_GAIT_SPEED, "--gait-speed", help="`Palmimo` gait speed.", min=0.001, max=0.05
+        DEFAULT_GAIT_SPEED, "--gait-speed", help="`Palmimo` gait speed.", min=0.001, max=MAX_GAIT_SPEED
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Compute-only: never attach a servo driver."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Compute-only: never attach a servo driver or the face display."
+    ),
     no_camera: bool = typer.Option(False, "--no-camera", help="Never attach the head camera."),
     servo_port: str | None = typer.Option(
         None, "--servo-port", help="Servo bus serial port, e.g. /dev/ttyACM0 (auto-detected if omitted)."
@@ -148,11 +197,7 @@ def main(
     video = VideoStream(_build_camera(no_camera))
     app_instance = create_app(robot, session, robot_loop, video)
 
-    mode = (
-        "--dry-run"
-        if dry_run
-        else ("compute-only (no servo bus found)" if not robot.has_connectable_resource else "live")
-    )
+    mode = "--dry-run" if dry_run else ("compute-only (no servo bus found)" if robot.driver is None else "live")
     print(f"Palmimo teleop starting on http://0.0.0.0:{port} ({mode}). Open /pilot to drive, / to view.", flush=True)
     # Binds every interface deliberately: a phone on the same LAN reaches this
     # by the robot's Wi-Fi IP, not 127.0.0.1. See the README's Safety notes --
