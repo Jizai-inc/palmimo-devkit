@@ -122,7 +122,8 @@ one panel refresh, so old and new frames never mix.
 
 While an asset plays or `STREAM` is shown, taps are only reported: the firmware
 does not count them toward its own gestures (the power dialog and the debug
-screen). On the idle and sleep screens it does, as in v1.
+screen), and playback keeps running while the panel is touched. On the idle and
+sleep screens it counts them, as in v1.
 
 ## System screens
 
