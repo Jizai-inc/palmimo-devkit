@@ -65,7 +65,8 @@ hosts ignore the companion, retaining the original descriptions.
 }
 ```
 
-Message keys are `description`, `env.<NAME>`, or `params.<name>` and must
+Message keys are `description`, `env.<NAME>`, `params.<name>`, `assets.<name>`
+(translates the asset's `description`), or `assets.<name>.params.<sid>` and must
 refer to fields declared by that manifest. Each value is a nonblank string
 of at most 200 characters. A file is at most 64 KiB, is not a symlink, and
 contains 1–32 locale objects. Locale tags use lowercase language codes with
@@ -99,7 +100,7 @@ namespace already carries the organization or vendor, avoid putting one in
 
 | Key | Type | Required | Rule |
 |---|---|---|---|
-| `schema` | int | yes | Only `1` is accepted today |
+| `schema` | int | yes | `1`, or `2` when the manifest declares `[assets]`. A host that predates schema 2 rejects a schema 2 manifest, so the app is listed as needing a newer host instead of running without its assets |
 | `name` | string | yes | Must match `^[a-z][a-z0-9-]{0,39}$` — see [App identity](#app-identity) for what it is used for |
 | `description` | string | yes | 1-200 characters. The catalog's one-line summary |
 | `command` | array of strings | yes | The argv to execute. An array, not a shell string, so no shell ever parses it; an element may contain one or more `{param}` placeholders |
@@ -107,6 +108,7 @@ namespace already carries the organization or vendor, avoid putting one in
 | `devices` | array of strings | no | A subset of `camera`, `audio`, `motor_display`. Omitted (or empty) opens no device at all |
 | `[env.<NAME>]` | table | no | One table per environment variable the app reads — see [Environment variables](#environment-variables) |
 | `[params.<name>]` | table | no | One table per launch-time parameter — see [Parameters](#parameters) |
+| `[assets]` | table | no (schema 2 only) | Face-display assets the app plays — see [Display assets](#display-assets) |
 
 Every top-level key not in this table is a validation error — an unrecognized
 key is far more likely to be a typo silently doing nothing than a
@@ -158,12 +160,68 @@ a declared param — an undefined one is a validation error, the same way an
 unrecognized top-level key is: a typo in a placeholder name should not
 silently pass the literal `{typo}` through to argv instead of a real value.
 
+## Display assets
+
+A schema 2 manifest declares the face-display assets the app plays. The host
+converts each file when the app is installed (a file it cannot convert fails
+the install) and writes the converted assets to the display before the app
+starts. The app plays them by id, `<app ID>/<name>`; see the
+[face display protocol](display-protocol.md).
+
+```toml
+schema = 2
+
+[assets.welcome]
+file = "assets/welcome.json"      # Lottie, GIF, PNG, or JPEG
+description = "A welcoming smile for a visitor who just arrived."
+tags = ["greeting"]
+
+[assets.welcome.params.eye_color]
+description = "Eye colour as RGBA, 0-1 each."
+```
+
+| Key | Type | Required | Rule |
+|---|---|---|---|
+| `[assets.<name>]` | table | — | `<name>` matches `^[a-z0-9][a-z0-9._-]{0,39}$` and is not `include` |
+| `file` | string | yes | A path inside the app directory: relative, no `..`, not a symlink. Lottie (`.json`), GIF, PNG, or JPEG |
+| `description` | string | yes | 1-200 characters. Tells an agent when to use the asset |
+| `tags` | array of strings | no | Each matches `^[a-z0-9-]{1,32}$`; an app filters its vocabulary by tag. Omitted means `[]` |
+| `[assets.<name>.params.<sid>]` | table | no | One table per Lottie slot the app changes at run time. `<sid>` matches `^[a-z0-9_]{1,32}$` and must be a slot of that Lottie file; `description` (1-200 characters) is required. Only a Lottie file may have params. Slots of the file that are not declared here stay at their defaults and are not offered to an agent |
+| `[assets] include` | string | no | A TOML file in the app directory (relative, no `..`, not a symlink) whose only top-level key is `assets`, holding more `[assets.<name>]` tables in the same form. Its `file` paths are relative to the app directory, like the manifest's. It may not have an `include` of its own, and names must not repeat across the two files |
+
+The host checks that the standard assets plus this app's assets fit the
+display's storage and refuses the install otherwise. While the app runs, the
+host writes the resolved declarations — includes expanded, translations
+attached — to `/run/palmimo/apps/<app ID>/assets.json`, which the app can read
+and `palmimo_sdk` reads to build the app's vocabulary. Each asset's kind and
+slot dimensions come from the display itself (`ASSET INFO`), not from this file,
+so a standard asset the user replaced is described correctly:
+
+```json
+{
+  "schema": 1,
+  "assets": [
+    {
+      "id": "zip.my-app/welcome",
+      "description": "A welcoming smile for a visitor who just arrived.",
+      "tags": ["greeting"],
+      "params": {"eye_color": {"description": "Eye colour as RGBA, 0-1 each."}},
+      "translations": {"ja": {"description": "来場者を迎える笑顔", "params.eye_color": "目の色（RGBA、各 0〜1）"}}
+    }
+  ]
+}
+```
+
+The standard assets are described by a file of the same form, installed by the
+platform at `/usr/local/share/palmimo/display-assets/catalog.json`. An app can
+play standard assets and its own assets; `palmimo_sdk` offers no others.
+
 ## Validation rules
 
 A manifest fails validation — and the app cannot be listed or launched —
 if any of the following holds:
 
-- `schema` is not `1`
+- `schema` is not `1` or `2`, or `[assets]` appears with `schema = 1`
 - an unrecognized top-level key is present
 - `name` does not match its pattern
 - `command` is empty
@@ -199,6 +257,15 @@ if any of the following holds:
 - a `bool` param has no `flag`
 - a `bool` param's placeholder is mixed into a larger element instead of
   being the entire element
+- an `[assets.<name>]` table has an unrecognized key, a name outside its
+  pattern, a missing `file` or `description`, a `file` outside the app
+  directory or behind a symlink, or a tag outside its pattern
+- an `[assets.<name>.params.<sid>]` table has no `description`
+- `[assets] include` names a missing file, a file outside the app directory or
+  behind a symlink, a file with a top-level key other than `assets`, a file that
+  itself has an `include`, or a file that repeats a name
+- an `[assets.<name>.params.<sid>]` names a slot the Lottie file does not have,
+  or appears on an asset that is not a Lottie file
 
 ## Official catalog
 

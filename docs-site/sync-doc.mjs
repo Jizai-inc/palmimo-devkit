@@ -23,6 +23,7 @@ const SIDEBAR_ORDER = {
   'reference/api-reference.md': 1,
   'reference/motions.md': 2,
   'reference/app-manifest.md': 3,
+  'reference/display-protocol.md': 4,
   'explanation/architecture.md': 1,
   'explanation/motion-system.md': 2,
   'explanation/shutdown.md': 3,
