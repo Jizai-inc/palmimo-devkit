@@ -210,6 +210,8 @@ class TestCapture:
 class _WakeRecorder:
     """Records the order of everything WakeUp does, so the sequence can be asserted."""
 
+    is_connected = True
+
     def __init__(self) -> None:
         self.calls: list[str] = []
 
@@ -289,7 +291,8 @@ class TestRest:
     async def test_rest_sleeps_and_reports_plainly_without_a_reason(self, palmimo: Palmimo) -> None:
         tool = Rest.model_validate({"seconds": 0.01})
         result = tool.execute(palmimo)
-        assert result.text == "rested for a moment"
+        # The in-tree SDK notes the missing servo bus on this unconnected fixture; a released one may not yet.
+        assert result.text.removesuffix(" (no servo bus connected; nothing moved)") == "rested for a moment"
 
     async def test_cancelling_rest_reports_interrupted(self, toolset: AgentToolSet) -> None:
         # Rest used to be a bare time.sleep(): no frame boundary ever ran, so
