@@ -124,12 +124,14 @@ class FakeRobot:
         display: FakeDisplay | None = None,
         speaker: FakeSpeaker | None = None,
         camera: FakeCamera | None = None,
+        servo_connected: bool = True,
         run_raises: BaseException | None = None,
         neck_thermal_state: NeckThermalState = NeckThermalState.NORMAL,
         neck_lock_active: bool = False,
         neck_temperature_c: float | None = None,
     ) -> None:
         self.calls: list[tuple[Any, ...]] = []
+        self.is_connected = servo_connected
         self.display = display
         self.speaker = speaker
         self.camera = camera
@@ -466,6 +468,23 @@ def test_expressive_default_none_behaves_exactly_like_before_the_mixin() -> None
     result = ForwardTool().execute(cast(PalmimoLike, robot))
     assert robot.calls == [("forward",), ("run", 1.5), ("stop",), ("run", _STANCE_SETTLE_SECONDS)]
     assert result.text == "moved forward for 1.5s"  # no face/say note appended
+
+
+@pytest.mark.parametrize("attached", [True, False], ids=["attached", "no_servo_bus"])
+@pytest.mark.parametrize(
+    ("tool", "text"),
+    [
+        (ForwardTool(), "moved forward for 1.5s"),
+        (SleepTool(), "went to sleep"),
+        (WakeTool(), "woke up"),
+        (StopTool(), "stopped and recentered gaze"),
+    ],
+    ids=["forward", "sleep", "wake_up", "stop"],
+)
+def test_servo_tools_report_missing_servo_bus(tool: Tool, text: str, attached: bool) -> None:
+    robot = FakeRobot(servo_connected=attached)
+    result = tool.execute(cast(PalmimoLike, robot))
+    assert result.text == (text if attached else f"{text} (no servo bus connected; nothing moved)")
 
 
 def test_expressive_applies_face_before_the_action() -> None:

@@ -270,6 +270,14 @@ def _ran(verb: str, seconds: float) -> ToolResult:
     return ToolResult(text=f"{verb} for {seconds}s")
 
 
+_NO_SERVO_NOTE = "no servo bus connected; nothing moved"
+
+
+def _servo_observation(robot: PalmimoLike, text: str) -> ToolResult:
+    """*text*, noting that nothing moved when the robot has no servo bus."""
+    return ToolResult(text=text if robot.is_connected else f"{text} ({_NO_SERVO_NOTE})")
+
+
 # ======================================================================
 # EXPRESSIVE MIXIN (talk / show a face while moving)
 # ======================================================================
@@ -407,6 +415,8 @@ class Expressive(Tool):
             say_note = self._finish_say(handle)
         if say_note is not None:
             notes.append(say_note)
+        if not robot.is_connected:
+            notes.append(_NO_SERVO_NOTE)
         if not notes:
             return result
         return ToolResult(text=f"{result.text} ({'; '.join(notes)})", images=result.images, is_error=result.is_error)
@@ -705,7 +715,7 @@ class SleepTool(Tool):
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
         robot.sleep()
-        return ToolResult(text="went to sleep")
+        return _servo_observation(robot, "went to sleep")
 
 
 class WakeTool(Tool):
@@ -721,7 +731,7 @@ class WakeTool(Tool):
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
         robot.wake()
-        return ToolResult(text="woke up")
+        return _servo_observation(robot, "woke up")
 
 
 # ======================================================================
@@ -1049,4 +1059,4 @@ class StopTool(Tool):
         # here streams the recentering. No try/finally needed -- the motion
         # is already IDLE, so there's nothing left to stop on an exception.
         robot.run(seconds=_NECK_SETTLE_SECONDS)
-        return ToolResult(text="stopped and recentered gaze")
+        return _servo_observation(robot, "stopped and recentered gaze")
