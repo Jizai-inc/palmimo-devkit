@@ -61,7 +61,7 @@ built on an SDK that predates v2; the platform switches between the two (see
 | `ASSET PUT <id> <bytes> <crc32>` | `OK ASSET <id>` | A [transfer](#transfers). Platform tools only. Stops playback first. |
 | `ASSET DEL <id>` | `OK ASSET DEL <id>` | Platform tools only. Stops playback first. `ERR ASSET UNKNOWN` if absent. |
 | `ASSET LIST [<index>]` | `OK ASSET LIST next=<index\|-> <entry> …` | Entries are `<id>:<kind>:<bytes>:<crc32>` with `kind` `vector`, `image`, or `gif`, in a stable order. `<index>` (decimal, default `0`) is the position of the first entry to list; entries that do not fit the line continue at `next`. |
-| `ASSET INFO <id>` | `OK ASSET INFO <id> kind=<kind> bytes=<n> crc32=<crc32> params=<sid>/<dim>,…\|-` | The slots an app may set with `PARAM`. `ERR ASSET UNKNOWN` if absent. |
+| `ASSET INFO <id> [<index>]` | `OK ASSET INFO <id> kind=<kind> bytes=<n> crc32=<crc32> next=<index\|-> params=<sid>/<dim>,…\|-` | The slots an app may set with `PARAM`, in a stable order. `<index>` (decimal, default `0`) is the position of the first slot to list; slots that do not fit the line continue at `next`. `ERR ASSET UNKNOWN` if absent. |
 | `ASSET READ <id>` | `OK ASSET READ <id>` | A [read transfer](#transfers). |
 | `PLAY <id> [hold_ms]` | `OK PLAY <id>` | Plays an asset, looping. With `hold_ms`, returns to the idle screen afterwards. Leaves `STREAM` and `FRAME`. Resets every `PARAM`. `ERR PLAY UNKNOWN` if absent; `ERR PLAY POWEROFF` while the power is off; `ERR PLAY BUSY` while the power dialog is open. |
 | `STOP` | `OK STOP` | Idle screen. Leaves `STREAM` and `FRAME`. Resets every `PARAM`. |
