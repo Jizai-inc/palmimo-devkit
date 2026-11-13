@@ -19,21 +19,34 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from palmimo_companion_agent.core.tools import COMPANION_TOOL_MODELS
 from palmimo_companion_agent.pipeline.history import History
 from palmimo_companion_agent.pipeline.llm import SpeechVerdict
-from palmimo_sdk import Palmimo
+from palmimo_sdk import FaceDisplay, Palmimo
 from palmimo_sdk.agent.toolset import AgentToolSet
+
+
+class CatalogDisplay:
+    is_connected = True
+
+    def catalog(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return [
+            {"id": id, "description": "Test display asset", "tags": [], "params": {}}
+            for id in ("palmimo/happy", "palmimo/star")
+        ]
+
+    def play(self, id: str, hold_ms: int | None = None) -> str:
+        return f"OK PLAY {id}"
 
 
 @pytest.fixture
 def toolset() -> AgentToolSet:
     """A full companion :class:`~palmimo_sdk.agent.toolset.AgentToolSet` over a fresh compute-only Palmimo."""
-    ts = AgentToolSet(Palmimo(), exclude=["creep", "wave"])
+    ts = AgentToolSet(Palmimo(display=cast(FaceDisplay, CatalogDisplay())), exclude=["creep", "wave"])
     for cls in COMPANION_TOOL_MODELS.values():
         ts.register(cls)
     return ts

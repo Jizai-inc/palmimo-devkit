@@ -167,7 +167,7 @@ def build_runtime(settings: WakewordAgentSettings) -> Runtime:
     # `connect()`) so tests can inject a lightweight fake; the real default
     # factory (`DynamixelDriver`) is a true `ServoDriver`, so the cast is safe.
     robot = Palmimo(driver=cast("ServoDriver | None", driver), speaker=speaker, mic=mic)
-    toolset = AgentToolSet(robot)
+    toolset = AgentToolSet(robot, display_locale=settings.language)
     # `openai.OpenAI` structurally satisfies `ChatClientLike` at runtime, but mypy can't
     # verify it: newer `openai` SDK versions type `message.tool_calls` as a union that also
     # includes a custom-tool-call variant lacking `.function`, which `_ToolCallLike` (by

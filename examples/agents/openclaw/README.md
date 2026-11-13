@@ -196,3 +196,8 @@ removes `docker-compose.yml`, `volumes/`, and `.env` entirely, so the next
   user is (uid 1000 upstream); if a Linux host denies the container write
   access to `volumes/`, `chown -R 1000:1000 volumes/` fixes it (not needed on
   macOS Docker Desktop).
+
+The bundled Palmimo skill discovers tools through MCP `tools/list` after
+connection. Display choices come from the connected catalog through `play_asset`
+and optional motion `face` fields; there is no fixed expression/emoji list. Request
+tools again for each new connection and use only the returned IDs.

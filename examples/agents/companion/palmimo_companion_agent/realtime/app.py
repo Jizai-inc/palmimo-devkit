@@ -143,9 +143,9 @@ def build_robot(settings: RealtimeSettings) -> tuple[Palmimo, MicStream]:
     return palmimo, mic
 
 
-def build_toolset(palmimo: Palmimo, face_locator: FaceLocator) -> AgentToolSet:
+def build_toolset(palmimo: Palmimo, face_locator: FaceLocator, *, display_locale: str | None = None) -> AgentToolSet:
     """Register the companion's own tools on top of the SDK's, mirroring ``pipeline.wiring``."""
-    toolset = AgentToolSet(palmimo, exclude=EXCLUDED_TOOLS)
+    toolset = AgentToolSet(palmimo, exclude=EXCLUDED_TOOLS, display_locale=display_locale)
     tool_models = dict(COMPANION_TOOL_MODELS)
     tool_models["look_at_face"] = make_look_at_face_tool(face_locator)
     for cls in tool_models.values():
@@ -335,14 +335,8 @@ async def _run(args: argparse.Namespace) -> int:
         return 2
 
     log = EventLog.open(settings.log_path)
-    instructions = load_prompt("respond", args.reply_chars)
-    idle_prompt = load_prompt("idle")
     palmimo, _mic = build_robot(settings)
     face_locator = FaceLocator()
-    toolset = build_toolset(palmimo, face_locator)
-    respond_view = ToolView(toolset, squash_say=True)
-    idle_tools = flatten(ToolView(toolset, allow=IDLE_TOOL_NAMES, squash_say=True).to_openai_tools())
-    tools = flatten(respond_view.to_openai_tools())
     sleeping = Sleeping()
     usage = Usage(args.model)
     frame = LiveFrame(palmimo.camera)
@@ -357,6 +351,12 @@ async def _run(args: argparse.Namespace) -> int:
     # ._shutdown) always runs before this coroutine can unwind any further.
     session: RealtimeSession | None = None
     try:
+        toolset = build_toolset(palmimo, face_locator, display_locale=settings.language)
+        respond_view = ToolView(toolset, squash_say=True)
+        idle_tools = flatten(ToolView(toolset, allow=IDLE_TOOL_NAMES, squash_say=True).to_openai_tools())
+        tools = flatten(respond_view.to_openai_tools())
+        instructions = load_prompt("respond", args.reply_chars, catalog=toolset.display_catalog)
+        idle_prompt = load_prompt("idle", catalog=toolset.display_catalog)
         async with RealtimeClient.connect(model=args.model, api_key=key) as client:
             await client.send(
                 SessionUpdate(

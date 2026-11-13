@@ -38,6 +38,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING
 
+from .defaults import DEFAULT_ASSETS
 from .perception import Detection, DetectionKind
 from .tools import LOOK_AT_FACE_SEEN_MARK
 
@@ -48,12 +49,6 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-#: Face expression shown while waving back (the SDK's own uppercase vocabulary).
-_WAVE_FACE = "HAPPY"
-#: Face shown the instant the robot hears its name. Deliberately the FIRST
-#: thing the name reflex does: it needs no camera and no face in frame, so it
-#: is the only part guaranteed to happen. Turning to look is the bonus on top.
-_NAME_CALL_FACE = "HAPPY"
 #: Seconds the name reflex tracks the caller's face for, once it has answered.
 _NAME_CALL_LOOK_SECONDS = 3.0
 #: Seconds look_at_face tracks the face for on a "face" detection.
@@ -133,8 +128,12 @@ class ReflexEngine:
             _log.warning("reflex for kind=%s failed", detection.kind, exc_info=True)
 
     async def _on_wave(self, detection: Detection) -> None:
-        await self._toolset.call("wave_both", {"face": _WAVE_FACE, "reason": "reflex: waving back"})
-        self._notify(f"[reflex] waved back at {detection.summary}.")
+        args = {"reason": "reflex: waving back"}
+        if DEFAULT_ASSETS["greeting"] in {a["id"] for a in self._toolset.display_catalog}:
+            args["face"] = DEFAULT_ASSETS["greeting"]
+        result = await self._toolset.call("wave_both", args)
+        if not result.is_error:
+            self._notify(f"[reflex] waved back at {detection.summary}.")
 
     async def _on_name_call(self, detection: Detection) -> None:
         """Answer a call: show a face at once, then look for whoever called.
@@ -145,8 +144,12 @@ class ReflexEngine:
         neither -- treating the glance as the acknowledgement would leave those
         calls with no visible answer at all.
         """
-        await self._toolset.call("show_emoji", {"emoji": _NAME_CALL_FACE, "reason": "reflex: heard my name"})
-        self._notify(f"[reflex] answered a call ({detection.summary}).")
+        if DEFAULT_ASSETS["greeting"] in {a["id"] for a in self._toolset.display_catalog}:
+            played = await self._toolset.call(
+                "play_asset", {"id": DEFAULT_ASSETS["greeting"], "hold_ms": 1500, "reason": "reflex: heard my name"}
+            )
+            if not played.is_error:
+                self._notify(f"[reflex] answered a call ({detection.summary}).")
         result = await self._toolset.call(
             "look_at_face",
             {

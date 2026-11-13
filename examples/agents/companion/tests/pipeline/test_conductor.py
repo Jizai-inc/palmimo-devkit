@@ -257,7 +257,7 @@ async def test_an_ambient_only_batch_runs_respond_without_the_directed_speech_nu
     [overheard] rule makes a spoken reply optional there)."""
     history = History()
     bus = Bus()
-    llm = fake_llm_provider([tool_call_turn("set_face", {"name": "CURIOUS", "reason": "overheard something"})])
+    llm = fake_llm_provider([tool_call_turn("play_asset", {"name": "CURIOUS", "reason": "overheard something"})])
     conductor = Conductor(history, toolset, llm, bus)
     conductor.submit_speech(SpeechVerdict(kind="ambient", text="I'm hungry"), "I'm hungry")
 
