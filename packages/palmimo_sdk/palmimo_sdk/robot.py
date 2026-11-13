@@ -86,6 +86,7 @@ from .overload import (
     OverloadTrip,
 )
 from .rail import RAIL_UNDERVOLTAGE_V, RailTrip
+from .telemetry import WatchChange
 from .thermal import NECK_MOTORS as _NECK_MOTORS
 from .thermal import NeckThermalGuard, NeckThermalState
 
@@ -976,6 +977,9 @@ class Palmimo:
         than a fixed step count — keeps this robust to changes in the engine's
         idle-smoothing rate. This path works compute-only (no driver needed).
 
+        The timed glide is watched by the overload and rail guards, which only
+        record a trip, under ``"return_to_neutral"`` (see :meth:`_watch_glide`).
+
         "Neutral" here is per-joint: raw servo neutral everywhere except the
         neck pitch, whose front is the engine's rest-trimmed center (see
         :meth:`MotionEngine.neck_pitch_center`).
@@ -1036,6 +1040,9 @@ class Palmimo:
         That is safe here: the guard exists to stop the neck being commanded
         to a held-out pose while hot, and this glide only ever moves the neck
         toward center.
+
+        The leg overload and rail guards watch the glide and only record a
+        trip, under ``"wake"`` (see :meth:`_watch_glide`).
         """
         driver = self._driver
         if driver is None or not driver.is_connected:
@@ -1043,7 +1050,8 @@ class Palmimo:
         if duration <= 0:
             raise ValueError("duration must be positive.")
         self.stop()
-        self._leg_safety.end_soft_return()
+        # The ramp takes over a soft-returning arm; a release here would snap it to full gain first.
+        self._take_soft_return()
         targets = self._neutral_targets()
         pose = self._read_pose(driver)
         if pose is None:  # driver can't sense position — fall back to a single neutral command
@@ -1069,8 +1077,10 @@ class Palmimo:
             with contextlib.suppress(Exception):
                 self._write_gain(driver, _WAKE_FULL_GAIN, motors=neck)
         steps = max(1, round(duration * self._fps))
+        start = time.perf_counter()
         for s in range(1, steps + 1):
             f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
+            self._watch_glide(driver, "wake")
             if has_gain:
                 try:
                     self._write_gain(driver, int(start_gain + (_WAKE_FULL_GAIN - start_gain) * f), motors=legs)
@@ -1078,11 +1088,40 @@ class Palmimo:
                     has_gain = False  # driver can't ramp gain — keep gliding
             frame = {n: round(p + (targets.get(n, MotionEngine.NEUTRAL) - p) * f) for n, p in current.items()}
             self._write_goal(driver, frame)
-            time.sleep(1.0 / self._fps)
+            self._sleep_to_frame(start, s)
         if has_gain:
             with contextlib.suppress(Exception):
                 self._write_gain(driver, None)  # land exactly on the default gain
         self._seed_engine_pose(targets)
+
+    def _sleep_to_frame(self, start: float, frame: int) -> None:
+        """Sleep until glide *frame* is due, counted from *start* at the control rate.
+
+        Against a deadline, as :meth:`_pace` does, so the guard's bus read in each
+        frame does not stretch the glide past its duration.
+        """
+        remaining = start + frame / self._fps - time.perf_counter()
+        if remaining > 0:
+            time.sleep(remaining)
+
+    def _watch_glide(self, driver: ServoDriver, name: str) -> None:
+        """Judge the leg guards once during a glide that writes the driver directly.
+
+        Trips are recorded under *name* and nothing reacts: the glide is already
+        heading for neutral, and a leg that was the raised arm lands and takes
+        weight on the way, so every leg is judged on the leg channel, as
+        :meth:`step` judges it once the gesture has ended. A soft-returning arm
+        from an earlier trip is still let go once it is home. The sweep also
+        goes to the flight recorder, under *name*.
+        """
+        self._leg_safety.poll(driver, Motion.IDLE, (), glide=name)
+        sweep = self._leg_safety.take_sweep()
+        ride = self._flight_ride
+        if ride is not None and ride.poll(driver, name, sweep, None, self._last_goal) and not self._disconnecting:
+            self._flush_recorder()
+        tuned = self._gesture_tuned
+        if tuned is not None and tuned[0] == "soft_return":
+            self._sync_gesture_tuning()
 
     def _sleep_thermal_locked(self, driver: ServoDriver) -> None:
         """Locked (see :attr:`neck_lock_active`) :meth:`sleep` path: settle the legs, then park the
@@ -1130,6 +1169,9 @@ class Palmimo:
         hold-current-pose glide below is skipped entirely: the neck needs
         relief now, not after another ``duration`` seconds at temperature.
         See :meth:`_sleep_thermal_locked`.
+
+        The overload and rail guards watch the glide and only record a trip,
+        under ``"sleep"``: the ramp is already taking every leg limp.
         """
         driver = self._driver
         if driver is None or not driver.is_connected:
@@ -1177,10 +1219,12 @@ class Palmimo:
         # driver backfills an unnamed motor with NEUTRAL, which is the head-up
         # goal this is here to avoid, arrived at in one step instead of a glide.
         steps = max(1, round(duration * self._fps))
+        start = time.perf_counter()
         landed = dict(current)
         try:
             for s in range(1, steps + 1):
                 f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
+                self._watch_glide(driver, "sleep")
                 if has_gain:
                     try:
                         self._write_gain(driver, int(start_gain + (end_gain - start_gain) * f), motors=firm)
@@ -1200,7 +1244,7 @@ class Palmimo:
                 # Only after the write returns: sync_write raises with nothing
                 # applied, so a frame that failed is not a pose the robot reached.
                 landed = frame
-                time.sleep(1.0 / self._fps)
+                self._sleep_to_frame(start, s)
         finally:
             # However the loop ended. Each step is suppressed separately: this
             # runs on the EIO path it exists for, where the gain writes are
@@ -1289,7 +1333,12 @@ class Palmimo:
 
         Outside the neck thermal guard's reach (see :attr:`neck_lock_active`)
         like :meth:`wake` -- safe for the same reason: this glide only ever
-        moves the neck toward its neutral target, never away from it.
+        moves the neck toward its neutral target, never away from it. The
+        overload and rail guards do watch it, through :meth:`_watch_glide`.
+
+        Args:
+            duration (float): Glide time in seconds.
+            cancel_snapshot (int, optional): Cancellation snapshot, see :meth:`cancel`.
         """
         if self._driver is None or not self._driver.is_connected:
             raise RuntimeError("Timed return-to-neutral needs a connected driver.")
@@ -1310,13 +1359,15 @@ class Palmimo:
         # glide — never snaps if the bus is flaky, mirroring the current-survey
         # scripts' glide_to.
         steps = max(1, round(duration * self._fps))
+        start = time.perf_counter()
         for s in range(1, steps + 1):
             if cancel_snapshot is not None:
                 self._check_cancelled(cancel_snapshot)
             f = 0.5 * (1.0 - math.cos(math.pi * s / steps))  # 0 -> 1, eased
+            self._watch_glide(self._driver, "return_to_neutral")
             frame = {n: round(p + (targets.get(n, MotionEngine.NEUTRAL) - p) * f) for n, p in current.items()}
             self._write_goal(self._driver, frame)
-            time.sleep(1.0 / self._fps)
+            self._sleep_to_frame(start, s)
         # Seed the engine from the real pose so the first motion interpolates
         # from it instead of stale internal state.
         self._seed_engine_pose(targets)
@@ -2301,7 +2352,9 @@ class Palmimo:
         neck_sweep = self._thermal.take_sweep()
         due = False
         if self._flight_ride is not None:
-            due = self._flight_ride.poll(connected_driver, self._engine.motion, leg_sweep, neck_sweep, self._last_goal)
+            due = self._flight_ride.poll(
+                connected_driver, self._engine.motion.name.lower(), leg_sweep, neck_sweep, self._last_goal
+            )
         pos = self._engine.step()
         self._log_thermal_lockout()
         if connected_driver is not None:
@@ -2393,6 +2446,23 @@ class Palmimo:
     def last_rail_trip(self) -> RailTrip | None:
         """The most recent rail trip, kept across :meth:`connect`; ``None`` if none has happened."""
         return self._leg_safety.rail_trips.last
+
+    def drain_watch_changes(self) -> list[WatchChange]:
+        """Return and clear the changes in which motors the guards watch, oldest first.
+
+        A motor that stays silent is set aside from the guards' telemetry sweeps
+        so it cannot hide the motors behind it on the bus, and rejoins when it
+        answers a later re-check. Both are recorded here (leg and neck guards
+        together). Nothing is actuated: while a motor is set aside no guard
+        watches it. The queue keeps the most recent 64 per guard.
+        """
+        changes = [*self._leg_safety.poller.watch_changes.drain(), *self._thermal.poller.watch_changes.drain()]
+        return sorted(changes, key=lambda change: change.at)
+
+    @property
+    def unwatched_motors(self) -> tuple[str, ...]:
+        """Motors currently set aside as unresponsive by the leg and neck guards; empty when all are watched."""
+        return (*self._leg_safety.poller.unwatched, *self._thermal.poller.unwatched)
 
     def _log_thermal_lockout(self) -> None:
         """Re-log every :data:`_THERMAL_IGNORE_LOG_INTERVAL_S` while the guard keeps overriding the neck.

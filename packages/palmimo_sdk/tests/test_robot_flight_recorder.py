@@ -113,7 +113,8 @@ def test_robot_records_latch_during_wake_as_new_incident(tmp_path: Path) -> None
     step(robot, clock, 4.02)
     recorded = rows(robot)
     assert recorded[0]["trigger_bits"] == {LEG_MOTORS[0]: 32}
-    first_fast = next(row for row in recorded[1:] if row["tier"] == "fast")
+    assert any(row["tier"] == "fast" and row["motion"] == "wake" for row in recorded[1:])
+    first_fast = next(row for row in recorded[1:] if row["tier"] == "fast" and row["motion"] != "wake")
     assert {name: sample["goal"] for name, sample in first_fast["axes"].items()} == {
         name: wake_goal[name] for name in LEG_MOTORS
     }

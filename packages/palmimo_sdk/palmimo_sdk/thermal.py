@@ -107,7 +107,9 @@ class NeckThermalGuard:
     judgement (an unread motor is unknown, not healthy), so the guard keeps
     its last judgement instead of guessing -- until that judgement goes stale
     (``NECK_STALE_S``), at which point it falls back to UNMONITORED rather
-    than trusting a reading that may no longer reflect reality.
+    than trusting a reading that may no longer reflect reality. A neck motor
+    the poller has set aside as unresponsive counts as missing, so this holds
+    for as long as it stays set aside.
     """
 
     def __init__(
@@ -132,6 +134,11 @@ class NeckThermalGuard:
         # complete sweep at/below NECK_COOL_C clears it.
         self._neck_lock_active = False
         self._sweep: tuple[float, ServoTelemetry] | None = None
+
+    @property
+    def poller(self) -> TelemetryPoller:
+        """The neck telemetry poller, for the motors it has set aside and the changes it recorded."""
+        return self._poller
 
     @property
     def state(self) -> NeckThermalState:
@@ -175,7 +182,7 @@ class NeckThermalGuard:
         a timer left over from the old one.
         """
         self._sweep = None
-        self._poller.reset()
+        self._poller.reset(self._now())
         self._last_missing_log = None
 
     def poll(self, driver: ServoDriver | None) -> None:

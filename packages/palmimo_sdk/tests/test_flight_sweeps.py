@@ -59,12 +59,12 @@ def test_ride_drops_stale_leg_context_and_consumes_neck_once(tmp_path: Path) -> 
     ride.on_connect(driver)
     leg = ServoTelemetry(current={"leg_1_yaw": 50}, position={"leg_1_yaw": 1900})
     neck = ServoTelemetry(temperature={"neck_yaw": 30}, position={"neck_yaw": 1950})
-    ride.poll(driver, Motion.IDLE, (0, leg), (0, neck), {"leg_1_yaw": 2000})
+    ride.poll(driver, "idle", (0, leg), (0, neck), {"leg_1_yaw": 2000})
     driver.bits["leg_1_yaw"] = 32
     clock.now = 1
-    ride.poll(driver, Motion.IDLE, None, None, {})
+    ride.poll(driver, "idle", None, None, {})
     clock.now = 2.1
-    ride.poll(driver, Motion.IDLE, None, None, {})
+    ride.poll(driver, "idle", None, None, {})
     path = recorder.flush()
     assert path is not None
     contexts = [json.loads(line) for line in path.read_text().splitlines()[1:] if json.loads(line)["tier"] == "context"]

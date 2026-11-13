@@ -2441,6 +2441,8 @@ class _OverloadDriver(ServoDriver):
         self.torque_supported = torque_supported
         self.profile_velocity = 300
         self.telemetry_error: Exception | None = None
+        self.silent: set[str] = set()
+        self.on_write: Callable[[], None] | None = None
         self._connected = True
 
     @property
@@ -2455,6 +2457,8 @@ class _OverloadDriver(ServoDriver):
 
     def _write_positions(self, positions: dict[str, int]) -> None:
         self.writes.append(dict(positions))
+        if self.on_write is not None:
+            self.on_write()
 
     def read_positions(self) -> dict[str, int]:
         return dict(self.positions)
@@ -2463,11 +2467,21 @@ class _OverloadDriver(ServoDriver):
         self.telemetry_requests.append(None if motors is None else tuple(motors))
         if self.telemetry_error is not None:
             raise self.telemetry_error
-        wanted = motors if motors is not None else LEG_MOTORS
+        wanted = list(motors if motors is not None else LEG_MOTORS)
+        silent: tuple[str, ...] = ()
+        unreached: tuple[str, ...] = ()
+        # Like the real bus: the sweep stops at the first silent motor.
+        for i, motor in enumerate(wanted):
+            if motor in self.silent:
+                silent, unreached = (motor,), tuple(wanted[i + 1 :])
+                wanted = wanted[:i]
+                break
         return ServoTelemetry(
             current={m: self.currents[m] for m in wanted if m in self.currents},
             position={m: self.positions[m] for m in wanted if m in self.positions},
             voltage={m: self.voltages[m] for m in wanted if m in self.voltages},
+            silent=silent,
+            unreached=unreached,
         )
 
     def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
@@ -2529,6 +2543,108 @@ def test_wave_arm_trip_drops_to_idle_and_softens_only_the_arm() -> None:
     assert (trip.channel, trip.motion) == ("arm", "wave")
     assert robot.drain_overload_trips() == []
     assert robot.last_overload_trip == trip
+
+
+def test_arm_trips_when_a_motor_ahead_of_it_on_the_bus_stays_silent() -> None:
+    """A silent axis cuts every sweep short, so it is set aside rather than hiding the arm behind it."""
+    driver = _OverloadDriver()
+    driver.silent = {"leg_1_yaw"}
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800}
+
+    _poll_steps(robot, clock, 12)
+
+    assert robot.motion == "idle"
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_6_yaw", "arm", "wave")
+    assert robot.unwatched_motors == ("leg_1_yaw",)
+    (change,) = robot.drain_watch_changes()
+    assert (change.motor, change.watched) == ("leg_1_yaw", False)
+
+
+def _glide_robot(driver: _OverloadDriver) -> Palmimo:
+    """A robot waving with *driver*'s clock advancing one poll per written frame."""
+    robot, clock = _overload_robot(driver)
+    driver.on_write = lambda: clock.advance(_POLL_DT)
+    robot.wave()
+    return robot
+
+
+def test_return_to_neutral_glide_judges_the_lowered_arm_on_the_leg_channel_and_only_records() -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    # The waving arm lands and takes weight on the way: over the arm threshold, under the leg one.
+    driver.currents = {"leg_6_yaw": 800, "leg_2_pitch1": 1300}
+
+    robot.return_to_neutral(duration=0.3)
+
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_2_pitch1", "leg", "return_to_neutral")
+    assert _soft_gain_calls(driver) == []
+    assert driver.torque_calls == []
+    assert len(driver.writes) == 18  # round(0.3 s * 60 fps): the glide ran to its last frame
+
+
+def test_return_to_neutral_glide_keeps_its_duration_when_each_frame_takes_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    elapsed = [0.0]
+    monkeypatch.setattr(time, "perf_counter", lambda: elapsed[0])
+    monkeypatch.setattr(time, "sleep", lambda s: elapsed.__setitem__(0, elapsed[0] + s))
+    on_write = driver.on_write
+    assert on_write is not None
+
+    def slow_write() -> None:
+        on_write()
+        elapsed[0] += 0.005  # the bus time a frame spends
+
+    driver.on_write = slow_write
+
+    robot.return_to_neutral(duration=0.3)
+
+    assert elapsed[0] == pytest.approx(0.3)
+
+
+def test_wake_glide_records_a_trip_under_its_name() -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    driver.currents = {"leg_2_pitch1": 1300}
+
+    robot.wake(duration=0.3)
+
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_2_pitch1", "leg", "wake")
+
+
+def test_wake_ramps_an_arm_left_soft_by_a_step_trip_without_restoring_it_to_full_gain_first() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800}
+    _poll_steps(robot, clock, 12)
+    assert _soft_gain_calls(driver) == [(SOFT_RETURN_GAIN, _ARM_6)]
+    driver.currents = {}
+    before = len(driver.gain_calls)
+
+    robot.wake(duration=0.3)
+
+    assert (None, _ARM_6) not in driver.gain_calls[before:]
+
+
+def test_sleep_glide_records_a_trip_without_softening_the_arm() -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    driver.currents = {"leg_6_yaw": 1300}
+
+    robot.sleep(duration=0.3)
+
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_6_yaw", "leg", "sleep")
+    assert (SOFT_RETURN_GAIN, _ARM_6) not in _soft_gain_calls(driver)
+    assert driver.torque_calls == []
 
 
 def test_trip_frame_is_computed_but_not_written() -> None:

@@ -155,6 +155,7 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:RAIL_CONSECUTIVE": _NO_EXTRA,
     "palmimo_sdk:RAIL_UNDERVOLTAGE_V": _NO_EXTRA,
     "palmimo_sdk:RailTrip": _NO_EXTRA,
+    "palmimo_sdk:WatchChange": _NO_EXTRA,
     "palmimo_sdk:Palmimo": _NO_EXTRA,
     "palmimo_sdk:ReservationSetupError": _NO_EXTRA,
     "palmimo_sdk:ResourceBusyError": _NO_EXTRA,

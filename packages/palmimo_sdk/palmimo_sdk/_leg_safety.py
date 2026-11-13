@@ -78,6 +78,11 @@ class LegSafety:
         self._soft_return: tuple[str, ...] | None = None
         self._soft_return_monitor = SoftReturnMonitor(MotionEngine.NEUTRAL)
 
+    @property
+    def poller(self) -> TelemetryPoller:
+        """The leg telemetry poller, for the motors it has set aside and the changes it recorded."""
+        return self._poller
+
     def soft_return_under(self, motion: Motion) -> tuple[str, ...] | None:
         """Arm axes to hold at ``SOFT_RETURN_GAIN`` while *motion* runs.
 
@@ -90,16 +95,25 @@ class LegSafety:
         """
         return self._soft_return if motion in _SOFT_RETURN_MOTIONS else None
 
-    def poll(self, driver: ServoDriver | None, motion: Motion, arm_legs: tuple[int, ...]) -> bool:
+    def poll(
+        self,
+        driver: ServoDriver | None,
+        motion: Motion,
+        arm_legs: tuple[int, ...],
+        *,
+        glide: str | None = None,
+    ) -> bool:
         """Sample leg telemetry at most every ``OVERLOAD_POLL_INTERVAL_S`` and judge it.
 
         Args:
             driver (ServoDriver, optional): Connected driver to read from; ``None`` skips the poll.
             motion (Motion): The motion currently running.
             arm_legs (tuple[int, ...]): Legs acting as the raised arm under *motion*.
+            glide (str, optional): Name of a glide that writes the driver directly (``"wake"``).
+                Trips are recorded under it and never stop the glide.
 
         Returns:
-            bool: ``True`` if a guard tripped and the motion must stop.
+            bool: ``True`` if a guard tripped and the motion must stop; always ``False`` with *glide*.
         """
         if driver is None:
             self._sweep = None
@@ -127,6 +141,10 @@ class LegSafety:
                 if stale is not None:
                     stale.reset()
         self._last_sample = now
+        if self._poller.restored:
+            for guard in (self._arm_overload, self._leg_overload):
+                if guard is not None:
+                    guard.forget(self._poller.restored)
         arm = leg_motors(arm_legs)
         if self._soft_return is not None and self._soft_return_monitor.sample(telemetry.position, self._soft_return):
             self.end_soft_return()
@@ -143,8 +161,10 @@ class LegSafety:
         if self._rail is not None:
             rail_trip = self._rail.sample(telemetry.voltage, LEG_MOTORS)
             rail_trip = self._resting_sag.filter(rail_trip, resting=resting, breached=self._rail.sagging)
-        found = [replace(t, motion=motion.name.lower()) for t in trips if t is not None]
-        found_rail = replace(rail_trip, motion=motion.name.lower()) if rail_trip is not None else None
+        name = glide or motion.name.lower()
+        outcome = "the glide continues" if glide else "no leg motion to stop" if resting else "stopping"
+        found = [replace(t, motion=name) for t in trips if t is not None]
+        found_rail = replace(rail_trip, motion=name) if rail_trip is not None else None
         for trip in found:
             self.overload_trips.record(trip)
             self._logger.warning(
@@ -155,7 +175,7 @@ class LegSafety:
                 trip.threshold,
                 trip.samples,
                 trip.motion,
-                "no leg motion to stop" if resting else "stopping",
+                outcome,
             )
         if found_rail is not None:
             self.rail_trips.record(found_rail)
@@ -166,9 +186,9 @@ class LegSafety:
                 found_rail.threshold,
                 found_rail.samples,
                 found_rail.motion,
-                "no leg motion to stop" if resting else "stopping",
+                outcome,
             )
-        if (not found and found_rail is None) or resting:
+        if glide is not None or (not found and found_rail is None) or resting:
             return False
         if any(t.channel == "arm" for t in found):
             self._soft_return = arm
@@ -191,7 +211,7 @@ class LegSafety:
         self._scope = None
         self._last_sample = None
         self._sweep = None
-        self._poller.reset()
+        self._poller.reset(self._clock())
         if self._rail is not None:
             self._rail.reset()
         self._resting_strain.reset()
