@@ -1,7 +1,7 @@
 # MCP Server
 
 `palmimo_sdk.mcp` exposes the same agent tools the wake-word example drives
-(forward, wave, set_face, say, capture, ...) over the
+(forward, wave, play_asset, say, capture, ...) over the
 [Model Context Protocol](https://modelcontextprotocol.io/), so any
 MCP-speaking client — Claude Code, Claude Desktop, or another MCP agent — can
 list and call them directly. Built on the MCP Python SDK 2.x, which can

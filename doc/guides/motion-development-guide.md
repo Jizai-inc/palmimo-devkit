@@ -181,3 +181,5 @@ routine = [
 for pos in robot.play(routine, fps=60):
     send_to_hardware(pos)
 ```
+
+Register custom Expressive subclasses on the connected AgentToolSet so their face argument receives its catalog choices; see [Agent display vocabulary](../reference/api-reference.md#agent-display-vocabulary).

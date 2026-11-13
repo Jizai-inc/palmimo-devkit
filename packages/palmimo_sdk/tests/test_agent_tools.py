@@ -25,10 +25,9 @@ from palmimo_sdk.agent.tools import (
     LookCenterTool,
     LookTool,
     NodTool,
+    PlayAssetTool,
     PushupTool,
     SayTool,
-    SetFaceTool,
-    ShowEmojiTool,
     SleepTool,
     StopTool,
     StrafeTool,
@@ -61,13 +60,15 @@ except ImportError:
 
 class FakeDisplay:
     def __init__(self, *, reply: str | None = None) -> None:
-        self.calls: list[tuple[str, str, int]] = []
+        self.calls: list[tuple[str, str, int | None]] = []
+        self.robot_calls: list[tuple[Any, ...]] = []
         # When set, overrides the default "OK <NAME>" success reply -- used
         # to simulate the firmware's "ERR <name> (try LIST)" failure reply.
         self._reply = reply
 
-    def set_expression(self, name: str, hold_ms: int = 0) -> str:
-        self.calls.append(("set_expression", name, hold_ms))
+    def play(self, name: str, hold_ms: int | None = None) -> str:
+        self.calls.append(("play", name, hold_ms))
+        self.robot_calls.append(("play", name, hold_ms))
         return self._reply if self._reply is not None else f"OK {name.upper()}"
 
 
@@ -133,6 +134,8 @@ class FakeRobot:
         self.calls: list[tuple[Any, ...]] = []
         self.is_connected = servo_connected
         self.display = display
+        if display is not None:
+            display.robot_calls = self.calls
         self.speaker = speaker
         self.camera = camera
         # When set, run() records the call, then raises this instead of
@@ -227,7 +230,7 @@ class FakeRobot:
         self._record("set_expression", name, hold_ms)
         if self.display is None:
             return None
-        return self.display.set_expression(name, hold_ms)
+        return self.display.play(name, hold_ms)
 
     def say(self, text: str, lang: str | None = None) -> FakeSpeechHandle | None:
         self._record("say", text)
@@ -315,11 +318,10 @@ def test_turn_schema_has_required_direction_and_literal_enum() -> None:
     assert "seconds" not in schema["required"]  # has a default
 
 
-def test_set_face_schema_exposes_name_not_name_underscore() -> None:
-    schema = SetFaceTool.parameters_schema()
-    assert "name" in schema["properties"]
-    assert "name_" not in schema["properties"]
-    assert schema["required"] == ["name"]
+def test_asset_schema_exposes_id_and_optional_hold() -> None:
+    schema = PlayAssetTool.parameters_schema()
+    assert schema["required"] == ["id"]
+    assert "hold_ms" in schema["properties"]
 
 
 class _NestedPayload(BaseModel):
@@ -426,7 +428,7 @@ def test_long_running_true_for_movement_gesture_and_neck_tools(tool_cls: type[To
 
 @pytest.mark.parametrize(
     "tool_cls",
-    [SetFaceTool, ShowEmojiTool, SayTool, CaptureTool, StopTool, SleepTool, WakeTool],
+    [PlayAssetTool, SayTool, CaptureTool, StopTool, SleepTool, WakeTool],
 )
 def test_long_running_false_for_instant_tools(tool_cls: type[Tool]) -> None:
     """StopTool's own precedent: `sleep`/`wake_up` drive an uncancellable plain
@@ -446,11 +448,7 @@ def test_expressive_schema_adds_optional_face_and_say_without_new_required() -> 
     stays valid, and the existing required fields (e.g. TurnTool.direction)
     are untouched."""
     schema = ForwardTool.parameters_schema()
-    # Optional[Literal[...]] renders as anyOf: [{enum: [...]}, {type: "null"}].
-    face_variants = schema["properties"]["face"]["anyOf"]
-    assert {"HAPPY", "EXCITED", "SURPRISE", "CURIOUS", "THINKING", "ANGRY", "SAD", "SHY", "SLEEPY", "LOVE"} == set(
-        next(v["enum"] for v in face_variants if "enum" in v)
-    )
+    assert schema["properties"]["face"]["anyOf"] == [{"type": "string"}, {"type": "null"}]
     say_variants = schema["properties"]["say"]["anyOf"]
     assert any(v.get("type") == "string" for v in say_variants)
     assert "required" not in schema  # every ForwardTool field (including face/say) has a default
@@ -490,10 +488,10 @@ def test_servo_tools_report_missing_servo_bus(tool: Tool, text: str, attached: b
 def test_expressive_applies_face_before_the_action() -> None:
     display = FakeDisplay()
     robot = FakeRobot(display=display)
-    result = WaveTool(face="HAPPY").execute(cast(PalmimoLike, robot))
-    assert display.calls == [("set_expression", "HAPPY", 0)]
-    # set_expression is called (via robot.set_expression) before the motion starts.
-    assert robot.calls[0] == ("set_expression", "HAPPY", 0)
+    result = WaveTool(face="palmimo/happy").execute(cast(PalmimoLike, robot))
+    assert display.calls == [("play", "palmimo/happy", None)]
+    # Playback precedes the first motion command.
+    assert robot.calls[0] == ("play", "palmimo/happy", None)
     assert robot.calls[1] == ("wave",)
     assert "HAPPY" not in result.text or "not shown" not in result.text  # no failure note
 
@@ -503,7 +501,7 @@ def test_expressive_face_failure_is_noted_but_not_fatal() -> None:
     the face is noted as not-shown, but the action still runs and the result
     is not is_error."""
     robot = FakeRobot()  # no display
-    result = WaveTool(face="HAPPY").execute(cast(PalmimoLike, robot))
+    result = WaveTool(face="palmimo/happy").execute(cast(PalmimoLike, robot))
     assert robot.calls[0] == ("wave",)  # the action still ran
     assert "not shown" in result.text
     assert result.is_error is False
@@ -512,7 +510,7 @@ def test_expressive_face_failure_is_noted_but_not_fatal() -> None:
 def test_expressive_display_error_reply_is_noted() -> None:
     display = FakeDisplay(reply="ERR NOT_A_FACE (try LIST)")
     robot = FakeRobot(display=display)
-    result = WaveTool(face="HAPPY").execute(cast(PalmimoLike, robot))
+    result = WaveTool(face="palmimo/happy").execute(cast(PalmimoLike, robot))
     assert "not shown" in result.text
     assert "ERR NOT_A_FACE" in result.text
     assert result.is_error is False  # a say/face note never makes the whole call is_error
@@ -569,9 +567,9 @@ def test_expressive_face_and_say_both_noted_together() -> None:
     display = FakeDisplay()
     speaker = FakeSpeaker()
     robot = FakeRobot(display=display, speaker=speaker)
-    result = WaveTool(face="HAPPY", say="hi!").execute(cast(PalmimoLike, robot))
+    result = WaveTool(face="palmimo/happy", say="hi!").execute(cast(PalmimoLike, robot))
     assert "said: 'hi!'" in result.text
-    assert robot.calls[0] == ("set_expression", "HAPPY", 0)
+    assert robot.calls[0] == ("play", "palmimo/happy", None)
     assert robot.calls[1] == ("say", "hi!")
     assert robot.calls[2] == ("wave",)
 
@@ -877,125 +875,33 @@ def test_say_text_at_max_length_is_accepted() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_set_face_delegates_to_robot_set_expression_facade() -> None:
-    """Goes through robot.set_expression(), not robot.display.set_expression() directly."""
-    display = FakeDisplay()
-    robot = FakeRobot(display=display)
-    result = SetFaceTool(name="happy").execute(cast(PalmimoLike, robot))
-    assert robot.calls == [("set_expression", "happy", 0)]
-    assert display.calls == [("set_expression", "happy", 0)]
-    assert "happy" in result.text
-
-
-def test_set_face_without_display_reports_observation_not_error() -> None:
-    robot = FakeRobot(display=None)
-    result = SetFaceTool(name="happy").execute(cast(PalmimoLike, robot))
-    assert isinstance(result, ToolResult)
-    assert "no face display" in result.text
-    assert robot.calls == []  # short-circuits before calling the facade
-
-
-def test_show_emoji_delegates_to_facade_with_hold_ms() -> None:
-    """Same EXPR contract as set_face, but with a nonzero hold_ms for auto-revert."""
-    display = FakeDisplay()
-    robot = FakeRobot(display=display)
-    result = ShowEmojiTool(name="MARU", seconds=2.0).execute(cast(PalmimoLike, robot))
-    assert robot.calls == [("set_expression", "MARU", 2000)]
-    assert "MARU" in result.text
-
-
-def test_show_emoji_schema_exposes_name_and_optional_seconds() -> None:
-    schema = ShowEmojiTool.parameters_schema()
-    assert "name" in schema["properties"]
-    assert "name_" not in schema["properties"]
-    assert schema["required"] == ["name"]
-    assert "seconds" in schema["properties"]
-
-
-def test_show_emoji_without_display_reports_observation_not_error() -> None:
-    robot = FakeRobot(display=None)
-    result = ShowEmojiTool(name="STAR", seconds=3.0).execute(cast(PalmimoLike, robot))
-    assert isinstance(result, ToolResult)
-    assert "no face display" in result.text
-    assert robot.calls == []
-
-
-def test_set_face_reports_failure_when_display_replies_err() -> None:
-    """An `ERR ... (try LIST)` firmware reply must not read as a success."""
-    display = FakeDisplay(reply="ERR NOT_A_FACE (try LIST)")
-    robot = FakeRobot(display=display)
-    result = SetFaceTool(name="NOT_A_FACE").execute(cast(PalmimoLike, robot))
-    assert result.is_error is True
-    assert "failed" in result.text
-    assert "NOT_A_FACE" in result.text
-    assert "ERR NOT_A_FACE (try LIST)" in result.text
-    # Must NOT read as a success to an LLM scanning for "showing"/"OK".
-    assert "showing expression" not in result.text
-
-
-def test_show_emoji_reports_failure_when_display_replies_err() -> None:
-    """Same ERR-reply contract as set_face, for show_emoji."""
-    display = FakeDisplay(reply="ERR NOT_A_SYMBOL (try LIST)")
-    robot = FakeRobot(display=display)
-    result = ShowEmojiTool(name="NOT_A_SYMBOL", seconds=3.0).execute(cast(PalmimoLike, robot))
-    assert result.is_error is True
-    assert "failed" in result.text
-    assert "NOT_A_SYMBOL" in result.text
-    assert "ERR NOT_A_SYMBOL (try LIST)" in result.text
-    assert "showing emoji" not in result.text
-
-
 @pytest.mark.parametrize(
-    "reply",
+    "reply,failed",
     [
-        " ERR NOT_A_FACE (try LIST) ",  # incidental whitespace around the ERR token
-        "err NOT_A_FACE (try LIST)",  # incidental lowercasing
+        ("OK PLAY palmimo/happy", False),
+        ("ERR PLAY UNKNOWN", True),
+        (" err PLAY BUSY ", True),
+        ("", True),
+        ("  ", True),
+        ("OK ERRATA", False),
+        ("ERRORISH THING", False),
     ],
 )
-def test_set_face_reports_failure_for_err_reply_regardless_of_whitespace_or_case(reply: str) -> None:
+def test_asset_tool_reports_display_outcome(reply: str, failed: bool) -> None:
     display = FakeDisplay(reply=reply)
-    robot = FakeRobot(display=display)
-    result = SetFaceTool(name="NOT_A_FACE").execute(cast(PalmimoLike, robot))
-    assert result.is_error is True
-    assert "failed" in result.text
+    result = PlayAssetTool(id="palmimo/happy").execute(cast(PalmimoLike, FakeRobot(display=display)))
+    assert result.is_error == failed
+    assert display.calls == [("play", "palmimo/happy", None)]
 
 
-@pytest.mark.parametrize("reply", ["OK ERRATA", "ERRORISH THING", "ERROR OUT OF RANGE"])
-def test_set_face_does_not_misdetect_err_like_replies_as_failures(reply: str) -> None:
-    """`startswith("ERR")` would false-positive on ERROR/ERRATA; the token match must not."""
-    display = FakeDisplay(reply=reply)
-    robot = FakeRobot(display=display)
-    result = SetFaceTool(name="happy").execute(cast(PalmimoLike, robot))
-    assert result.is_error is False
-    assert "showing expression" in result.text
+def test_asset_tool_without_display_reports_error() -> None:
+    assert PlayAssetTool(id="palmimo/happy").execute(cast(PalmimoLike, FakeRobot())).is_error
 
 
-@pytest.mark.parametrize("reply", ["", "   "])
-def test_set_face_reports_failure_when_display_reply_is_empty(reply: str) -> None:
-    """An empty/whitespace-only reply means FaceDisplay._command() hit its serial
-    timeout (see io/display.py's `_command`, which returns "" when no reply
-    arrives) -- it must not be read as a silent success."""
-    display = FakeDisplay(reply=reply)
-    robot = FakeRobot(display=display)
-    result = SetFaceTool(name="happy").execute(cast(PalmimoLike, robot))
-    assert result.is_error is True
-    assert "no reply" in result.text
-    assert "showing expression" not in result.text
-
-
-@pytest.mark.parametrize("reply", ["", "   "])
-def test_show_emoji_reports_failure_when_display_reply_is_empty(reply: str) -> None:
-    display = FakeDisplay(reply=reply)
-    robot = FakeRobot(display=display)
-    result = ShowEmojiTool(name="STAR", seconds=3.0).execute(cast(PalmimoLike, robot))
-    assert result.is_error is True
-    assert "no reply" in result.text
-    assert "showing emoji" not in result.text
-
-
-def test_show_emoji_seconds_out_of_range_raises_validation_error() -> None:
+@pytest.mark.parametrize("hold_ms", [0, -1])
+def test_asset_tool_rejects_nonpositive_hold(hold_ms: int) -> None:
     with pytest.raises(ValidationError):
-        ShowEmojiTool(name="STAR", seconds=99.0)
+        PlayAssetTool(id="palmimo/happy", hold_ms=hold_ms)
 
 
 def test_say_delegates_to_robot_say_and_joins_briefly() -> None:

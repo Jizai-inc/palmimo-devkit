@@ -133,3 +133,5 @@ for pos in robot.play(routine, fps=60):
 ```
 
 顔も変えるモーションツールでは、[FaceDisplay](../reference/api-reference.md#facedisplay) で標準または自分のアプリのアセットを選びます。表示の I/O はエンジンの歩容ではなくツール層に置いてください。
+
+カスタムの Expressive サブクラスは、接続済みの AgentToolSet へ登録し、face 引数に目録の選択肢を反映してください。[エージェントの表示語彙](../reference/api-reference.md#エージェントの表示語彙)を参照してください。

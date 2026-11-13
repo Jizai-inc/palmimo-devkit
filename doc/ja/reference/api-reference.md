@@ -746,6 +746,16 @@ except DynamixelConnectTimeoutError as e:
     print(e)  # "Timed out connecting to the Dynamixel servo bus on ... "
 ```
 
+## エージェントの表示語彙
+
+`AgentToolSet(robot, include=None, exclude=None, display_tags=(), display_locale=None)` は、接続中のディスプレイの[目録](#目録のエントリー)から ID と翻訳済みの説明を使います。`display_tags` は全指定タグの一致、`display_locale` は目録と同じ完全一致・基本言語・原文の選択です。ツールセットはスナップショットを所有し、接続は所有しません。接続後に構築するか、接続と再接続の後、新しいモデルセッションの前に `refresh_display()` を呼びます。更新失敗時は古い選択肢を消して例外を再送出します。ツールの実行中に更新やカスタム登録を行うと `RuntimeError` です。
+
+`play_asset(id, hold_ms=None, params=None)` が従来の `set_face` と `show_emoji` のエージェントツールを置き換えます。ID と説明はスナップショットから取得し、正の整数 `hold_ms` でそのミリ秒後に待機画面へ戻ります。任意の `params` は宣言されたスロット ID を数値配列へ対応付けます。スキーマに説明と次元を含み、PLAY の前に選んだアセットのスロット、有限値、次元を検証します。パラメーターのスキーマは利用可能なスロット形状の和を示し、選んだアセットとの対応は実行前の検証で確認します。上書きは PLAY の後に行います。NOSLOT は警告で再生を続け、それ以外の表示失敗はエラー結果です。再生と分離したパラメーター操作を設けないため、途中の別の動作が選んだアセットへ誤って適用しません。
+
+モーションツールの任意の `face` 引数も同じ ID と説明を使い、動きの前に再生します。表示失敗は結果へ付記し、動きは続けます。ディスプレイが未接続、または目録が空なら `play_asset` と `face` プロパティを提示せず、null 以外の face 引数は拒否します。`register()` したカスタム `Expressive` サブクラスも同じように束縛し、共通の基底クラスや他のツールセットは変更しません。include/exclude は利用可能性のフィルターより先に、登録名へ適用します。
+
+`toolset.display_catalog` はアプリのプロンプト用にスナップショットのコピーを返します。`palmimo_sdk.agent.render_display_prompt(template, catalog)` はリテラルの `{{display_assets}}` を、その目録の ID・説明・パラメーター情報に置き換えます。空なら利用不可を示し、固定の代替語彙は加えません。MCP も同じ束縛済みのスキーマを公開し、CLI は接続後に構築します。組み込みサーバーを再接続した場合は、新しいモデルセッション向けの一覧取得前にツールセットを更新してください。
+
 ## palmimo_sdk.agent の型付け
 
 `palmimo_sdk` は `py.typed` マーカー（PEP 561）を同梱し、型注釈を型チェッカーへ届けます。エージェント層の受け手である `Tool.execute(robot)` と `AgentToolSet(robot, ...)` の型は `palmimo_sdk.agent.PalmimoLike` です。ツールが使うファサードのインターフェースだけを列挙した `Protocol` です。実際の `Palmimo` はそのまま満たします。ハードウェア不要のテストダブルも、使うメンバーだけを実装すれば構造的に満たし、継承やキャストは不要です。

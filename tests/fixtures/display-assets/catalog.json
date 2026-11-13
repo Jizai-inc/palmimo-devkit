@@ -1,0 +1,781 @@
+{
+  "schema": 1,
+  "assets": [
+    {
+      "id": "palmimo/happy",
+      "description": "Display happy as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/shy",
+      "description": "Display shy as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/excited",
+      "description": "Display excited as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/surprise",
+      "description": "Display surprise as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/curious",
+      "description": "Display curious as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/thinking",
+      "description": "Display thinking as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/angry",
+      "description": "Display angry as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/sad",
+      "description": "Display sad as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/sleepy",
+      "description": "Display sleepy as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/love",
+      "description": "Display love as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/sleeping",
+      "description": "Display sleeping as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/wakeup",
+      "description": "Display wakeup as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/maru",
+      "description": "Display maru as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/batsu",
+      "description": "Display batsu as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/hatena",
+      "description": "Display hatena as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/bikkuri",
+      "description": "Display bikkuri as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/groove",
+      "description": "Display groove as a facial reaction.",
+      "tags": [
+        "face"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/curry",
+      "description": "Display curry as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/ramen",
+      "description": "Display ramen as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/sushi",
+      "description": "Display sushi as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/onigiri",
+      "description": "Display onigiri as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/rice",
+      "description": "Display rice as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/pizza",
+      "description": "Display pizza as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/burger",
+      "description": "Display burger as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/fries",
+      "description": "Display fries as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/cake",
+      "description": "Display cake as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/icecream",
+      "description": "Display icecream as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/coffee",
+      "description": "Display coffee as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/beer",
+      "description": "Display beer as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/boba",
+      "description": "Display boba as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/apple",
+      "description": "Display apple as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/banana",
+      "description": "Display banana as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/donut",
+      "description": "Display donut as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/strawberry",
+      "description": "Display strawberry as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/choco",
+      "description": "Display choco as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/dango",
+      "description": "Display dango as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/gyoza",
+      "description": "Display gyoza as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/sun",
+      "description": "Display sun as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/moon",
+      "description": "Display moon as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/rainbow",
+      "description": "Display rainbow as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/cloud",
+      "description": "Display cloud as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/rain",
+      "description": "Display rain as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/snow",
+      "description": "Display snow as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/bolt",
+      "description": "Display bolt as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/fire",
+      "description": "Display fire as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/wave",
+      "description": "Display wave as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/droplet",
+      "description": "Display droplet as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/blossom",
+      "description": "Display blossom as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/dog",
+      "description": "Display dog as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/cat",
+      "description": "Display cat as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/penguin",
+      "description": "Display penguin as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/frog",
+      "description": "Display frog as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/octopus",
+      "description": "Display octopus as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/fish",
+      "description": "Display fish as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/turtle",
+      "description": "Display turtle as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/star",
+      "description": "Display star as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/rocket",
+      "description": "Display rocket as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/gift",
+      "description": "Display gift as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/trophy",
+      "description": "Display trophy as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/balloon",
+      "description": "Display balloon as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/gem",
+      "description": "Display gem as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/target",
+      "description": "Display target as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/car",
+      "description": "Display car as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/house",
+      "description": "Display house as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/rock",
+      "description": "Display rock as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/scissors",
+      "description": "Display scissors as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/paper",
+      "description": "Display paper as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/camera",
+      "description": "Display camera as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/globe",
+      "description": "Display globe as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/battery",
+      "description": "Display battery as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/gear",
+      "description": "Display gear as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/clock",
+      "description": "Display clock as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/map",
+      "description": "Display map as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/lightbulb",
+      "description": "Display lightbulb as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/compass",
+      "description": "Display compass as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/telescope",
+      "description": "Display telescope as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/planet",
+      "description": "Display planet as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/dna",
+      "description": "Display dna as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/microscope",
+      "description": "Display microscope as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/satellite",
+      "description": "Display satellite as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/laptop",
+      "description": "Display laptop as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/testtube",
+      "description": "Display testtube as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/comet",
+      "description": "Display comet as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/ufo",
+      "description": "Display ufo as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/plane",
+      "description": "Display plane as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/train",
+      "description": "Display train as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/bike",
+      "description": "Display bike as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/butterfly",
+      "description": "Display butterfly as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/dino",
+      "description": "Display dino as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/dolphin",
+      "description": "Display dolphin as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/guitar",
+      "description": "Display guitar as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/palette",
+      "description": "Display palette as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/bdaycake",
+      "description": "Display bdaycake as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/tent",
+      "description": "Display tent as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/game",
+      "description": "Display game as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/dice",
+      "description": "Display dice as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    },
+    {
+      "id": "palmimo/gradcap",
+      "description": "Display gradcap as a visual reference.",
+      "tags": [
+        "topic"
+      ],
+      "params": {}
+    }
+  ]
+}

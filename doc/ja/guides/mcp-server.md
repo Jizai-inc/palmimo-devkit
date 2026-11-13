@@ -1,6 +1,6 @@
 # MCP サーバー
 
-`palmimo_sdk.mcp` は、ウェイクワードのサンプルが使うものと同じエージェントツール（forward、wave、set_face、say、capture、...）を [Model Context Protocol](https://modelcontextprotocol.io/) 経由で公開します。 MCP に対応するクライアントであれば、Claude Code、Claude Desktop、その他の MCP エージェントから、直接ツールを一覧取得し、呼び出せます。MCP Python SDK 2.x を基に構築しており、接続するクライアントに合わせて、最新のプロトコルリビジョン（2026-07-28）と古いリビジョン（2024-11-05〜2025-11-25）のどちらもネゴシエーションできます。
+`palmimo_sdk.mcp` は、ウェイクワードのサンプルが使うものと同じエージェントツール（forward、wave、play_asset、say、capture、...）を [Model Context Protocol](https://modelcontextprotocol.io/) 経由で公開します。 MCP に対応するクライアントであれば、Claude Code、Claude Desktop、その他の MCP エージェントから、直接ツールを一覧取得し、呼び出せます。MCP Python SDK 2.x を基に構築しており、接続するクライアントに合わせて、最新のプロトコルリビジョン（2026-07-28）と古いリビジョン（2024-11-05〜2025-11-25）のどちらもネゴシエーションできます。
 
 ## インストール
 

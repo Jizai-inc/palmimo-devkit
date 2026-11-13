@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import time
-from types import FrameType
+from types import FrameType, SimpleNamespace
 from typing import Any, ClassVar, NoReturn, cast
 
 import anyio
@@ -55,8 +55,8 @@ async def test_list_tools_mirrors_toolset_registration() -> None:
         result = await client.list_tools()
 
     by_name = {tool.name: tool for tool in result.tools}
-    assert set(by_name) == set(TOOL_MODELS)
-    for name, cls in TOOL_MODELS.items():
+    assert set(by_name) == set(TOOL_MODELS) - {"play_asset"}
+    for name, cls in toolset.tool_models.items():
         assert by_name[name].description == cls.description
         assert by_name[name].input_schema == cls.parameters_schema()
 
@@ -834,7 +834,7 @@ def _patch_connected_robot(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     wholesale so no real backend is opened.
     """
     _patch_all_peripheral_builders(monkeypatch)
-    monkeypatch.setattr(mcp_main, "_build_display", lambda: cast(Any, object()))
+    monkeypatch.setattr(mcp_main, "_build_display", lambda: cast(Any, SimpleNamespace(is_connected=False)))
     park_calls: list[bool] = []
     monkeypatch.setattr(Palmimo, "connect", lambda self: None)
     monkeypatch.setattr(Palmimo, "disconnect", lambda self, *, park=True: park_calls.append(park))

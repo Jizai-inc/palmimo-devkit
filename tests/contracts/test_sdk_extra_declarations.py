@@ -55,6 +55,7 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     # pydantic-validated Tool / ToolResult / AgentToolSet. The only part of the
     # SDK that imports pydantic at module level.
     "palmimo_sdk.agent": frozenset({"agent"}),
+    "palmimo_sdk.agent.display": frozenset({"agent"}),
     "palmimo_sdk.agent.receiver": frozenset({"agent"}),
     "palmimo_sdk.agent.tools": frozenset({"agent"}),
     "palmimo_sdk.agent.toolset": frozenset({"agent"}),

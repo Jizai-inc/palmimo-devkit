@@ -429,3 +429,5 @@ I/O is assumed to be a Raspberry Pi by default, with the following prerequisites
 - **Serial permissions** — the execution user belongs to the `dialout` group
 - **Device naming** — a stable OpenRB-150 port name via `udev` (fixed so the number
   doesn't change across USB unplug/replug)
+
+AgentToolSet binds display schemas and prompt vocabulary to one connected catalog snapshot; see [Agent display vocabulary](../reference/api-reference.md#agent-display-vocabulary).

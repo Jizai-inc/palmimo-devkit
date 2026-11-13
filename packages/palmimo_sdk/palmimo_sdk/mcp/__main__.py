@@ -182,7 +182,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-display",
         action="store_true",
-        help="Do not attach the face display -- set_face/show_emoji report no display attached.",
+        help="Do not attach the face display -- display actions and face arguments are omitted.",
     )
     parser.add_argument(
         "--no-speaker",
@@ -811,14 +811,13 @@ def main(argv: list[str] | None = None) -> None:
             camera = None if args.no_camera else _build_camera()
 
             robot = Palmimo(driver=driver, display=display, speaker=speaker, camera=camera)
-            toolset = AgentToolSet(robot, include=include, exclude=exclude)
-            server = build_mcp_server(toolset, log_tool_calls=args.log_tool_calls)
-
             # robot.connect() raises if nothing is attached at all (a fully
             # compute-only run, e.g. every peripheral --no-*'d or unreachable)
             # -- so only connect when there is something to connect.
             if robot.has_connectable_resource:
                 robot.connect()
+            toolset = AgentToolSet(robot, include=include, exclude=exclude)
+            server = build_mcp_server(toolset, log_tool_calls=args.log_tool_calls)
             if args.transport == "stdio":
                 anyio.run(_serve_stdio, server)
             else:

@@ -72,9 +72,9 @@ class FakeRobot:
 def test_to_openai_tools_covers_every_registered_tool() -> None:
     tools = AgentToolSet(cast(PalmimoLike, FakeRobot()))
     openai_tools = tools.to_openai_tools()
-    assert len(openai_tools) == len(TOOL_MODELS)
+    assert len(openai_tools) == len(TOOL_MODELS) - 1
     names = {t["function"]["name"] for t in openai_tools}
-    assert names == set(TOOL_MODELS)
+    assert names == set(TOOL_MODELS) - {"play_asset"}
 
 
 def test_to_openai_tools_shape() -> None:
@@ -102,7 +102,7 @@ def test_exclude_removes_named_tools() -> None:
     tools = AgentToolSet(cast(PalmimoLike, FakeRobot()), exclude=["capture", "say"])
     assert "capture" not in tools.tool_names
     assert "say" not in tools.tool_names
-    assert set(tools.tool_names) == set(TOOL_MODELS) - {"capture", "say"}
+    assert set(tools.tool_names) == set(TOOL_MODELS) - {"capture", "say", "play_asset"}
 
 
 def test_include_and_exclude_compose() -> None:

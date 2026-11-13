@@ -1676,6 +1676,45 @@ except DynamixelConnectTimeoutError as e:
     print(e)  # "Timed out connecting to the Dynamixel servo bus on ... "
 ```
 
+## Agent display vocabulary
+
+`AgentToolSet(robot, include=None, exclude=None, display_tags=(), display_locale=None)`
+uses the connected display's [catalog](#catalog-entries) for both asset IDs and
+localized descriptions. `display_tags` requires every requested tag;
+`display_locale` follows the catalog's exact/base/original selection. The toolset
+owns a snapshot, not the connection. Construct it after connecting, or call
+`refresh_display()` after connection and every reconnect before the next model
+session. A failed refresh clears old choices and re-raises. Refresh and custom
+registration raise `RuntimeError` during an active tool call.
+
+`play_asset(id, hold_ms=None, params=None)` replaces the separate `set_face` and
+`show_emoji` agent tools. IDs and descriptions come from that snapshot; a positive
+integer `hold_ms` returns to idle afterwards. Optional `params` maps declared
+slot IDs to numeric arrays. Schemas describe their dimensions and descriptions;
+validation checks slots, finite values, and dimensions for the selected asset
+before PLAY. Parameter schemas describe the union of available slot shapes;
+the selected asset/slot association is checked by runtime validation.
+Overrides run after PLAY. NOSLOT is a warning and playback continues.
+Other display failures produce an error result. There is no parameter-editing
+operation detached from playback, so overrides cannot accidentally affect a
+different asset selected by an intervening action.
+
+Motion tools' optional `face` argument uses the same IDs and descriptions and
+plays before motion. Display failure is noted without preventing motion. Without
+a connected display or with an empty catalog, `play_asset` and motion `face`
+properties are omitted, and non-null face arguments are rejected. Custom
+`Expressive` subclasses registered with `register()` are bound in the same way;
+shared base classes and other toolsets are not changed. Include/exclude operates
+on registered tool names before this availability filter.
+
+`toolset.display_catalog` returns a copy of the snapshot for application prompts.
+`palmimo_sdk.agent.render_display_prompt(template, catalog)` replaces the literal
+`{{display_assets}}` with IDs, descriptions, and parameter metadata from that
+snapshot, or an unavailable message when empty. It adds no fallback vocabulary.
+MCP exposes these same bound schemas; its CLI connects before building them.
+After reconnecting an embedded server, refresh its toolset before listing tools
+for a new model session.
+
 ## palmimo_sdk.agent typing
 
 `palmimo_sdk` ships a `py.typed` marker (PEP 561), so its annotations reach

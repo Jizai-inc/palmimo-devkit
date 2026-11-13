@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import json
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
@@ -46,6 +47,7 @@ from pydantic import ValidationError
 
 from palmimo_sdk.robot import MotionCancelled
 
+from .display import bind_display_tool
 from .receiver import PalmimoLike
 from .tools import (
     BackwardTool,
@@ -60,10 +62,9 @@ from .tools import (
     LookCenterTool,
     LookTool,
     NodTool,
+    PlayAssetTool,
     PushupTool,
     SayTool,
-    SetFaceTool,
-    ShowEmojiTool,
     SleepTool,
     StopTool,
     StrafeTool,
@@ -106,8 +107,7 @@ TOOL_MODELS: dict[str, type[Tool]] = {
         WakeTool,
         LookTool,
         LookCenterTool,
-        SetFaceTool,
-        ShowEmojiTool,
+        PlayAssetTool,
         SayTool,
         CaptureTool,
         StopTool,
@@ -130,6 +130,8 @@ class AgentToolSet:
         include (iterable of str, optional): If given, only these tool names are registered (an unknown name
             raises :class:`ValueError`). Mutually composable with *exclude*
             (include narrows first, exclude then removes from that).
+        display_tags: Require all these tags when selecting catalog entries.
+        display_locale: Description locale, using the display catalog's fallback rules.
         exclude (iterable of str, optional): If given, these tool names are dropped from the registered set (an
             unknown name raises :class:`ValueError`).
 
@@ -149,6 +151,8 @@ class AgentToolSet:
         *,
         include: Iterable[str] | None = None,
         exclude: Iterable[str] | None = None,
+        display_tags: Iterable[str] = (),
+        display_locale: str | None = None,
     ) -> None:
         self._robot = robot
         self._tools: dict[str, type[Tool]] = dict(TOOL_MODELS)
@@ -179,6 +183,47 @@ class AgentToolSet:
                 )
             self._tools = {name: cls for name, cls in self._tools.items() if name not in exclude_set}
 
+        self._base_tools = dict(self._tools)
+        self._display_tags = tuple(display_tags)
+        self._display_locale = display_locale
+        self._display_catalog: list[dict[str, Any]] = []
+        self.refresh_display()
+
+    @property
+    def display_catalog(self) -> list[dict[str, Any]]:
+        """Copy of the connected catalog snapshot used by schemas and prompts."""
+        return copy.deepcopy(self._display_catalog)
+
+    def _bind_models(self, catalog: list[dict[str, Any]]) -> dict[str, type[Tool]]:
+        return {
+            name: bind_display_tool(cls, catalog)
+            for name, cls in self._base_tools.items()
+            if catalog or not issubclass(cls, PlayAssetTool)
+        }
+
+    def refresh_display(self) -> None:
+        """Rebuild display vocabulary after connection or reconnection.
+
+        The caller owns the display connection. A failed refresh clears stale
+        choices and re-raises; refresh and registration are forbidden during a call.
+        """
+        if self.is_busy():
+            raise RuntimeError("Cannot refresh display vocabulary during a tool call")
+        self._display_catalog = []
+        self._tools.clear()
+        self._tools.update(self._bind_models([]))
+        display = getattr(self._robot, "display", None)
+        catalog = (
+            display.catalog(tags=self._display_tags, locale=self._display_locale)
+            if display is not None and display.is_connected
+            else []
+        )
+        catalog = copy.deepcopy(catalog)
+        models = self._bind_models(catalog)
+        self._display_catalog = catalog
+        self._tools.clear()
+        self._tools.update(models)
+
     def register(self, tool_cls: type[Tool]) -> None:
         """Register a custom :class:`Tool` subclass, making it callable/listable.
 
@@ -186,7 +231,13 @@ class AgentToolSet:
         built-ins in :data:`TOOL_MODELS`. Registering a name that is already
         present (built-in or previously registered) replaces it.
         """
-        self._tools[tool_cls.name] = tool_cls
+        if self.is_busy():
+            raise RuntimeError("Cannot register tools during a tool call")
+        self._base_tools[tool_cls.name] = tool_cls
+        if self._display_catalog or not issubclass(tool_cls, PlayAssetTool):
+            self._tools[tool_cls.name] = bind_display_tool(tool_cls, self._display_catalog)
+        else:
+            self._tools.pop(tool_cls.name, None)
 
     @property
     def tool_names(self) -> list[str]:
