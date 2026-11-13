@@ -22,6 +22,9 @@ driven from this runtime never sees respond.md's copy at all.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
+
+from palmimo_sdk.agent import render_display_prompt
 
 
 _PROMPTS = Path(__file__).resolve().parents[1] / "core" / "prompts"
@@ -77,9 +80,8 @@ def realtime_rules(max_chars: int) -> str:
 - **質問には、まず `nod` / `head_shake` の〇×**を最初の 1 手に。
 - 「止まって」と言われたら `stop`。呼びかけられたら `look` で見て `nod` で返す。
 - 動きのテンポは**キビキビ 2〜5 秒**。
-- 挨拶・お礼には `bow(face="HAPPY")`、全力の歓迎は `wave_both(face="EXCITED")`、
-  相手を褒めるなら `clap(face="HAPPY")`、盛り上げたい時は `dance`。
-- 話題を「モノ」で表したい時は `show_emoji`。からかわれたら `body_tilt(face="ANGRY")`。
+- 挨拶・お礼には `bow`、全力の歓迎は `wave_both`、相手を褒めるなら `clap`、盛り上げたい時は `dance`。
+- 表示を変える時は、使えるアセットの説明とスキーマを見て `play_asset` または `face` 引数で選ぶ。
   「ばいばい」には `bow`。
 - 表情を出しっぱなしにしない。強い表情はその場面が過ぎたら戻す。
 
@@ -99,7 +101,7 @@ def realtime_rules(max_chars: int) -> str:
 """
 
 
-def load_prompt(kind: str, max_chars: int = DEFAULT_REPLY_CHARS) -> str:
+def load_prompt(kind: str, max_chars: int = DEFAULT_REPLY_CHARS, *, catalog: list[dict[str, Any]] | None = None) -> str:
     """Read persona + identity + the *kind* rules.
 
     ``kind="respond"`` uses :func:`realtime_rules` + :data:`VOICE_STYLE`
@@ -111,7 +113,7 @@ def load_prompt(kind: str, max_chars: int = DEFAULT_REPLY_CHARS) -> str:
         parts.extend([realtime_rules(max_chars), VOICE_STYLE])
     else:
         parts.append((_PROMPTS / f"{kind}.md").read_text(encoding="utf-8"))
-    return "\n\n".join(parts)
+    return render_display_prompt("\n\n".join(parts), catalog or [])
 
 
 __all__ = ["DEFAULT_REPLY_CHARS", "VOICE_STYLE", "load_prompt", "realtime_rules"]

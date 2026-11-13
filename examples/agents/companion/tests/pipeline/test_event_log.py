@@ -57,7 +57,7 @@ def test_emit_event_keeps_non_ascii_text_readable() -> None:
 def test_emit_event_writes_tool_arguments_as_json_when_they_parse() -> None:
     out = io.StringIO()
     arguments = json.dumps({"name": "BLOSSOM", "reason": "壁の花柄"})
-    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="ok"), out=out)
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="play_asset", arguments=arguments, result="ok"), out=out)
     assert json.loads(out.getvalue())["arguments"] == {"name": "BLOSSOM", "reason": "壁の花柄"}
     assert "壁の花柄" in out.getvalue()
 
@@ -65,7 +65,7 @@ def test_emit_event_writes_tool_arguments_as_json_when_they_parse() -> None:
 @pytest.mark.parametrize("arguments", ['{"name": ', '"BLOSSOM"', "[1]", '{"x": NaN}'])
 def test_emit_event_keeps_tool_arguments_as_a_string_when_they_are_not_a_json_object(arguments: str) -> None:
     out = io.StringIO()
-    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="bad"), out=out)
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="play_asset", arguments=arguments, result="bad"), out=out)
     assert json.loads(out.getvalue(), parse_constant=pytest.fail)["arguments"] == arguments
 
 
@@ -73,5 +73,5 @@ def test_emit_event_keeps_tool_arguments_as_a_string_when_they_are_not_a_json_ob
 def test_emit_event_keeps_tool_arguments_as_a_string_when_the_parsed_object_cannot_be_written(arguments: str) -> None:
     raw = io.BytesIO()
     out = io.TextIOWrapper(raw, encoding="utf-8")
-    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="bad"), out=out)
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="play_asset", arguments=arguments, result="bad"), out=out)
     assert json.loads(raw.getvalue())["arguments"] == arguments

@@ -220,9 +220,9 @@ async def test_run_stops_the_remainder_when_cancel_is_set_mid_plan(
         [
             plan_turn(
                 [
-                    ("set_face", {"name": "HAPPY", "reason": "first"}),
-                    ("set_face", {"name": "SAD", "reason": "second"}),
-                    ("set_face", {"name": "ANGRY", "reason": "third"}),
+                    ("play_asset", {"id": "palmimo/happy", "reason": "first"}),
+                    ("play_asset", {"name": "SAD", "reason": "second"}),
+                    ("play_asset", {"name": "ANGRY", "reason": "third"}),
                 ]
             )
         ]
@@ -258,8 +258,8 @@ async def test_run_discards_the_whole_plan_when_cancel_is_already_set(
         [
             plan_turn(
                 [
-                    ("set_face", {"name": "HAPPY", "reason": "first"}),
-                    ("set_face", {"name": "SAD", "reason": "second"}),
+                    ("play_asset", {"id": "palmimo/happy", "reason": "first"}),
+                    ("play_asset", {"name": "SAD", "reason": "second"}),
                 ]
             )
         ]

@@ -18,10 +18,8 @@ doesn't have:
   ``direction`` argument (look that way first, then capture, then recenter).
 - :class:`Look` / :class:`LookCenter`, extending the SDK's own tools with an
   optional gaze-hold ``seconds`` argument.
-- :class:`Dance` / :class:`Nod` / :class:`HeadShake`, extending the SDK's own
-  tools with a hardcoded display glyph shown for the gesture's duration.
-- :class:`ShowEmoji`, extending the SDK's own tool with this robot's closed
-  emoji/glyph vocabulary enforced in-schema.
+- :class:`Dance` / :class:`Nod` / :class:`HeadShake`, adding optional defaults
+  from the connected display catalog.
 - :class:`LookAtFaceTool`, a hand-rolled proportional neck-tracking loop (the
   SDK has no tracking mode of its own to delegate to).
 
@@ -51,102 +49,15 @@ from palmimo_sdk.agent.tools import (
     LookCenterTool,
     LookTool,
     NodTool,
-    ShowEmojiTool,
     Tool,
     ToolResult,
 )
 from palmimo_sdk.robot import MotionCancelled, NeckPitchDegrees, NeckYawDegrees
 
+from .defaults import play_default
+
 
 _log = logging.getLogger(__name__)
-
-
-# ----------------------------------------------------------------------
-# Emoji vocabulary -- ShowEmoji's closed vocabulary (see module docstring)
-# ----------------------------------------------------------------------
-
-EmojiName = Literal[
-    "CURRY",
-    "RAMEN",
-    "SUSHI",
-    "ONIGIRI",
-    "RICE",
-    "PIZZA",
-    "BURGER",
-    "FRIES",
-    "CAKE",
-    "ICECREAM",
-    "COFFEE",
-    "BEER",
-    "BOBA",
-    "APPLE",
-    "BANANA",
-    "DONUT",
-    "STRAWBERRY",
-    "CHOCO",
-    "DANGO",
-    "GYOZA",
-    "SUN",
-    "MOON",
-    "RAINBOW",
-    "CLOUD",
-    "RAIN",
-    "SNOW",
-    "BOLT",
-    "FIRE",
-    "WAVE",
-    "DROPLET",
-    "BLOSSOM",
-    "DOG",
-    "CAT",
-    "PENGUIN",
-    "FROG",
-    "OCTOPUS",
-    "FISH",
-    "TURTLE",
-    "STAR",
-    "ROCKET",
-    "GIFT",
-    "TROPHY",
-    "BALLOON",
-    "GEM",
-    "TARGET",
-    "CAR",
-    "HOUSE",
-    "ROCK",
-    "SCISSORS",
-    "PAPER",
-    "CAMERA",
-    "GLOBE",
-    "BATTERY",
-    "GEAR",
-    "CLOCK",
-    "MAP",
-    "LIGHTBULB",
-    "COMPASS",
-    "TELESCOPE",
-    "PLANET",
-    "DNA",
-    "MICROSCOPE",
-    "SATELLITE",
-    "LAPTOP",
-    "TESTTUBE",
-    "COMET",
-    "UFO",
-    "PLANE",
-    "TRAIN",
-    "BIKE",
-    "BUTTERFLY",
-    "DINO",
-    "DOLPHIN",
-    "GUITAR",
-    "PALETTE",
-    "BDAYCAKE",
-    "TENT",
-    "GAME",
-    "DICE",
-    "GRADCAP",
-]
 
 
 # ----------------------------------------------------------------------
@@ -252,116 +163,37 @@ class LookCenter(LookCenterTool):
         return ToolResult(text="looking center")
 
 
-#: Response glyphs the display also understands, on top of the topic emoji in
-#: :data:`EmojiName` -- kept as a separate Literal so each list stays a plain
-#: enumeration of its own kind (topic emoji vs. reaction glyph).
-GlyphName = Literal["MARU", "BATSU", "HATENA", "BIKKURI", "GROOVE"]
+class Dance(DanceTool):
+    """Dance with an available default asset unless a face id was requested."""
 
-
-class ShowEmoji(ShowEmojiTool):
-    """SDK show_emoji with the display's closed vocabulary enforced in-schema.
-
-    The SDK deliberately leaves ``name`` an open string (firmware may know
-    more names than its docstring lists); this robot's firmware vocabulary
-    is known exactly, and real runs showed the model inventing plausible
-    names (``WATER_WAVE`` for ``WAVE``) that only fail at the display. The
-    Literal turns those into schema-level choices the model picks correctly.
-    """
-
-    # Narrowing the SDK's mutable `name_: str` field is invariance-unsound in
-    # principle (pyright flags it) but safe here: tools are built once from
-    # LLM args, validated, executed, and discarded -- never reassigned.
-    name_: EmojiName | GlyphName = Field(  # pyright: ignore[reportIncompatibleVariableOverride]
-        ...,
-        alias="name",
-        description="Emoji/symbol name to show.",
-    )
-
-
-# ======================================================================
-# Motion + auto-glyph tools -- reuse the SDK tool's own execute() for the
-# actual motion (pacing / settle / cancellation), just bracket it with a
-# hardcoded display glyph.
-# ======================================================================
-
-
-class Dance(Tool):
-    """Sway the body rhythmically while showing the GROOVE dance face.
-
-    No ``face`` argument (unlike every other motion tool): GROOVE is shown
-    unconditionally for the whole dance, so any requested face would just be
-    overwritten. ``say`` IS supported -- the inner SDK
-    :class:`~palmimo_sdk.agent.tools.DanceTool` (an ``Expressive``) receives
-    it and runs the speech concurrently with the motion, so the robot can
-    talk while it dances.
-    """
-
-    name: ClassVar[str] = "dance"
-    description: ClassVar[str] = DanceTool.description
-    long_running: ClassVar[bool] = True
-
-    seconds: float = Field(gt=0, le=15, description="Dance duration. 4-6s typical; vary it each time.")
-    say: str | None = Field(
-        default=None,
-        description=("Something to say while dancing (short, concurrent speech). Null (default) says nothing."),
-    )
-
-    def execute(self, robot: PalmimoLike) -> ToolResult:
-        try:
-            robot.set_expression("GROOVE", hold_ms=max(int(self.seconds * 1000), 1))
-        except Exception:
-            _log.warning("set_expression(GROOVE) failed; continuing dance", exc_info=True)
-        return DanceTool(seconds=self.seconds, say=self.say).execute(robot)
-
-
-class Nod(Expressive):
-    """Nod "yes", showing the MARU glyph for the gesture's duration."""
-
-    name: ClassVar[str] = "nod"
-    description: ClassVar[str] = NodTool.description
-    long_running: ClassVar[bool] = True
-
-    seconds: float = Field(gt=0, le=15, description="Duration; the gesture itself completes in ~1.5s. 2-3s typical.")
+    seconds: float = Field(gt=0, le=15, description="Gesture duration in seconds.")
 
     def _act(self, robot: PalmimoLike) -> ToolResult:
-        try:
-            robot.set_expression("MARU", hold_ms=max(int(self.seconds * 1000), 1))
-        except Exception:
-            _log.warning("set_expression(MARU) failed; continuing gesture", exc_info=True)
-        # A bare (face=None, say=None) SDK NodTool: its own Expressive.execute()
-        # reduces to just the underlying motion, so this is equivalent to
-        # _run_motion(robot, robot.nod, seconds) without reaching into that
-        # SDK-internal helper directly.
-        result = NodTool(seconds=self.seconds).execute(robot)
-        if self.face is not None:
-            try:
-                robot.set_expression(self.face)
-            except Exception:
-                _log.warning("set_expression(%s) after MARU failed", self.face, exc_info=True)
-        return result
+        if self.face is None:
+            play_default(robot, "dance", self._display_asset_ids, max(int(self.seconds * 1000), 1))
+        return super()._act(robot)
 
 
-class HeadShake(Expressive):
-    """Shake the head "no", showing the BATSU glyph for the gesture's duration."""
+class Nod(NodTool):
+    """Nod with an available agreement asset unless a face id was requested."""
 
-    name: ClassVar[str] = "head_shake"
-    description: ClassVar[str] = HeadShakeTool.description
-    long_running: ClassVar[bool] = True
-
-    seconds: float = Field(gt=0, le=15, description="Duration; the gesture itself completes in ~1.3s. 2-3s typical.")
+    seconds: float = Field(gt=0, le=15, description="Gesture duration in seconds.")
 
     def _act(self, robot: PalmimoLike) -> ToolResult:
-        try:
-            robot.set_expression("BATSU", hold_ms=max(int(self.seconds * 1000), 1))
-        except Exception:
-            _log.warning("set_expression(BATSU) failed; continuing gesture", exc_info=True)
-        result = HeadShakeTool(seconds=self.seconds).execute(robot)
-        if self.face is not None:
-            try:
-                robot.set_expression(self.face)
-            except Exception:
-                _log.warning("set_expression(%s) after BATSU failed", self.face, exc_info=True)
-        return result
+        if self.face is None:
+            play_default(robot, "yes", self._display_asset_ids, max(int(self.seconds * 1000), 1))
+        return super()._act(robot)
+
+
+class HeadShake(HeadShakeTool):
+    """Shake with an available disagreement asset unless a face id was requested."""
+
+    seconds: float = Field(gt=0, le=15, description="Gesture duration in seconds.")
+
+    def _act(self, robot: PalmimoLike) -> ToolResult:
+        if self.face is None:
+            play_default(robot, "no", self._display_asset_ids, max(int(self.seconds * 1000), 1))
+        return super()._act(robot)
 
 
 # ======================================================================
@@ -393,7 +225,7 @@ class Capture(SdkCaptureTool):
     name: ClassVar[str] = "capture"
     description: ClassVar[str] = (
         SdkCaptureTool.description + ' If someone asks to be photographed ("take my picture"), respond with '
-        "show_emoji(name='CAMERA') instead of this tool -- capture is for the robot's own "
+        "an available topic asset with play_asset instead -- capture is for the robot's own "
         "curiosity, not a reply to a photo request."
     )
     long_running: ClassVar[bool] = True
@@ -497,7 +329,8 @@ class Sleep(Expressive):
         robot.sleep()
         # After the face, not before: sleep() takes a moment to settle, and the
         # sleeping face appearing while the robot is still moving looks wrong.
-        robot.set_expression("SLEEP")
+        if self.face is None:
+            play_default(robot, "sleep", self._display_asset_ids)
         return ToolResult(text="went to sleep" + (f" ({self.reason})" if self.reason else ""))
 
 
@@ -535,10 +368,12 @@ class WakeUp(Expressive):
     def _act(self, robot: PalmimoLike) -> ToolResult:
         robot.wake()
         # Drowsy first: the stretch means nothing if it already looks awake.
-        robot.set_expression("SLEEPY")
+        if self.face is None:
+            play_default(robot, "drowsy", self._display_asset_ids)
         _motion_and_settle(robot, robot.stretch, self.seconds)
         _motion_and_settle(robot, robot.head_shake, _WAKE_SHAKE_SECONDS)
-        robot.set_expression("HAPPY", hold_ms=1200)
+        if self.face is None:
+            play_default(robot, "greeting", self._display_asset_ids, 1200)
         return ToolResult(text="woke up and stretched" + (f" ({self.reason})" if self.reason else ""))
 
 
@@ -834,7 +669,6 @@ COMPANION_TOOL_MODELS: dict[str, type[Tool]] = {
         Rest,
         Sleep,
         WakeUp,
-        ShowEmoji,
         LookAtFaceTool,
     )
 }
@@ -843,7 +677,6 @@ COMPANION_TOOL_MODELS: dict[str, type[Tool]] = {
 __all__ = [
     "COMPANION_TOOL_MODELS",
     "LOOK_AT_FACE_SEEN_MARK",
-    "EmojiName",
     "LookAtFaceTool",
     "make_look_at_face_tool",
 ]

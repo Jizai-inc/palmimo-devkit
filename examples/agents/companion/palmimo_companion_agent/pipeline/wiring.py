@@ -196,6 +196,7 @@ class Runtime:
         if self.palmimo.has_connectable_resource:
             self._connect_task = asyncio.create_task(asyncio.to_thread(self.palmimo.connect))
             await asyncio.shield(self._connect_task)
+        await asyncio.to_thread(self.toolset.refresh_display)
 
     async def _wait_for_connect(self) -> None:
         """Wait for a connect worker that continues after its caller is cancelled."""
@@ -297,7 +298,7 @@ def build_runtime(settings: PipelineSettings) -> Runtime:
         wave_detector = WaveDetector()
         palmimo = Palmimo(driver=driver, display=display, speaker=speaker, camera=camera, mic=mic)
 
-    toolset = AgentToolSet(palmimo, exclude=_EXCLUDED_SDK_TOOLS)
+    toolset = AgentToolSet(palmimo, exclude=_EXCLUDED_SDK_TOOLS, display_locale=settings.language)
     # Shared, hardware-scoped infrastructure (a MediaPipe model instance), not
     # a per-call LLM argument -- bound via a per-runtime subclass
     # (make_look_at_face_tool) rather than a ClassVar assignment on the

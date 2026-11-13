@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator, Sequence
-from typing import Any, cast, get_args
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -34,13 +34,13 @@ from palmimo_companion_agent.core.tools import (
     LookCenter,
     Nod,
     Rest,
-    ShowEmoji,
     Sleep,
     WakeUp,
     make_look_at_face_tool,
 )
 from palmimo_sdk import MotionCancelled, Palmimo, ServoDriver, ServoTelemetry
-from palmimo_sdk.agent.tools import FaceExpression, SetFaceTool, StopTool
+from palmimo_sdk.agent import PalmimoLike
+from palmimo_sdk.agent.tools import StopTool, Tool
 from palmimo_sdk.agent.toolset import TOOL_MODELS, AgentToolSet
 from palmimo_sdk.thermal import NECK_HOT_C, NECK_MOTORS
 
@@ -88,7 +88,6 @@ class TestRegistry:
             "rest",
             "sleep",
             "wake_up",
-            "show_emoji",
             "look_at_face",
         }
         assert set(COMPANION_TOOL_MODELS) == expected
@@ -119,19 +118,8 @@ class TestFullVocabulary:
     with the companion's own overrides/composites layered on top."""
 
     def test_wiring_produces_sdk_defaults_plus_companion_overrides(self, toolset: AgentToolSet) -> None:
-        expected = (set(TOOL_MODELS) - {"creep", "wave"}) | set(COMPANION_TOOL_MODELS)
+        expected = (set(TOOL_MODELS) - {"creep", "wave", "play_asset"}) | set(COMPANION_TOOL_MODELS)
         assert set(toolset.tool_names) == expected
-
-    def test_companion_overrides_win_over_the_sdk_default_for_the_same_name(self, toolset: AgentToolSet) -> None:
-        for name, cls in COMPANION_TOOL_MODELS.items():
-            assert toolset.tool_models[name] is cls
-
-    def test_delegated_tools_are_the_sdk_classes_themselves(self, toolset: AgentToolSet) -> None:
-        # Every non-overridden name must resolve to the SDK's own class (not
-        # some wrapper), so its schema/description/defaults are exactly the
-        # SDK's -- the whole point of dropping the pass-through layer.
-        for name in set(toolset.tool_names) - set(COMPANION_TOOL_MODELS):
-            assert toolset.tool_models[name] is TOOL_MODELS[name]
 
 
 class TestReasonOptional:
@@ -148,8 +136,8 @@ class TestDance:
         result = tool.execute(palmimo)
         assert "danced" in result.text.lower() or result.text  # a real motion ran without raising
 
-    def test_dance_has_no_face_argument(self) -> None:
-        assert "face" not in Dance.model_fields
+    def test_dance_accepts_an_optional_asset(self) -> None:
+        assert "face" in Dance.model_fields
 
 
 class TestNodAndHeadShake:
@@ -163,30 +151,19 @@ class TestNodAndHeadShake:
         result = tool.execute(palmimo)
         assert result.is_error is False
 
-    async def test_nod_reapplies_a_requested_face_afterward(
+    async def test_nod_preserves_requested_asset_instead_of_default(
         self, palmimo: Palmimo, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        calls: list[tuple[str, int]] = []
-        # Expressive._apply_face() no-ops when robot.display is None (see its
-        # docstring), so a fake display must be attached for it to actually
-        # call set_expression() -- matching a real display-attached robot.
-        monkeypatch.setattr(type(palmimo), "display", property(lambda self: object()))
+        calls: list[str] = []
 
-        def _record_set_expression(name: str, hold_ms: int = 0) -> str:
-            calls.append((name, hold_ms))
-            return "OK"
+        class Display:
+            def play(self, id: str, hold_ms: int | None = None) -> str:
+                calls.append(id)
+                return "OK PLAY " + id
 
-        monkeypatch.setattr(palmimo, "set_expression", _record_set_expression)
-        tool = Nod.model_validate({"seconds": 0.5, "reason": "agreeing", "face": "HAPPY"})
-
-        tool.execute(palmimo)
-
-        # face is applied before the gesture (Expressive.execute), MARU
-        # overwrites it, then the requested face is re-applied at the end.
-        names = [name for name, _ in calls]
-        assert names[0] == "HAPPY"
-        assert "MARU" in names
-        assert names[-1] == "HAPPY"
+        monkeypatch.setattr(type(palmimo), "display", property(lambda self: Display()))
+        Nod.model_validate({"seconds": 0.1, "face": "palmimo/happy"}).execute(palmimo)
+        assert calls == ["palmimo/happy"]
 
 
 class TestCapture:
@@ -214,6 +191,14 @@ class _WakeRecorder:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.display = self
+
+    def catalog(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return [{"id": "palmimo/" + id, "description": "Test"} for id in ("sleeping", "sleepy", "happy")]
+
+    def play(self, id: str, hold_ms: int | None = None) -> str:
+        self.calls.append(f"face:{id}")
+        return "OK PLAY " + id
 
     def wake(self, duration: float = 1.5, start_gain: int = 300) -> None:
         self.calls.append("wake")
@@ -239,28 +224,34 @@ class _WakeRecorder:
         self.calls.append("stop")
 
 
+def _bound_sleep_tool(cls: type[Tool], robot: _WakeRecorder) -> type[Tool]:
+    toolset = AgentToolSet(cast(PalmimoLike, robot), include=[])
+    toolset.register(cls)
+    return toolset.tool_models[cls.name]
+
+
 class TestSleepAndWake:
     async def test_sleep_settles_before_showing_the_sleeping_face(self) -> None:
         """The face last: a sleeping face while the body is still moving looks wrong."""
         robot = _WakeRecorder()
-        Sleep.model_validate({}).execute(cast(Any, robot))
-        assert robot.calls == ["sleep", "face:SLEEP"]
+        _bound_sleep_tool(Sleep, robot).model_validate({}).execute(cast(Any, robot))
+        assert robot.calls == ["sleep", "face:palmimo/sleeping"]
 
     async def test_waking_stretches_and_shakes_before_looking_awake(self) -> None:
         """Rising and answering in one breath reads as never having slept, so the
         drowsy face comes back first and the happy one only after the stretch."""
         robot = _WakeRecorder()
-        WakeUp.model_validate({"seconds": 0.01}).execute(cast(Any, robot))
+        _bound_sleep_tool(WakeUp, robot).model_validate({"seconds": 0.01}).execute(cast(Any, robot))
 
-        assert robot.calls.index("face:SLEEPY") < robot.calls.index("stretch")
+        assert robot.calls.index("face:palmimo/sleepy") < robot.calls.index("stretch")
         assert robot.calls.index("stretch") < robot.calls.index("head_shake")
-        assert robot.calls[-1] == "face:HAPPY"
+        assert robot.calls[-1] == "face:palmimo/happy"
 
     async def test_waking_stops_each_motion_even_though_it_chains_two(self) -> None:
         """Two motions back to back: the first must be stopped before the second
         is set, or the engine carries the stretch into the head shake."""
         robot = _WakeRecorder()
-        WakeUp.model_validate({"seconds": 0.01}).execute(cast(Any, robot))
+        _bound_sleep_tool(WakeUp, robot).model_validate({"seconds": 0.01}).execute(cast(Any, robot))
         assert robot.calls.count("stop") == 2
 
     async def test_wake_seconds_defaults_so_the_model_need_not_choose(self) -> None:
@@ -307,27 +298,6 @@ class TestRest:
 
         assert result.is_error is False
         assert "interrupted" in result.text
-
-
-class TestSetFaceAndShowEmoji:
-    # set_face itself is now the SDK's own, unmodified SetFaceTool -- this
-    # agent only extends show_emoji's vocabulary (see ShowEmoji's docstring).
-    async def test_set_face_reports_no_display(self, palmimo: Palmimo) -> None:
-        tool = SetFaceTool.model_validate({"name": "HAPPY", "reason": "happy"})
-        result = tool.execute(palmimo)
-        assert "no face display" in result.text
-
-    async def test_show_emoji_reports_no_display(self, palmimo: Palmimo) -> None:
-        tool = ShowEmoji.model_validate({"name": "STAR", "seconds": 2.0, "reason": "topic"})
-        result = tool.execute(palmimo)
-        assert "no face display" in result.text
-
-    def test_set_face_vocabulary_matches_the_sdk(self) -> None:
-        # Open vocabulary (no enum): the SDK's own SetFaceTool design -- the
-        # LLM-facing `description` ClassVar (not the pydantic schema's own
-        # docstring-derived description) is what to_openai_tools() sends.
-        for value in get_args(FaceExpression):
-            assert value in SetFaceTool.description
 
 
 class TestStop:
@@ -516,10 +486,10 @@ class TestExtraArgumentsForbidden:
 
 
 class TestDanceSay:
-    def test_dance_schema_offers_say_but_not_face(self) -> None:
+    def test_dance_schema_offers_say_and_asset(self) -> None:
         fields = Dance.model_fields
         assert "say" in fields
-        assert "face" not in fields  # GROOVE is unconditional; see Dance's docstring
+        assert "face" in fields
 
     async def test_dance_passes_say_through_to_the_speaking_motion(
         self, palmimo: Palmimo, monkeypatch: pytest.MonkeyPatch

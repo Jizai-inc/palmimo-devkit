@@ -149,10 +149,22 @@ the tool's own result.
   nothing else needs to change.
 - `identity.md` -- shared physical/hardware facts (neck travel, what `look`
   does vs. `capture`) and the tool contract (`face`/`say` arguments, the
-  `set_face` vs. `show_emoji` split, `reason`) every turn kind needs,
+  `play_asset` and catalog-backed `face` choices, `reason`) every turn kind needs,
   independent of which character `persona.md` names.
 - `idle.md` / `respond.md` -- the two turn kinds' own behavior rules (see
   "How it works" above).
+
+Display vocabulary is resolved after connection from `FaceDisplay.catalog()`.
+Both runtimes pass `settings.language` as the catalog locale and use the same
+snapshot for schemas and the `{{display_assets}}` prompt placeholder, rendered by
+`palmimo_sdk.agent.render_display_prompt`. `play_asset(id, hold_ms, params)` covers
+expressions and topic images together; only installed, described standard/current
+app assets are offered. With no assets, the display tool and motion `face` fields
+are absent. Schema 2 app assets are unnecessary for this example: deterministic
+gesture defaults in `core/defaults.py` are optional standard IDs and are skipped
+when absent. The test inventory lives in the repository's display-assets fixture;
+the platform supplies the production catalog. Reconnects refresh the toolset
+before another model session.
 
 `palmimo_companion_agent.pipeline.wiring.build_runtime` assembles all of this from
 `PipelineSettings`: with `--no-hardware` it wires a bare, compute-only

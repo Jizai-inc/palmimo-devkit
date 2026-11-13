@@ -55,7 +55,7 @@ def test_to_openai_tools_squash_say_never_mutates_the_underlying_toolset_schema(
 def test_is_long_running_delegates_to_the_underlying_toolset(toolset: AgentToolSet) -> None:
     view = ToolView(toolset)
     assert view.is_long_running("dance") is True
-    assert view.is_long_running("set_face") is False
+    assert view.is_long_running("play_asset") is False
 
 
 def test_is_long_running_is_false_for_an_unknown_tool(toolset: AgentToolSet) -> None:

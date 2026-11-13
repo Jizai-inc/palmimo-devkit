@@ -76,7 +76,12 @@ class RespondTurn:
                 the robot (vs. keyboard-only or ambient) -- see
                 :data:`_DIRECTED_SPEECH_NUDGE`.
         """
-        messages = build_messages(self.history, self._system_prompt, continuation_nudge=_CONTINUATION_NUDGE)
+        messages = build_messages(
+            self.history,
+            self._system_prompt,
+            continuation_nudge=_CONTINUATION_NUDGE,
+            display_catalog=self.view.display_catalog,
+        )
         if directed_speech:
             messages.append({"role": "user", "content": _DIRECTED_SPEECH_NUDGE})
         try:

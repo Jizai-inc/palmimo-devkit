@@ -5,11 +5,19 @@ description: Control the Palmimo hexapod robot through its MCP tools -- locomoti
 
 # Palmimo
 
-Palmimo is a small hexapod robot reachable through MCP tools: `forward`,
-`backward`, `turn`, `strafe`, `creep`, `dance`, `body_tilt`, `pushup`, `wave`,
-`wave_both`, `clap`, `bow`, `stretch`, `nod`, `head_shake`, `sleep`,
-`wake_up`, `look`, `look_center`, `set_face`, `show_emoji`, `say`, `capture`,
-and `stop`.
+Palmimo is a small hexapod robot reachable through MCP tools.
+
+## Discover the connected robot
+
+1. Connect to the MCP server and request `tools/list` before choosing actions.
+2. Read the returned schemas. When a display catalog is available, `play_asset`
+   and motion tools' optional `face` fields list its asset IDs and descriptions.
+   Choose only those IDs; do not infer names from another robot or session.
+3. Use `play_asset(id, hold_ms)` to show an asset on its own. A positive
+   `hold_ms` returns to idle afterwards; omitting it holds the asset.
+4. If no display assets are offered, use the other available actions. After a
+   reconnect, request the tools again; the server builds vocabulary from the
+   connected catalog. No fixed expression or emoji list applies to every robot.
 
 ## The server is not preemptive
 
@@ -34,7 +42,7 @@ Consequences for how to drive the robot:
 ## Being expressive
 
 Palmimo reads as more alive when speech is paired with a motion or
-expression: combine `say` with `set_face`, `show_emoji`, `wave`, `nod`, or
+expression: combine `say` with `play_asset`, `wave`, `nod`, or
 `bow` rather than only ever talking. Use `look` / `look_center` to orient the
 head before reacting to something, and `capture` to actually see what's
 around before deciding to move -- don't drive blind.
@@ -45,7 +53,7 @@ around before deciding to move -- don't drive blind.
   are fun -- each one runs to completion and blocks everything else, so
   spamming them makes the robot unresponsive for real requests.
 - On a desk or any surface with an edge nearby, prefer expressive/in-place
-  motions (`wave`, `nod`, `bow`, `set_face`, `say`) over locomotion
+  motions (`wave`, `nod`, `bow`, `play_asset`, `say`) over locomotion
   (`forward`, `backward`, `turn`, `strafe`, `creep`); only move the robot
   across a surface when you can see there's room via `capture`.
 - If a command's intent is unclear or risky (e.g. "walk off the table"),

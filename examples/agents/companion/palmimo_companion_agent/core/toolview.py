@@ -33,8 +33,7 @@ IDLE_TOOL_NAMES: frozenset[str] = frozenset(
         "stretch",
         "turn",
         "rest",
-        "set_face",
-        "show_emoji",
+        "play_asset",
         "capture",
         "discover",
         "investigate",
@@ -82,6 +81,11 @@ class ToolView:
         self._toolset = toolset
         self._allow = allow
         self._squash_say = squash_say
+
+    @property
+    def display_catalog(self) -> list[dict[str, Any]]:
+        """The same display snapshot used by this view's tool schemas."""
+        return self._toolset.display_catalog
 
     def to_openai_tools(self) -> list[dict[str, Any]]:
         """This view's tools as OpenAI ``tools=`` entries, filtered by the allowlist.

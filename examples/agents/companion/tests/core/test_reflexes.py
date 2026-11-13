@@ -16,6 +16,7 @@ class FakeToolset:
     """Records calls; ``busy`` / ``look_at_face_result`` are test-controlled."""
 
     def __init__(self, *, busy: bool = False, look_at_face_result: str = LOOK_AT_FACE_SEEN_MARK) -> None:
+        self.display_catalog = [{"id": "palmimo/happy", "description": "Test"}]
         self.busy = busy
         self.look_at_face_result = look_at_face_result
         self.calls: list[tuple[str, dict]] = []
@@ -31,7 +32,7 @@ class FakeToolset:
             return ToolResult(text="waved both front legs")
         if name == "look_at_face":
             return ToolResult(text=self.look_at_face_result)
-        if name == "show_emoji":
+        if name == "play_asset":
             return ToolResult(text="face shown")
         raise AssertionError(f"unexpected tool call: {name}")
 
@@ -62,7 +63,7 @@ async def test_wave_detection_waves_back_with_a_happy_face() -> None:
     await engine.run(_detections([Detection(summary="someone is waving", kind=DetectionKind.WAVE)]))
 
     [name_args] = [(n, a) for n, a in toolset.calls if n == "wave_both"]
-    assert name_args[1]["face"] == "HAPPY"
+    assert name_args[1]["face"] == "palmimo/happy"
 
 
 async def test_wave_detection_notifies_the_caller() -> None:
@@ -216,8 +217,8 @@ async def test_a_name_call_shows_a_face_before_it_looks_for_anyone() -> None:
 
     await engine.run(_detections([Detection(summary="someone called the robot by name", kind=DetectionKind.NAME_CALL)]))
 
-    assert [name for name, _ in toolset.calls] == ["show_emoji", "look_at_face"]
-    assert toolset.calls[0][1]["emoji"] == "HAPPY"
+    assert [name for name, _ in toolset.calls] == ["play_asset", "look_at_face"]
+    assert toolset.calls[0][1]["id"] == "palmimo/happy"
     assert any("answered a call" in note for note in notes)
 
 
@@ -252,4 +253,4 @@ async def test_calling_twice_in_quick_succession_answers_once() -> None:
     calls = [Detection(summary="called", kind=DetectionKind.NAME_CALL)] * 2
     await engine.run(_detections(calls))
 
-    assert [name for name, _ in toolset.calls].count("show_emoji") == 1
+    assert [name for name, _ in toolset.calls].count("play_asset") == 1
