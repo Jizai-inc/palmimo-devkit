@@ -560,9 +560,7 @@ def test_reconnect_while_old_command_times_out_cannot_deadlock() -> None:
     face.disconnect()
 
 
-@pytest.mark.parametrize(
-    "reply", ["OK ASSET LIST next=0", "OK ASSET LIST next=oops", "OK ASSET LIST next=- palmimo/a:image:1:badcrc"]
-)
+@pytest.mark.parametrize("reply", ["OK ASSET LIST next=0", "OK ASSET LIST next=oops", "OK ASSET LIST next=- broken"])
 def test_asset_listing_rejects_invalid_pages(reply: str) -> None:
     fakes: list[FakeSerial] = []
     with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
@@ -572,7 +570,7 @@ def test_asset_listing_rejects_invalid_pages(reply: str) -> None:
         assert not face.is_connected
 
 
-@pytest.mark.parametrize("reply", ["next=0 params=color/4", "next=- params=color/0", "next=- params=color/4,color/4"])
+@pytest.mark.parametrize("reply", ["next=0 params=color/4"])
 def test_asset_info_rejects_invalid_slot_pages(reply: str) -> None:
     fakes: list[FakeSerial] = []
     with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
@@ -762,3 +760,83 @@ def test_catalog_cache_is_isolated_from_callers_and_refreshed_on_reconnect(
         assert fakes[0].writes.count(b"ASSET LIST\n") == 1
     with face:
         assert face.catalog()[0]["description"] == "Second"
+
+
+@pytest.mark.parametrize("reply", ["OK HELLO proto=2 fw=2 caps=assets extra=1", "OK HELLO proto=2 fw=2 caps="])
+def test_connect_accepts_extensible_hello_fields(reply: str) -> None:
+    """Without this, firmware capability changes prevent an otherwise compatible connection."""
+    fake = FakeSerial("fake", 115200)
+    fake.auto = lambda cmd: reply if cmd == "HELLO" else "PONG"
+    with FaceDisplay(port="fake", serial_factory=lambda *args, **kwargs: fake) as face:
+        assert face.ping()
+
+
+@pytest.mark.parametrize(
+    "entry", ["palmimo/Happy:video:1:1234abcd", "palmimo/a:image:1:badcrc", "bad:image:1:1234abcd"]
+)
+def test_asset_listing_keeps_valid_entries_and_connection(entry: str, caplog: pytest.LogCaptureFixture) -> None:
+    """Without this, one unsupported or invalid flash entry takes the entire display offline."""
+    fakes: list[FakeSerial] = []
+    with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
+        fakes[0].auto = lambda cmd: "OK ASSET LIST next=- " + entry + " palmimo/happy:image:1:1234abcd"
+        assets = face.assets()
+        assert any(a["id"] == "palmimo/happy" for a in assets)
+        if entry.startswith("palmimo/Happy"):
+            assert assets[0]["id"] == "palmimo/Happy" and assets[0]["kind"] == "video"
+        else:
+            assert len(assets) == 1
+            assert any(r.levelname == "WARNING" for r in caplog.records)
+        fakes[0].auto = lambda cmd: "PONG"
+        assert face.ping()
+
+
+@pytest.mark.parametrize(
+    "slots,expected",
+    [
+        ("color/145", {"color": 145}),
+        ("color/0,good/4", {"good": 4}),
+        ("BAD/4,good/4", {"good": 4}),
+        ("color/4,color/4", {"color": 4}),
+    ],
+)
+def test_asset_info_keeps_valid_slots_and_connection(slots: str, expected: dict[str, int]) -> None:
+    """Without this, one bad slot or an undocumented dimension limit prevents startup."""
+    fakes: list[FakeSerial] = []
+    with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
+        fakes[0].auto = lambda cmd: "OK ASSET INFO palmimo/a kind=video bytes=1 crc32=1234abcd next=- params=" + slots
+        info = face.asset_info("palmimo/a")
+        assert info is not None and info["params"] == expected
+        fakes[0].auto = lambda cmd: "PONG"
+        assert face.ping()
+
+
+def test_catalog_skips_invalid_info_without_losing_other_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without this, corrupt asset metadata prevents the companion from loading any catalog."""
+    path = tmp_path / "catalog.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "assets": [
+                    {"id": "palmimo/happy", "description": "Happy"},
+                    {"id": "palmimo/sad", "description": "Sad"},
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr("palmimo_sdk.io.display.STANDARD_CATALOG_PATH", path)
+    fakes: list[FakeSerial] = []
+    with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
+
+        def reply(cmd: str) -> str:
+            if cmd == "ASSET LIST":
+                return "OK ASSET LIST next=- palmimo/happy:image:1:1234abcd palmimo/sad:image:1:1234abcd"
+            id = cmd.split()[2]
+            crc = "badcrc" if id == "palmimo/sad" else "1234abcd"
+            return f"OK ASSET INFO {id} kind=image bytes=1 crc32={crc} next=- params=-"
+
+        fakes[0].auto = reply
+        assert [a["id"] for a in face.catalog()] == ["palmimo/happy"]
+        assert face.is_connected

@@ -34,6 +34,8 @@ built on an SDK that predates v2; the platform switches between the two (see
   idle screen; the power state does not change. (A `FRAME` shown through the
   compatibility commands keeps its v1 behaviour: the sleep screen.)
 
+Clients ignore unknown HELLO fields and accept an empty `caps=` list.
+
 ## Identifiers and numbers
 
 - An **asset id** is `<owner>/<name>`, at most 127 bytes:
@@ -60,13 +62,18 @@ built on an SDK that predates v2; the platform switches between the two (see
 | `BL <0-100>` | `OK BL <n>` | Backlight. |
 | `ASSET PUT <id> <bytes> <crc32>` | `OK ASSET <id>` | A [transfer](#transfers). Platform tools only. Stops playback first. |
 | `ASSET DEL <id>` | `OK ASSET DEL <id>` | Platform tools only. Stops playback first. `ERR ASSET UNKNOWN` if absent. |
-| `ASSET LIST [<index>]` | `OK ASSET LIST next=<index\|-> <entry> …` | Entries are `<id>:<kind>:<bytes>:<crc32>` with `kind` `vector`, `image`, or `gif`, in a stable order. `<index>` (decimal, default `0`) is the position of the first entry to list; entries that do not fit the line continue at `next`. |
+| `ASSET LIST [<index>]` | `OK ASSET LIST next=<index\|-> <entry> …` | Entries are `<id>:<kind>:<bytes>:<crc32>` with current `kind` values `vector`, `image`, or `gif`, in a stable order. Clients accept other kinds. `<index>` (decimal, default `0`) is the position of the first entry to list; entries that do not fit the line continue at `next`. |
 | `ASSET INFO <id> [<index>]` | `OK ASSET INFO <id> kind=<kind> bytes=<n> crc32=<crc32> next=<index\|-> params=<sid>/<dim>,…\|-` | The slots an app may set with `PARAM`, in a stable order. `<index>` (decimal, default `0`) is the position of the first slot to list; slots that do not fit the line continue at `next`. `ERR ASSET UNKNOWN` if absent. |
 | `ASSET READ <id>` | `OK ASSET READ <id>` | A [read transfer](#transfers). |
 | `PLAY <id> [hold_ms]` | `OK PLAY <id>` | Plays an asset, looping. With `hold_ms`, returns to the idle screen afterwards. Leaves `STREAM` and `FRAME`. Resets every `PARAM`. `ERR PLAY UNKNOWN` if absent; `ERR PLAY POWEROFF` while the power is off; `ERR PLAY BUSY` while the power dialog is open. |
 | `STOP` | `OK STOP` | Idle screen. Leaves `STREAM` and `FRAME`. Resets every `PARAM`. |
 | `PARAM <sid> <v1> [v2 …]` | `OK PARAM <sid>` | Overrides a slot of the playing vector asset. Values are decimal floats; the count must match the slot's dimension. `ERR PARAM NOSLOT` when the playing asset has no such slot (for example, after a standard asset was replaced with an image); clients treat this as a warning. |
 | `STREAM <w> <h> RGB565 <crc32>` | `OK STREAM` | A [transfer](#transfers) of one frame of live video, `1 ≤ w, h ≤ 169`, RGB565 little-endian, `w × h × 2` bytes. Shown when complete. `ERR STREAM POWEROFF` while the power is off. |
+
+Slot dimensions are positive integers, with no protocol-level upper bound.
+Clients warn and skip invalid asset metadata or slot entries, preserving valid
+entries and the connection. Malformed reply structure or pagination is a protocol
+error.
 
 Platform-only commands are not exposed by `palmimo_sdk`; the firmware cannot
 tell its senders apart.

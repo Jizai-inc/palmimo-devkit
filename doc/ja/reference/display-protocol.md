@@ -16,6 +16,8 @@ FW v1（0.1.x）は異なるプロトコルを使い、v2 より前の SDK を�
 - ホストは前のコマンドの最終応答を受け取ってから次のコマンドを送ります。
 - ホストが DTR を下げる（ポートを閉じる）と、FW は途中の行と進行中の転送を破棄し、再生と `STREAM` を停止して待機画面を表示します。電源状態は変えません。互換コマンドで表示した `FRAME` は v1 と同じく寝顔になります。
 
+クライアントは未知の HELLO フィールドを無視し、空の `caps=` リストを受け付けます。
+
 ## 識別子と数値
 
 - **アセット ID** は `<owner>/<name>` で、最大 127 バイトです。
@@ -38,7 +40,7 @@ FW v1（0.1.x）は異なるプロトコルを使い、v2 より前の SDK を�
 | `BL <0-100>` | `OK BL <n>` | バックライトです。 |
 | `ASSET PUT <id> <bytes> <crc32>` | `OK ASSET <id>` | [転送](#転送)です。platform のツール専用です。先に再生を停止します。 |
 | `ASSET DEL <id>` | `OK ASSET DEL <id>` | platform のツール専用です。先に再生を停止します。存在しない場合は `ERR ASSET UNKNOWN` です。 |
-| `ASSET LIST [<index>]` | `OK ASSET LIST next=<index\|-> <entry> …` | 各エントリーは `<id>:<kind>:<bytes>:<crc32>` で、`kind` は `vector`、`image`、`gif` です。順序は固定です。`<index>`（十進数、既定は `0`）は最初に列挙する位置です。行に収まらない分は `next` から続きます。 |
+| `ASSET LIST [<index>]` | `OK ASSET LIST next=<index\|-> <entry> …` | 各エントリーは `<id>:<kind>:<bytes>:<crc32>` で、現在の `kind` は `vector`、`image`、`gif` です。クライアントは他の kind も受け付けます。順序は固定です。`<index>`（十進数、既定は `0`）は最初に列挙する位置です。行に収まらない分は `next` から続きます。 |
 | `ASSET INFO <id> [<index>]` | `OK ASSET INFO <id> kind=<kind> bytes=<n> crc32=<crc32> next=<index\|-> params=<sid>/<dim>,…\|-` | `PARAM` で設定できるスロットを固定順序で返します。`<index>`（十進数、既定は `0`）は最初に列挙するスロットの位置です。行に収まらない分は `next` から続きます。存在しないアセットには `ERR ASSET UNKNOWN` を返します。 |
 | `ASSET READ <id>` | `OK ASSET READ <id>` | [読み取り転送](#転送)です。 |
 | `PLAY <id> [hold_ms]` | `OK PLAY <id>` | アセットをループ再生します。`hold_ms` があれば、その時間の後に待機画面へ戻ります。`STREAM` と `FRAME` を終了し、すべての `PARAM` をリセットします。存在しない場合は `ERR PLAY UNKNOWN`、電源が切れていれば `ERR PLAY POWEROFF`、電源ダイアログが開いていれば `ERR PLAY BUSY` です。 |
@@ -47,6 +49,8 @@ FW v1（0.1.x）は異なるプロトコルを使い、v2 より前の SDK を�
 | `STREAM <w> <h> RGB565 <crc32>` | `OK STREAM` | ライブ映像の 1 フレームの[転送](#転送)です。`1 ≤ w, h ≤ 169`、RGB565 little-endian、`w × h × 2` バイトです。完成後に表示します。電源が切れていれば `ERR STREAM POWEROFF` です。 |
 
 platform 専用コマンドは `palmimo_sdk` では公開しません。FW 自体は送信者を区別できません。
+
+スロットの次元は正の整数で、プロトコル上の上限はありません。クライアントは不正なアセットのメタデータやスロットを警告して省き、有効なエントリーと接続を維持します。応答の構造やページ送りの不正はプロトコルエラーです。
 
 ### 互換コマンド
 

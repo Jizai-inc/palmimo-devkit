@@ -1605,7 +1605,7 @@ contract. `disconnect()` closes the port and invalidates the catalog cache.
 | `version()` | Firmware version string |
 | `stat()` | Dictionary of firmware status strings, including `power` and `proto` |
 | `assets()` | All ASSET LIST pages as dictionaries with `id`, `kind`, `bytes`, `crc32` |
-| `asset_info(id)` | The same metadata plus `params`, a dictionary from slot IDs to integer dimensions; follows every slot page |
+| `asset_info(id)` | The same metadata plus `params`, a dictionary from slot IDs to integer dimensions; follows every slot page. Invalid asset metadata returns `None`; invalid slots are omitted with a warning |
 | `stream_frame(w, h, rgb565_bytes)` | Reply string. One RGB565 little-endian frame, integer dimensions 1–169 and exactly `w * h * 2` bytes. Transfers at most 16 KiB ahead of ACKs and waits for the final response |
 | `catalog(tags=(), locale=None)` | List of the described entries below, matching **all** requested tags |
 | `set_expression(name, hold_ms=0)` | Deprecated alias for `play("palmimo/" + name.lower())`, with `0` mapped to an indefinite hold. Emits `DeprecationWarning`; no firmware expression aliases |

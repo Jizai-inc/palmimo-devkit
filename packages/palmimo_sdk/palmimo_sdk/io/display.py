@@ -47,11 +47,10 @@ _CONNECT_TIMEOUT_S = 5.0
 
 STANDARD_CATALOG_PATH = Path("/usr/local/share/palmimo/display-assets/catalog.json")
 APP_ASSETS_ROOT = Path("/run/palmimo/apps")
-_ASSET_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[a-z0-9][a-z0-9._-]{0,39}")
+_ASSET_ID = re.compile(r"palmimo/[!-.0-9;-~]+|[A-Za-z0-9][A-Za-z0-9._-]{0,80}/[a-z0-9][a-z0-9._-]{0,39}")
 _APP_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}")
 _SLOT_ID = re.compile(r"[a-z0-9_]{1,32}")
 _CRC = re.compile(r"[0-9a-f]{8}")
-_KINDS = {"vector", "image", "gif"}
 
 
 class FaceDisplayError(RuntimeError):
@@ -251,8 +250,6 @@ class FaceDisplay:
                 )
             if reply.startswith("ERR "):
                 raise FaceDisplayError(reply)
-            if set(self._fields(reply[9:])) != {"proto", "fw", "caps"}:
-                self._protocol_error("Invalid HELLO fields")
         except BaseException:
             self.disconnect()
             raise
@@ -385,7 +382,7 @@ class FaceDisplay:
         result: dict[str, str] = {}
         for token in text.split(" "):
             key, sep, value = token.partition("=")
-            if not sep or not key or not value or key in result:
+            if not sep or not key or key in result:
                 self._protocol_error("Malformed display fields")
             result[key] = value
         return result
@@ -397,13 +394,14 @@ class FaceDisplay:
             self._protocol_error("Invalid asset pagination cursor")
         return int(value)
 
-    def _asset(self, id: str, kind: str, size: str, crc: str) -> dict[str, Any]:
+    def _asset(self, id: str, kind: str, size: str, crc: str) -> dict[str, Any] | None:
         try:
             self._validate_id(id)
+            if not kind or not size.isascii() or not size.isdecimal() or not _CRC.fullmatch(crc):
+                raise ValueError("Invalid asset metadata")
         except ValueError:
-            self._protocol_error("Invalid asset id in reply")
-        if kind not in _KINDS or not size.isascii() or not size.isdecimal() or not _CRC.fullmatch(crc):
-            self._protocol_error("Invalid asset metadata")
+            logger.warning("Ignoring invalid display asset metadata for %s", id)
+            return None
         return {"id": id, "kind": kind, "bytes": int(size), "crc32": crc}
 
     def assets(self) -> list[dict[str, Any]]:
@@ -426,6 +424,8 @@ class FaceDisplay:
                 if len(parts) != 4:
                     self._protocol_error("Malformed ASSET LIST entry")
                 asset = self._asset(*parts)
+                if asset is None:
+                    continue
                 if asset["id"] in result:
                     self._protocol_error("Duplicate ASSET LIST id")
                 result[asset["id"]] = asset
@@ -434,14 +434,14 @@ class FaceDisplay:
                 return list(result.values())
             index = next_index
 
-    def asset_info(self, id: str) -> dict[str, Any]:
-        """Return metadata and every slot page; params maps slot ids to dimensions."""
+    def asset_info(self, id: str) -> dict[str, Any] | None:
+        """Return metadata and slot dimensions, or None for invalid asset metadata."""
         self._check_caller()
         with self._io_lock:
             return self._asset_info(id)
 
-    def _asset_info(self, id: str) -> dict[str, Any]:
-        """Return metadata and every slot page; params maps slot ids to dimensions."""
+    def _asset_info(self, id: str) -> dict[str, Any] | None:
+        """Return metadata and slot dimensions, or None for invalid asset metadata."""
         self._validate_id(id)
         result: dict[str, Any] | None = None
         params: dict[str, int] = {}
@@ -453,6 +453,8 @@ class FaceDisplay:
             if set(fields) != {"kind", "bytes", "crc32", "next", "params"}:
                 self._protocol_error("Invalid ASSET INFO fields")
             asset = self._asset(id, fields["kind"], fields["bytes"], fields["crc32"])
+            if asset is None:
+                return None
             if result is not None and result != asset:
                 self._protocol_error("Asset metadata changed across pages")
             result = asset
@@ -464,10 +466,11 @@ class FaceDisplay:
                         or not _SLOT_ID.fullmatch(sid)
                         or not dim.isascii()
                         or not dim.isdecimal()
-                        or not 1 <= int(dim) <= 144
+                        or int(dim) < 1
                         or sid in params
                     ):
-                        self._protocol_error("Invalid asset slot metadata")
+                        logger.warning("Ignoring invalid display slot metadata for %s: %s", id, slot)
+                        continue
                     params[sid] = int(dim)
             next_index = self._cursor(fields["next"], index)
             if next_index is None:
@@ -605,6 +608,8 @@ class FaceDisplay:
             if entry["id"] not in present:
                 continue
             info = self.asset_info(entry["id"])
+            if info is None:
+                continue
             params = {
                 sid: {"description": param["description"], "dim": info["params"][sid]}
                 for sid, param in entry["params"].items()

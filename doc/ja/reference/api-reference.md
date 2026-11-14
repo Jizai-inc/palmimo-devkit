@@ -708,7 +708,7 @@ except PortDetectionError as e:
 | `version()` | FW のバージョン文字列です |
 | `stat()` | `power` と `proto` を含む状態フィールドの文字列辞書です |
 | `assets()` | ASSET LIST の全ページを `id`、`kind`、`bytes`、`crc32` の辞書の一覧として返します |
-| `asset_info(id)` | 同じメタデータと、スロット ID を整数の次元へ対応付ける `params` を返します。スロットの全ページをたどります |
+| `asset_info(id)` | 同じメタデータと、スロット ID を整数の次元へ対応付ける `params` を返します。スロットの全ページをたどります。不正なアセットのメタデータなら `None` を返し、不正なスロットは警告して省きます |
 | `stream_frame(w, h, rgb565_bytes)` | 応答文字列。RGB565 little-endian の 1 フレームです。整数の寸法は 1〜169、長さはちょうど `w * h * 2` バイトです。ACK より最大 16 KiB まで先行し、最終応答を待ちます |
 | `catalog(tags=(), locale=None)` | 下記のエントリーの一覧です。指定した**すべての**タグに一致するものを返します |
 | `set_expression(name, hold_ms=0)` | 非推奨の `play("palmimo/" + name.lower())` の別名です。`0` は無期限に対応します。`DeprecationWarning` を出し、FW の表情の別名は解決しません |
