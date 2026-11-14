@@ -163,6 +163,8 @@ The declaration is `palmimo_sdk/display_firmware.json` inside the installed pack
 {"schema": 1, "protocol": 2}
 ```
 
+The SDK reads its required protocol from this same declaration.
+
 The platform reads it as a file from the app's environment (the installed
 distribution's `RECORD` locates it), follows no symlinks, and reads at most
 4 KiB. An app whose environment has `palmimo_sdk` without the declaration (or

@@ -21,6 +21,7 @@ import zlib
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from decimal import Decimal
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -38,6 +39,7 @@ DISPLAY_USB_VID = 0x2E8A  # Raspberry Pi
 
 # Firmware serial-protocol settings: 115200 8N1, \n.
 BAUDRATE = 115200
+DISPLAY_PROTOCOL: int = json.loads(files("palmimo_sdk").joinpath("display_firmware.json").read_text())["protocol"]
 
 # Deadline for the whole connect sequence (port detection + serial open). A real
 # face display's USB-CDC port opens near-instantly; 5s is wide margin while still
@@ -242,11 +244,12 @@ class FaceDisplay:
             self._reader.start()
             reply = self._command("HELLO", "OK HELLO ", allow_error=True)
             if reply == "ERR HELLO (try LIST)" or (
-                reply.startswith("OK HELLO ") and self._fields(reply[9:]).get("proto") != "2"
+                reply.startswith("OK HELLO ") and self._fields(reply[9:]).get("proto") != str(DISPLAY_PROTOCOL)
             ):
                 raise FaceDisplayFirmwareError(
-                    "Face display requires protocol 2. The platform must switch the display firmware "
-                    "before starting this app (palmimo-display-firmware desire 2 --by app-start, then ensure)."
+                    f"Face display requires protocol {DISPLAY_PROTOCOL}. The platform must switch the display firmware "
+                    "before starting this app; see doc/reference/display-protocol.md#firmware-selection "
+                    "and the installed palmimo_sdk/display_firmware.json declaration."
                 )
             if reply.startswith("ERR "):
                 raise FaceDisplayError(reply)
@@ -364,7 +367,7 @@ class FaceDisplay:
         """Return the firmware status key/value fields."""
         reply = self._command("STAT", "STAT ")
         fields = self._fields(reply[5:])
-        if fields.get("power") not in ("ON", "OFF") or fields.get("proto") != "2":
+        if fields.get("power") not in ("ON", "OFF") or fields.get("proto") != str(DISPLAY_PROTOCOL):
             self._protocol_error("Invalid STAT fields")
         return fields
 
