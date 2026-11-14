@@ -42,15 +42,14 @@ def make_tools(display: CatalogDisplay | None, **kwargs: Any) -> AgentToolSet:
 
 
 @pytest.mark.parametrize("locale", [None, "ja-jp"])
-def test_agent_schema_uses_catalog_ids_descriptions_and_requested_language(locale: str | None) -> None:
+def test_agent_schema_uses_catalog_ids_and_requested_language(locale: str | None) -> None:
     display = CatalogDisplay()
     display.entries[0]["description"] = "Injected description " + str(locale)
     tools = make_tools(display, display_tags=["face"], display_locale=locale)
     schemas = {t["function"]["name"]: t["function"] for t in tools.to_openai_tools()}
     ids = [a["id"] for a in display.entries]
     assert schemas["play_asset"]["parameters"]["properties"]["id"]["enum"] == ids
-    assert schemas["forward"]["parameters"]["properties"]["face"]["anyOf"][0]["enum"] == ids
-    assert display.entries[0]["description"] in json.dumps(schemas, ensure_ascii=False)
+    assert schemas["forward"]["parameters"]["properties"]["face"]["anyOf"][0]["type"] == "string"
     assert display.queries == [(("face",), locale)]
 
 
@@ -234,3 +233,11 @@ async def test_vocabulary_mutation_is_rejected_during_a_tool_call(operation: str
     finally:
         release.set()
         assert not (await task).is_error
+
+
+def test_catalog_growth_does_not_multiply_tool_schema_cost() -> None:
+    """Without this, every motion tool repeats the entire growing asset catalog."""
+    inventory = json.loads((Path(__file__).parents[3] / "tests/fixtures/display-assets/catalog.json").read_text())
+    small = json.dumps(make_tools(CatalogDisplay()).to_openai_tools())
+    large = json.dumps(make_tools(CatalogDisplay(inventory["assets"])).to_openai_tools())
+    assert len(large) - len(small) < 8000

@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Literal
 
-from pydantic import Field, create_model
+from pydantic import Field, create_model, field_validator
 
 from .tools import Expressive, PlayAssetTool, Tool
 
@@ -35,16 +35,21 @@ def bind_display_tool(cls: type[Tool], catalog: list[dict[str, Any]]) -> type[To
         return cls
     ids = tuple(asset["id"] for asset in catalog)
     choices: Any = Literal.__getitem__(ids) if ids else type(None)
-    description = render_display_prompt("Available display assets:\n{{display_assets}}", catalog)
     fields: dict[str, Any] = {}
     if issubclass(cls, Expressive):
-        fields["face"] = (choices | None, Field(default=None, description=description))
+        fields["face"] = (str | None, Field(default=None, description="Catalog asset id; see the display vocabulary."))
     if issubclass(cls, PlayAssetTool):
-        fields["id"] = (choices, Field(description=description))
-    bound = create_model(f"Bound{cls.__name__}", __base__=cls, **fields)
+        fields["id"] = (choices, Field(description="Asset id from the connected display catalog."))
+
+    def validate_asset(value: str | None) -> str | None:
+        if value is not None and value not in ids:
+            raise ValueError("Asset is outside the connected display catalog")
+        return value
+
+    validators = {"validate_asset": field_validator(*fields)(validate_asset)}
+    bound = create_model(f"Bound{cls.__name__}", __base__=cls, __validators__=validators, **fields)
     bound._display_enabled = bool(catalog)
     bound._display_asset_ids = ids
     if issubclass(bound, PlayAssetTool):
         bound._display_parameters = {asset["id"]: asset.get("params", {}) for asset in catalog}
-        bound.description = cls.description + "\n" + description
     return bound

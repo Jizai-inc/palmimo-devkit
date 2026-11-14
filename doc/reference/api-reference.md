@@ -1699,8 +1699,9 @@ Other display failures produce an error result. There is no parameter-editing
 operation detached from playback, so overrides cannot accidentally affect a
 different asset selected by an intervening action.
 
-Motion tools' optional `face` argument uses the same IDs and descriptions and
-plays before motion. Display failure is noted without preventing motion. Without
+Motion tools' optional `face` argument accepts catalog IDs, checked at runtime, and
+plays before motion. The full asset vocabulary is rendered once in the system
+prompt; motion schemas refer to it, and `play_asset.id` lists only the IDs. Display failure is noted without preventing motion. Without
 a connected display or with an empty catalog, `play_asset` and motion `face`
 properties are omitted, and non-null face arguments are rejected. Custom
 `Expressive` subclasses registered with `register()` are bound in the same way;
