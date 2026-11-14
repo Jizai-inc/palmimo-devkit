@@ -1741,3 +1741,24 @@ def test_main_identifies_reservations_as_mcp(monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setattr(mcp_main.anyio, "run", lambda *args: None)
     mcp_main.main([])
     assert observed == [app or "palmimo-mcp"]
+
+
+def test_main_stops_on_incompatible_display_firmware(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+    """Without this, an old display silently becomes an absent display in MCP."""
+    build_display = mcp_main._build_display
+    _patch_all_peripheral_builders(monkeypatch)
+    monkeypatch.setattr(mcp_main, "_build_display", build_display)
+    error = palmimo_sdk.FaceDisplayFirmwareError("Incompatible display firmware")
+
+    class OldDisplay:
+        def connect(self) -> None:
+            raise error
+
+    monkeypatch.setattr(mcp_main, "FaceDisplay", OldDisplay)
+    served: list[bool] = []
+    monkeypatch.setattr(mcp_main.uvicorn, "run", lambda *args, **kwargs: served.append(True))
+    with pytest.raises(SystemExit) as caught:
+        mcp_main.main(["--transport", "http"])
+    assert caught.value.code == 1
+    assert not served
+    assert capsys.readouterr().err

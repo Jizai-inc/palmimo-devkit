@@ -15,7 +15,7 @@ the servo bus (mirroring
 connect/open it right away, catching failure (missing optional dependency,
 no hardware attached, wrong port, ...) and warning instead of raising, so the
 server still starts compute-only / voice-less / camera-less rather than
-refusing to run at all. Reservation errors instead abort startup and identify
+refusing to run at all. Reservation and incompatible-display-firmware errors instead abort startup and identify
 the holder or storage problem. Warnings go to **stderr** -- stdio transport reserves
 stdout for the MCP protocol stream itself, so anything printed to stdout
 there would corrupt it. Each ``--no-*`` flag skips probing (and therefore
@@ -74,7 +74,15 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 
-from palmimo_sdk import FaceDisplay, HeadCamera, Palmimo, PortDetectionError, Speaker, SpeakerConfig
+from palmimo_sdk import (
+    FaceDisplay,
+    FaceDisplayFirmwareError,
+    HeadCamera,
+    Palmimo,
+    PortDetectionError,
+    Speaker,
+    SpeakerConfig,
+)
 from palmimo_sdk._signals import signals_ignored
 from palmimo_sdk.agent import AgentToolSet
 from palmimo_sdk.agent.toolset import TOOL_MODELS
@@ -381,11 +389,11 @@ def _build_servo_driver(servo_port: str | None) -> ServoDriver | None:
 
 
 def _build_display() -> FaceDisplay | None:
-    """Build and probe-connect the face display, degrading to ``None`` on failure."""
+    """Probe the display; missing hardware degrades, incompatible firmware aborts."""
     display = FaceDisplay()
     try:
         display.connect()
-    except ReservationError:
+    except (ReservationError, FaceDisplayFirmwareError):
         raise
     except Exception as exc:  # no display attached, missing `face` extra (pyserial), etc.
         print(f"face display not available -- expressions disabled ({exc})", file=sys.stderr)
@@ -835,7 +843,7 @@ def main(argv: list[str] | None = None) -> None:
                     port=args.port,
                     log_level="warning",
                 )
-        except ReservationError as exc:
+        except (ReservationError, FaceDisplayFirmwareError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             raise SystemExit(1) from None
         finally:

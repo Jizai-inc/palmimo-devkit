@@ -127,6 +127,10 @@ or a bus that could not be reached), the movement tools still compute the
 motion and succeed, and their result ends with
 `(no servo bus connected; nothing moved)`.
 
+Incompatible display firmware aborts startup with an error on stderr and exit
+status 1. This differs from an absent display; see
+[firmware selection](../reference/display-protocol.md#firmware-selection).
+
 ## Tool-Call Logging
 
 Every tool call is logged to **stderr**, one `INFO` line per call — the tool
