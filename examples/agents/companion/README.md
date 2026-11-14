@@ -163,8 +163,8 @@ app assets are offered. With no assets, the display tool and motion `face` field
 are absent. Schema 2 app assets are unnecessary for this example: deterministic
 gesture defaults in `core/defaults.py` are optional standard IDs and are skipped
 when absent. The test inventory lives in the repository's display-assets fixture;
-the platform supplies the production catalog. Reconnects refresh the toolset
-before another model session.
+the platform supplies the production catalog. The pipeline refreshes the toolset
+once after connecting, before starting its model session.
 
 `palmimo_companion_agent.pipeline.wiring.build_runtime` assembles all of this from
 `PipelineSettings`: with `--no-hardware` it wires a bare, compute-only
