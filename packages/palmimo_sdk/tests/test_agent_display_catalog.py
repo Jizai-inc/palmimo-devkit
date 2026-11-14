@@ -45,7 +45,6 @@ def make_tools(display: CatalogDisplay | None, **kwargs: Any) -> AgentToolSet:
 def test_agent_schema_uses_catalog_ids_and_requested_language(locale: str | None) -> None:
     """Without this, tool vocabulary can diverge from the selected catalog and locale."""
     display = CatalogDisplay()
-    display.entries[0]["description"] = "Injected description " + str(locale)
     tools = make_tools(display, display_tags=["face"], display_locale=locale)
     schemas = {t["function"]["name"]: t["function"] for t in tools.to_openai_tools()}
     ids = [a["id"] for a in display.entries]
