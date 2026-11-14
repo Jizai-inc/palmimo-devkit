@@ -150,6 +150,6 @@ scripts/                                # Supported user diagnostics (diagnose_s
 - **シリアルの権限** — 実行ユーザーが `dialout` グループに所属していること
 - **デバイス名** — `udev` による安定した OpenRB-150 のポート名（USB の抜き差しで番号が変わらないよう固定します）
 
-顔のバックエンドはプロトコル 2 のアセットプレーヤーです。platform が FW とアセットの保存を所有し、FaceDisplay が直列化した再生命令とタップ通知を所有します。目録は宣言と実機の情報を照合するため、語彙は実際に入っているアセットに追従します。[FaceDisplay](../reference/api-reference.md#facedisplay) を参照してください。
+顔のバックエンドはプロトコル 2 のアセットプレーヤーです。platform が FW とアセットの保存を所有し、FaceDisplay が直列化した再生命令とタップ通知を所有します。ファサードは旧表情名の解決とエラーもこのバックエンドへ委譲し、互換性の境界は[旧表情名の対応表](../reference/api-reference.md#旧表情名の対応表)で定義します。目録は宣言と実機の情報を照合するため、語彙は実際に入っているアセットに追従します。[FaceDisplay](../reference/api-reference.md#facedisplay) を参照してください。
 
 AgentToolSet は表示スキーマとプロンプトの語彙を同じ接続時の目録へ束縛します。[エージェントの表示語彙](../reference/api-reference.md#エージェントの表示語彙)を参照してください。

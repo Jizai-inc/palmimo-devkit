@@ -667,10 +667,13 @@ so guarding each step against `Exception` alone let it escape with the
 peripherals half-closed and the servos still energised.
 
 ### `robot.set_expression(name: str, hold_ms: int = 0) -> str | None`
-Deprecated display alias for `robot.display.play("palmimo/" + name.lower())`;
-when attached, the display emits `DeprecationWarning`. `hold_ms > 0` returns to
-idle after that many milliseconds; `0` holds until another display command.
-Returns the firmware reply, or `None` when no display is attached.
+Deprecated display alias using the [legacy expression map](#legacy-expression-map).
+Names ignore case and surrounding spaces. When attached, the display emits
+`DeprecationWarning`. `hold_ms > 0` returns to idle after that many milliseconds;
+`0` holds until another display command. Returns the successful firmware reply,
+or `None` when no display is attached. With an attached display, malformed names
+or invalid `hold_ms` raise `ValueError`; unsupported names and playback failures
+raise `FaceDisplayError` rather than returning an `ERR` reply.
 See [FaceDisplay](#facedisplay) for the asset API.
 
 ### `robot.say(text: str, lang: str | None = None) -> SpeechHandle | None`
@@ -1608,7 +1611,7 @@ contract. `disconnect()` closes the port and invalidates the catalog cache.
 | `asset_info(id)` | The same metadata plus `params`, a dictionary from slot IDs to integer dimensions; follows every slot page. Invalid asset metadata returns `None`; invalid slots are omitted with a warning |
 | `stream_frame(w, h, rgb565_bytes)` | Reply string. One RGB565 little-endian frame, integer dimensions 1–169 and exactly `w * h * 2` bytes. Transfers at most 16 KiB ahead of ACKs and waits for the final response |
 | `catalog(tags=(), locale=None)` | List of the described entries below, matching **all** requested tags |
-| `set_expression(name, hold_ms=0)` | Deprecated alias for `play("palmimo/" + name.lower())`, with `0` mapped to an indefinite hold. Emits `DeprecationWarning`; no firmware expression aliases |
+| `set_expression(name, hold_ms=0)` | Deprecated playback using the [legacy expression map](#legacy-expression-map). Emits `DeprecationWarning`; `0` holds indefinitely. Malformed names or invalid holds raise `ValueError`; unsupported names and playback failures raise `FaceDisplayError` |
 | `list_expressions()` | Deprecated space-separated standard names from `catalog()`. Emits `DeprecationWarning`; use `catalog()` for metadata |
 
 The reader always runs, including while no command is pending. Tap callbacks and
@@ -1622,6 +1625,23 @@ has the separate `connect_timeout` deadline. Firmware final errors raise
 transfers, I/O failures, and `ERR XFER TIMEOUT` close the connection; reconnect
 before reuse so a delayed reply cannot satisfy another command. Asset storage
 commands (PUT, DEL, READ) are not exposed.
+
+### Legacy expression map
+
+`set_expression()` normalizes case and surrounding spaces, then resolves only
+these names. `hold_ms` must be a nonnegative integer. Assets can still be absent
+from a device; a failed PLAY raises `FaceDisplayError`.
+
+| Names | Standard asset |
+|---|---|
+| `HAPPY`, `SMILE`, `LAUGH` | `palmimo/happy` |
+| `SURPRISE`, `SURPRISED` | `palmimo/surprise` |
+| `SLEEP`, `SLEEPING` | `palmimo/sleeping` |
+| `SHY`, `EXCITED`, `CURIOUS`, `THINKING`, `ANGRY`, `SAD`, `SLEEPY`, `LOVE`, `MARU`, `BATSU`, `GROOVE` | `palmimo/<lowercase name>` |
+
+Other names, including `HATENA`, `BIKKURI`, `WAKEUP`, `IDEA`, `HEART`, and topic
+emoji names, have no legacy mapping and raise an exception. Use `play()` with
+an explicit catalog ID for other assets; use `wake()` for the wake screen.
 
 ### Catalog entries
 
@@ -1701,7 +1721,8 @@ different asset selected by an intervening action.
 
 Motion tools' optional `face` argument accepts catalog IDs, checked at runtime, and
 plays before motion. The full asset vocabulary is rendered once in the system
-prompt; motion schemas refer to it, and `play_asset.id` lists only the IDs. Display failure is noted without preventing motion. Without
+prompt; motion schemas refer to it, and `play_asset.id` lists only the IDs.
+Display failure is noted without preventing motion. Without
 a connected display or with an empty catalog, `play_asset` and motion `face`
 properties are omitted, and non-null face arguments are rejected. Custom
 `Expressive` subclasses registered with `register()` are bound in the same way;
@@ -1795,7 +1816,9 @@ is the MCP protocol stream on that transport.
 
 ### CLI: `python -m palmimo_sdk.mcp`
 Wires a real `Palmimo` (servo bus, face display, speaker, head camera — each
-degrading to `None` on failure the same way `_build_servo_driver` does in the
+degrading to `None` for unavailable hardware. Reservation failures and incompatible
+display firmware abort startup with exit status 1. The probes otherwise follow
+`_build_servo_driver` in the
 wake-word example) to `build_mcp_server()` and serves it, over either stdio
 (the default, for a local MCP client sharing this process's stdin/stdout) or
 streamable HTTP (for a client on a different machine than the robot). See

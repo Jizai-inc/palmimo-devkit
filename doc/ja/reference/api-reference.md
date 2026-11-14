@@ -248,7 +248,7 @@ LeRobot プラグインのスクリプトは LeRobot の `DynamixelMotorsBus` �
 終了処理のある段階で `BaseException` が送出されても、途中で処理を終えません。例えば、Ctrl+C の連打で周辺機器のクローズ中に `KeyboardInterrupt` が届いた場合です。残りの処理も実行し、ドライバーの切断でトルクを切ってから再送出します（複数届いた場合は最初のもの）。これは `connect()` 自身の `BaseException` に対するロールバックと同じです。割り込みは `Exception` ではないため、各段階を `Exception` だけで保護すると、周辺機器が半分閉じたまま、サーボが通電した状態で抜けてしまいます。
 
 ### `robot.set_expression(name: str, hold_ms: int = 0) -> str | None`
-`robot.display.play("palmimo/" + name.lower())` に相当する非推奨の別名です。ディスプレイが接続されている場合は `DeprecationWarning` を出します。`hold_ms > 0` ならそのミリ秒数の後に待機画面へ戻り、`0` なら次の表示コマンドまで保持します。FW の応答行を返し、ディスプレイがなければ `None` を返します。[FaceDisplay](#facedisplay) のアセット API を参照してください。
+[旧表情名の対応表](#旧表情名の対応表)を使う非推奨の別名です。名前の大文字小文字と前後の空白を無視します。ディスプレイがある場合は `DeprecationWarning` を出します。`hold_ms > 0` ならそのミリ秒数の後に待機画面へ戻り、`0` なら次の表示コマンドまで保持します。成功時は FW の応答行を返し、ディスプレイがなければ `None` を返します。ディスプレイがある場合、不正な名前や保持時間は `ValueError`、未対応の名前や再生失敗は `FaceDisplayError` を送出し、`ERR` の文字列は返しません。[FaceDisplay](#facedisplay) のアセット API を参照してください。
 
 ### `robot.say(text: str, lang: str | None = None) -> SpeechHandle | None`
 取り付けたスピーカーで `text` を話します（ノンブロッキング）。`lang`（`"en"` / `"ja"`）はスピーカーのデフォルト音声を上書きします。キューに入れた発話の `SpeechHandle` を返し、スピーカーが取り付けられていなければ `None` です（何もしません）。
@@ -711,10 +711,23 @@ except PortDetectionError as e:
 | `asset_info(id)` | 同じメタデータと、スロット ID を整数の次元へ対応付ける `params` を返します。スロットの全ページをたどります。不正なアセットのメタデータなら `None` を返し、不正なスロットは警告して省きます |
 | `stream_frame(w, h, rgb565_bytes)` | 応答文字列。RGB565 little-endian の 1 フレームです。整数の寸法は 1〜169、長さはちょうど `w * h * 2` バイトです。ACK より最大 16 KiB まで先行し、最終応答を待ちます |
 | `catalog(tags=(), locale=None)` | 下記のエントリーの一覧です。指定した**すべての**タグに一致するものを返します |
-| `set_expression(name, hold_ms=0)` | 非推奨の `play("palmimo/" + name.lower())` の別名です。`0` は無期限に対応します。`DeprecationWarning` を出し、FW の表情の別名は解決しません |
+| `set_expression(name, hold_ms=0)` | [旧表情名の対応表](#旧表情名の対応表)による非推奨の再生です。`DeprecationWarning` を出し、`0` は無期限です。不正な名前や保持時間は `ValueError`、未対応の名前や再生失敗は `FaceDisplayError` を送出します |
 | `list_expressions()` | 非推奨の、`catalog()` にある標準名をスペースで区切った文字列です。`DeprecationWarning` を出します。メタデータには `catalog()` を使います |
 
 受信スレッドは、コマンドの待機中でなくても常に動きます。タップと `on_power_event(bool)` のコールバックはこのスレッドで実行します。短くスレッドセーフにし、重い処理はアプリのイベントループへ渡してください。コールバックから同期的な表示コマンドを呼ぶと `FaceDisplayError` になります。コールバックの例外はログに記録し、受信は継続します。コマンドは最終応答まで直列化し、イベントを読み飛ばします。`timeout` は各コマンドまたはフレーム転送全体の上限です。ポートを開く処理には別の `connect_timeout` を使います。FW の最終エラーは上記の NOSLOT を除いて `FaceDisplayError` になります。タイムアウト、不正な応答、転送の中断、I/O の失敗、`ERR XFER TIMEOUT` では接続を閉じます。遅延応答を別のコマンドの応答として扱わないよう、再利用の前に再接続してください。保存用の PUT、DEL、READ は公開しません。
+
+### 旧表情名の対応表
+
+`set_expression()` は大文字小文字と前後の空白を正規化し、次の名前だけを解決します。`hold_ms` は非負の整数です。実機にアセットがない場合の PLAY 失敗も `FaceDisplayError` を送出します。
+
+| 名前 | 標準アセット |
+|---|---|
+| `HAPPY`、`SMILE`、`LAUGH` | `palmimo/happy` |
+| `SURPRISE`、`SURPRISED` | `palmimo/surprise` |
+| `SLEEP`、`SLEEPING` | `palmimo/sleeping` |
+| `SHY`、`EXCITED`、`CURIOUS`、`THINKING`、`ANGRY`、`SAD`、`SLEEPY`、`LOVE`、`MARU`、`BATSU`、`GROOVE` | `palmimo/<小文字の名前>` |
+
+`HATENA`、`BIKKURI`、`WAKEUP`、`IDEA`、`HEART`、題材の絵文字名を含む他の名前には旧名の対応がなく、例外を送出します。他のアセットは明示的な目録 ID で `play()` を使い、起動画面には `wake()` を使ってください。
 
 ### 目録のエントリー
 
@@ -783,4 +796,4 @@ server = build_mcp_server(AgentToolSet(robot))
 振り分けた各呼び出しは、`palmimo_sdk.mcp.server` ロガーに 1 件の `INFO` 記録を残します。形式は `tool call name=<tool> args={...} outcome=<ok|error|interrupted> duration_ms=<float> result=<...> images=<n>` です。`log_tool_calls` は記録の詳しさを選びます。`"summary"`（デフォルト）は引数名と数値を表示し、文字列はすべて長さだけにします。 `"full"` は引数値と結果テキストをそのまま表示し、`"off"` は何も出力しません。 `build_mcp_server()` は記録を出すだけで、ハンドラーの登録やロガーの設定変更はしません。そのため、組み込み先のアプリケーションが設定するまで、記録はどこにも届きません（後述の CLI は stderr に送ります）。ここでライブラリが stdout ハンドラーを登録すると、stdio トランスポートの全セッションが破損します。このトランスポートでは stdout が MCP プロトコルのストリームだからです。
 
 ### CLI: `python -m palmimo_sdk.mcp`
-実際の `Palmimo` を `build_mcp_server()` につないで配信します。サーボバス、フェイスディスプレイ、スピーカー、頭部カメラは、ウェイクワードの例の `_build_servo_driver` と同様に、失敗時にはそれぞれ `None` へ縮退します。 stdio（デフォルト。このプロセスの stdin/stdout を共有するローカルの MCP クライアント向け）か、 streamable HTTP（ロボットと別のマシンのクライアント向け）で配信します。実行コマンド、CLI フラグの完全なリファレンス、Claude Code への登録コマンドは、 [MCP サーバーガイド](../guides/mcp-server.md)を参照してください。
+実際の `Palmimo` を `build_mcp_server()` につないで配信します。サーボバス、フェイスディスプレイ、スピーカー、頭部カメラは、ウェイクワードの例の `_build_servo_driver` と同様に、機器が利用できない場合はそれぞれ `None` へ縮退します。予約エラーと非互換のディスプレイ FW は、終了コード 1 で起動を中止します。 stdio（デフォルト。このプロセスの stdin/stdout を共有するローカルの MCP クライアント向け）か、 streamable HTTP（ロボットと別のマシンのクライアント向け）で配信します。実行コマンド、CLI フラグの完全なリファレンス、Claude Code への登録コマンドは、 [MCP サーバーガイド](../guides/mcp-server.md)を参照してください。

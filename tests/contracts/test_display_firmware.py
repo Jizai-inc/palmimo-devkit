@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from zipfile import ZipFile
 
-from palmimo_sdk.io.display import DISPLAY_PROTOCOL
+from palmimo_sdk.io.display import DISPLAY_PROTOCOL  # noqa: TID251 -- Contract checks the backend requirement.
 
 
 def test_wheel_declares_the_display_protocol_required_by_client(tmp_path: Path) -> None:

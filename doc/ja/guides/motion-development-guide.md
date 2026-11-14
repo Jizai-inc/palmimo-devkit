@@ -134,4 +134,6 @@ for pos in robot.play(routine, fps=60):
 
 顔も変えるモーションツールでは、[FaceDisplay](../reference/api-reference.md#facedisplay) で標準または自分のアプリのアセットを選びます。表示の I/O はエンジンの歩容ではなくツール層に置いてください。
 
+新しい表示動作には明示的な目録 ID を使ってください。非推奨の `set_expression()` は[旧表情名の対応表](../reference/api-reference.md#旧表情名の対応表)だけを受け付けます。
+
 カスタムの Expressive サブクラスは、接続済みの AgentToolSet へ登録し、face 引数に目録の選択肢を反映してください。[エージェントの表示語彙](../reference/api-reference.md#エージェントの表示語彙)を参照してください。

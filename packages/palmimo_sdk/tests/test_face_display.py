@@ -80,13 +80,26 @@ def _factory(captured: list[FakeSerial]) -> Callable[..., FakeSerial]:
 
 
 @pytest.mark.parametrize("hold_ms", [0, 3000])
-def test_set_expression_is_deprecated_play_alias(hold_ms: int) -> None:
+@pytest.mark.parametrize(
+    "name,asset",
+    [
+        ("Happy", "happy"),
+        ("Happy ", "happy"),
+        ("SMILE", "happy"),
+        ("LAUGH", "happy"),
+        ("SURPRISED", "surprise"),
+        ("SLEEP", "sleeping"),
+        ("LOVE", "love"),
+    ],
+)
+def test_set_expression_is_deprecated_play_alias(hold_ms: int, name: str, asset: str) -> None:
+    """Without this, supported legacy expressions send asset IDs that do not exist."""
     fakes: list[FakeSerial] = []
     with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
-        fakes[0].auto = lambda cmd: "OK PLAY palmimo/happy"
+        fakes[0].auto = lambda cmd: f"OK PLAY palmimo/{asset}"
         with pytest.warns(DeprecationWarning):
-            assert face.set_expression("Happy", hold_ms) == "OK PLAY palmimo/happy"
-    assert fakes[0].writes[-1] == ("PLAY palmimo/happy" + (f" {hold_ms}" if hold_ms else "") + "\n").encode()
+            assert face.set_expression(name, hold_ms) == f"OK PLAY palmimo/{asset}"
+    assert fakes[0].writes[-1] == (f"PLAY palmimo/{asset}" + (f" {hold_ms}" if hold_ms else "") + "\n").encode()
 
 
 @pytest.mark.parametrize(
@@ -562,6 +575,7 @@ def test_reconnect_while_old_command_times_out_cannot_deadlock() -> None:
 
 @pytest.mark.parametrize("reply", ["OK ASSET LIST next=0", "OK ASSET LIST next=oops", "OK ASSET LIST next=- broken"])
 def test_asset_listing_rejects_invalid_pages(reply: str) -> None:
+    """Without this, malformed page structure can corrupt catalog pagination."""
     fakes: list[FakeSerial] = []
     with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
         fakes[0].auto = lambda cmd: reply
@@ -572,6 +586,7 @@ def test_asset_listing_rejects_invalid_pages(reply: str) -> None:
 
 @pytest.mark.parametrize("reply", ["next=0 params=color/4"])
 def test_asset_info_rejects_invalid_slot_pages(reply: str) -> None:
+    """Without this, a nonadvancing slot cursor can loop indefinitely."""
     fakes: list[FakeSerial] = []
     with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
         fakes[0].auto = lambda cmd: "OK ASSET INFO palmimo/a kind=vector bytes=1 crc32=1234abcd " + reply
@@ -839,4 +854,37 @@ def test_catalog_skips_invalid_info_without_losing_other_assets(
 
         fakes[0].auto = reply
         assert [a["id"] for a in face.catalog()] == ["palmimo/happy"]
+        assert face.is_connected
+
+
+@pytest.mark.parametrize(
+    "name,hold_ms,error",
+    [
+        ("hatena", 0, FaceDisplayError),
+        ("bikkuri", 0, FaceDisplayError),
+        ("wakeup", 0, FaceDisplayError),
+        ("curry", 0, FaceDisplayError),
+        ("IDEA", 0, FaceDisplayError),
+        ("HEART", 0, FaceDisplayError),
+        ("../happy", 0, ValueError),
+        ("😀", 0, ValueError),
+        ("Happy", -1, ValueError),
+    ],
+)
+def test_set_expression_rejects_unsupported_names_without_play(name: str, hold_ms: int, error: type[Exception]) -> None:
+    """Without this, removed aliases can unexpectedly play unrelated assets or return ERR strings."""
+    fakes: list[FakeSerial] = []
+    with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
+        with pytest.warns(DeprecationWarning), pytest.raises(error):
+            face.set_expression(name, hold_ms)
+        assert fakes[0].writes == [b"HELLO\n"]
+
+
+def test_set_expression_raises_on_firmware_rejection() -> None:
+    """Without this, callers cannot rely on exceptions for failed deprecated playback."""
+    fakes: list[FakeSerial] = []
+    with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
+        fakes[0].auto = lambda cmd: "ERR PLAY UNKNOWN"
+        with pytest.warns(DeprecationWarning), pytest.raises(FaceDisplayError):
+            face.set_expression("HAPPY")
         assert face.is_connected

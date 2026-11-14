@@ -415,6 +415,9 @@ stops or an SSH session drops.
 
 The face backend is a protocol 2 asset player. The platform owns firmware and
 asset storage; FaceDisplay owns serialized playback commands and tap delivery.
+The facade delegates legacy expression resolution and errors to this backend;
+the [legacy expression map](../reference/api-reference.md#legacy-expression-map)
+defines that compatibility boundary.
 Its catalog joins declarations with live firmware metadata, so vocabulary follows
 the assets actually installed. See [FaceDisplay](../reference/api-reference.md#facedisplay).
 
