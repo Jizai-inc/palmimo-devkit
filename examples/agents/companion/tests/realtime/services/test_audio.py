@@ -290,9 +290,8 @@ def test_interrupt_does_not_report_a_stale_write_on_the_live_process(fake_popen:
     """One aplay lives for the whole session, so a live process alone is not 'still speaking'."""
     playback = Playback()
     playback.write(b"\x00\x00")
-    _wait_until(lambda: fake_popen.instances and fake_popen.instances[0].stdin.chunks)
-    assert playback._last_write is not None, "a completed write must record its time"
-    playback._last_write -= 5.0
+    _wait_until(lambda: playback._last_write is not None)
+    playback._last_write = time.monotonic() - 5.0
 
     result = playback.interrupt()
 
