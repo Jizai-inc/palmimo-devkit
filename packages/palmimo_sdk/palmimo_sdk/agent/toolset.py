@@ -65,6 +65,8 @@ from .tools import (
     PlayAssetTool,
     PushupTool,
     SayTool,
+    SetFaceTool,
+    ShowEmojiTool,
     SleepTool,
     StopTool,
     StrafeTool,
@@ -168,6 +170,7 @@ class AgentToolSet:
         self._cancel_requested = False
         if include is not None:
             include_set = set(include)
+            self._tools.update({cls.name: cls for cls in (SetFaceTool, ShowEmojiTool) if cls.name in include_set})
             unknown = include_set - self._tools.keys()
             if unknown:
                 raise ValueError(
@@ -176,7 +179,7 @@ class AgentToolSet:
             self._tools = {name: cls for name, cls in self._tools.items() if name in include_set}
         if exclude is not None:
             exclude_set = set(exclude)
-            unknown = exclude_set - TOOL_MODELS.keys()
+            unknown = exclude_set - (TOOL_MODELS.keys() | {"set_face", "show_emoji"})
             if unknown:
                 raise ValueError(
                     f"Unknown tool name(s) in exclude=: {sorted(unknown)}. Available: {sorted(TOOL_MODELS)}"

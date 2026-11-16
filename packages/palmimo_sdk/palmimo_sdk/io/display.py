@@ -25,6 +25,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, NoReturn
 
+from .._display_names import EXPRESSION_ASSETS, resolve_asset_name
 from ..reservation import Reservation, acquire_resource
 from ._timeout import ProbeTimeoutError, run_with_timeout
 
@@ -47,33 +48,14 @@ DISPLAY_PROTOCOL: int = json.loads(files("palmimo_sdk").joinpath("display_firmwa
 # (see _timeout.py).
 _CONNECT_TIMEOUT_S = 5.0
 
+_EXPRESSION_ASSETS = EXPRESSION_ASSETS
+
 STANDARD_CATALOG_PATH = Path("/usr/local/share/palmimo/display-assets/catalog.json")
 APP_ASSETS_ROOT = Path("/run/palmimo/apps")
 _ASSET_ID = re.compile(r"palmimo/[!-.0-9;-~]+|[A-Za-z0-9][A-Za-z0-9._-]{0,80}/[a-z0-9][a-z0-9._-]{0,39}")
 _APP_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}")
 _SLOT_ID = re.compile(r"[a-z0-9_]{1,32}")
 _CRC = re.compile(r"[0-9a-f]{8}")
-
-_EXPRESSION_ASSETS = {
-    "happy": "happy",
-    "smile": "happy",
-    "laugh": "happy",
-    "shy": "shy",
-    "excited": "excited",
-    "surprise": "surprise",
-    "surprised": "surprise",
-    "curious": "curious",
-    "thinking": "thinking",
-    "angry": "angry",
-    "sad": "sad",
-    "sleepy": "sleepy",
-    "love": "love",
-    "sleep": "sleeping",
-    "sleeping": "sleeping",
-    "maru": "maru",
-    "batsu": "batsu",
-    "groove": "groove",
-}
 
 
 class FaceDisplayError(RuntimeError):
@@ -329,23 +311,21 @@ class FaceDisplay:
         return self._command(command, f"OK PLAY {id}")
 
     def set_expression(self, name: str, hold_ms: int = 0) -> str:
-        """Play a supported legacy expression, ignoring case and surrounding spaces.
+        """Deprecated playback alias; see API reference: Migration from 0.1.x.
 
-        Emits DeprecationWarning. See the API reference's legacy expression map.
-        Zero hold_ms holds indefinitely; positive values return to idle afterwards.
-
-        Raises:
-            ValueError: The name is malformed or hold_ms is not a nonnegative integer.
-            FaceDisplayError: The name has no supported mapping or playback fails.
+        Raises ValueError for malformed input and FaceDisplayError when a name
+        cannot be resolved or the display rejects playback.
         """
         warnings.warn("set_expression() is deprecated; use play()", DeprecationWarning, stacklevel=2)
-        normalized = name.strip().lower()
-        if not re.fullmatch(r"[a-z][a-z0-9_]*", normalized) or type(hold_ms) is not int or hold_ms < 0:
-            raise ValueError("Expected an expression name and nonnegative integer hold_ms")
-        asset = _EXPRESSION_ASSETS.get(normalized)
-        if asset is None:
-            raise FaceDisplayError(f"Unsupported legacy expression: {name!r}; use play() with a catalog asset id")
-        return self.play("palmimo/" + asset, hold_ms=None if hold_ms == 0 else hold_ms)
+        if type(hold_ms) is not int or hold_ms < 0:
+            raise ValueError("Expected a nonnegative integer hold_ms")
+        try:
+            id = resolve_asset_name(
+                name, os.environ.get("PALMIMO_APP_ID"), lambda: (asset["id"] for asset in self.catalog())
+            )
+        except LookupError as error:
+            raise FaceDisplayError(str(error)) from error
+        return self.play(id, hold_ms=None if hold_ms == 0 else hold_ms)
 
     def stop(self) -> str:
         """Return to idle and reset all slot overrides."""

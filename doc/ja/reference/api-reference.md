@@ -248,7 +248,7 @@ LeRobot プラグインのスクリプトは LeRobot の `DynamixelMotorsBus` �
 終了処理のある段階で `BaseException` が送出されても、途中で処理を終えません。例えば、Ctrl+C の連打で周辺機器のクローズ中に `KeyboardInterrupt` が届いた場合です。残りの処理も実行し、ドライバーの切断でトルクを切ってから再送出します（複数届いた場合は最初のもの）。これは `connect()` 自身の `BaseException` に対するロールバックと同じです。割り込みは `Exception` ではないため、各段階を `Exception` だけで保護すると、周辺機器が半分閉じたまま、サーボが通電した状態で抜けてしまいます。
 
 ### `robot.set_expression(name: str, hold_ms: int = 0) -> str | None`
-[旧表情名の対応表](#旧表情名の対応表)を使う非推奨の別名です。名前の大文字小文字と前後の空白を無視します。ディスプレイがある場合は `DeprecationWarning` を出します。`hold_ms > 0` ならそのミリ秒数の後に待機画面へ戻り、`0` なら次の表示コマンドまで保持します。成功時は FW の応答行を返し、ディスプレイがなければ `None` を返します。ディスプレイがある場合、不正な名前や保持時間は `ValueError`、未対応の名前や再生失敗は `FaceDisplayError` を送出し、`ERR` の文字列は返しません。[FaceDisplay](#facedisplay) のアセット API を参照してください。
+[0.1.x からの移行](#01x-からの移行)を使う非推奨の別名です。名前の解決規則は同節を参照してください。呼び出すと `DeprecationWarning` を出します。`hold_ms > 0` ならそのミリ秒数の後に待機画面へ戻り、`0` なら次の表示コマンドまで保持します。成功時は FW の応答行を返し、ディスプレイがなければ `None` を返します。ディスプレイがある場合、不正な名前や保持時間は `ValueError`、未対応の名前や再生失敗は `FaceDisplayError` を送出し、`ERR` の文字列は返しません。[FaceDisplay](#facedisplay) のアセット API を参照してください。
 
 ### `robot.say(text: str, lang: str | None = None) -> SpeechHandle | None`
 取り付けたスピーカーで `text` を話します（ノンブロッキング）。`lang`（`"en"` / `"ja"`）はスピーカーのデフォルト音声を上書きします。キューに入れた発話の `SpeechHandle` を返し、スピーカーが取り付けられていなければ `None` です（何もしません）。
@@ -711,14 +711,34 @@ except PortDetectionError as e:
 | `asset_info(id)` | 同じメタデータと、スロット ID を整数の次元へ対応付ける `params` を返します。スロットの全ページをたどります。不正なアセットのメタデータなら `None` を返し、不正なスロットは警告して省きます |
 | `stream_frame(w, h, rgb565_bytes)` | 応答文字列。RGB565 little-endian の 1 フレームです。整数の寸法は 1〜169、長さはちょうど `w * h * 2` バイトです。ACK より最大 16 KiB まで先行し、最終応答を待ちます |
 | `catalog(tags=(), locale=None)` | 下記のエントリーの一覧です。指定した**すべての**タグに一致するものを返します |
-| `set_expression(name, hold_ms=0)` | [旧表情名の対応表](#旧表情名の対応表)による非推奨の再生です。`DeprecationWarning` を出し、`0` は無期限です。不正な名前や保持時間は `ValueError`、未対応の名前や再生失敗は `FaceDisplayError` を送出します |
+| `set_expression(name, hold_ms=0)` | [0.1.x からの移行](#01x-からの移行)による非推奨の再生です。`DeprecationWarning` を出し、`0` は無期限です。不正な名前や保持時間は `ValueError`、未対応の名前や再生失敗は `FaceDisplayError` を送出します |
 | `list_expressions()` | 非推奨の、`catalog()` にある標準名をスペースで区切った文字列です。`DeprecationWarning` を出します。メタデータには `catalog()` を使います |
 
 受信スレッドは、コマンドの待機中でなくても常に動きます。タップと `on_power_event(bool)` のコールバックはこのスレッドで実行します。短くスレッドセーフにし、重い処理はアプリのイベントループへ渡してください。コールバックから同期的な表示コマンドを呼ぶと `FaceDisplayError` になります。コールバックの例外はログに記録し、受信は継続します。コマンドは最終応答まで直列化し、イベントを読み飛ばします。`timeout` は各コマンドまたはフレーム転送全体の上限です。ポートを開く処理には別の `connect_timeout` を使います。FW の最終エラーは上記の NOSLOT を除いて `FaceDisplayError` になります。タイムアウト、不正な応答、転送の中断、I/O の失敗、`ERR XFER TIMEOUT` では接続を閉じます。遅延応答を別のコマンドの応答として扱わないよう、再利用の前に再接続してください。保存用の PUT、DEL、READ は公開しません。
 
-### 旧表情名の対応表
+### 0.1.x からの移行
 
-`set_expression()` は大文字小文字と前後の空白を正規化し、次の名前だけを解決します。`hold_ms` は非負の整数です。実機にアセットがない場合の PLAY 失敗も `FaceDisplayError` を送出します。
+以下の互換 API は 0.2.x では非推奨として残し、0.3.0 で削除する予定です。呼び出すと `DeprecationWarning` を出します。旧クラスは `palmimo_sdk.agent.tools` から import できます。型別名 `FaceExpression` も import できますが、モーションの `face` 引数は `str | None` を受け取ります。
+
+| 互換 API | 推奨 API |
+|---|---|
+| `FaceDisplay.set_expression(name, hold_ms=0)` | `display.play(id, hold_ms=None)`。正の `hold_ms` はそのまま渡します |
+| `Palmimo.set_expression(name, hold_ms=0)` | ディスプレイがある場合の `robot.display.play(id, hold_ms=None)` |
+| `SetFaceTool(name=...)` / `set_face` | `PlayAssetTool(id=...)` / `play_asset`。次のコマンドまで保持します |
+| `ShowEmojiTool(name=..., seconds=3.0)` / `show_emoji` | `PlayAssetTool(id=..., hold_ms=3000)`。`seconds` は従来どおり 0.5〜10.0 です |
+| モーションの `face` 引数に渡す短い名前 | `face` に渡す目録のアセット ID |
+| `display.list_expressions()` | `display.catalog()` |
+
+`set_face` と `show_emoji` は既定のツール一覧には含みません。`AgentToolSet(..., include=["set_face", "show_emoji"])` の明示指定か、独自の登録で使えます。MCP の既定のツールは変わりません。
+
+非推奨の名前を受け取る入口は、共通の順序で解決します。
+
+1. `/` を含む名前はアセット ID としてそのまま渡します。`play()` と同じく、標準と自分のアプリが宣言した資産だけを再生できます。
+2. 他の名前は前後の空白と大文字小文字を正規化します。下表にある名前なら標準アセットを優先し、アプリにも同じ短い名前がある場合も標準を選びます。
+3. それ以外で、`PALMIMO_APP_ID` のアプリの目録に小文字化した名前があれば、`<アプリ ID>/<名前>` を使います。
+4. 解決できなければ、目録の ID を `play()` に渡すかアプリで宣言するよう案内して失敗します。`set_expression()` は `FaceDisplayError`、旧ツールは `ToolResult(is_error=True)` を返します。不正な入力、負または整数でない `hold_ms` は引き続き `ValueError` です。
+
+モーションの引数は解決後に接続目録のスナップショットで検証します。明示的な ID が推奨です。`hold_ms=0` は次のコマンドまで保持し、正の値はそのミリ秒後に待機画面へ戻します。
 
 | 名前 | 標準アセット |
 |---|---|
@@ -727,7 +747,7 @@ except PortDetectionError as e:
 | `SLEEP`、`SLEEPING` | `palmimo/sleeping` |
 | `SHY`、`EXCITED`、`CURIOUS`、`THINKING`、`ANGRY`、`SAD`、`SLEEPY`、`LOVE`、`MARU`、`BATSU`、`GROOVE` | `palmimo/<小文字の名前>` |
 
-`HATENA`、`BIKKURI`、`WAKEUP`、`IDEA`、`HEART`、題材の絵文字名を含む他の名前には旧名の対応がなく、例外を送出します。他のアセットは明示的な目録 ID で `play()` を使い、起動画面には `wake()` を使ってください。
+旧絵文字名に対応する画像が FW に内蔵されているとは限りません。アプリの schema 2 マニフェストと目録に `sushi` というアセットを用意すれば、`PALMIMO_APP_ID` が設定された環境で旧コードの `set_expression("SUSHI")` や `ShowEmojiTool(name="SUSHI")` が `<アプリ ID>/sushi` を選びます。`HATENA`、`BIKKURI`、`WAKEUP`、`IDEA`、`HEART` もアプリが用意すれば同様です。内蔵の起動画面には `wake()` を使います。実機にアセットがなければ PLAY は失敗する場合があります。
 
 ### 目録のエントリー
 
@@ -763,7 +783,7 @@ except DynamixelConnectTimeoutError as e:
 
 `AgentToolSet(robot, include=None, exclude=None, display_tags=(), display_locale=None)` は、接続中のディスプレイの[目録](#目録のエントリー)から ID と翻訳済みの説明を使います。`display_tags` は全指定タグの一致、`display_locale` は目録と同じ完全一致・基本言語・原文の選択です。ツールセットはスナップショットを所有し、接続は所有しません。接続後に構築するか、接続と再接続の後、新しいモデルセッションの前に `refresh_display()` を呼びます。更新失敗時は古い選択肢を消して例外を再送出します。ツールの実行中に更新やカスタム登録を行うと `RuntimeError` です。
 
-`play_asset(id, hold_ms=None, params=None)` が従来の `set_face` と `show_emoji` のエージェントツールを置き換えます。ID と説明はスナップショットから取得し、正の整数 `hold_ms` でそのミリ秒後に待機画面へ戻ります。任意の `params` は宣言されたスロット ID を数値配列へ対応付けます。スキーマに説明と次元を含み、PLAY の前に選んだアセットのスロット、有限値、次元を検証します。パラメーターのスキーマは利用可能なスロット形状の和を示し、選んだアセットとの対応は実行前の検証で確認します。上書きは PLAY の後に行います。NOSLOT は警告で再生を続け、それ以外の表示失敗はエラー結果です。再生と分離したパラメーター操作を設けないため、途中の別の動作が選んだアセットへ誤って適用しません。
+`play_asset(id, hold_ms=None, params=None)` が推奨の表示ツールです。互換 API は [0.1.x からの移行](#01x-からの移行)を参照してください。ID と説明はスナップショットから取得し、正の整数 `hold_ms` でそのミリ秒後に待機画面へ戻ります。任意の `params` は宣言されたスロット ID を数値配列へ対応付けます。スキーマに説明と次元を含み、PLAY の前に選んだアセットのスロット、有限値、次元を検証します。パラメーターのスキーマは利用可能なスロット形状の和を示し、選んだアセットとの対応は実行前の検証で確認します。上書きは PLAY の後に行います。NOSLOT は警告で再生を続け、それ以外の表示失敗はエラー結果です。再生と分離したパラメーター操作を設けないため、途中の別の動作が選んだアセットへ誤って適用しません。
 
 モーションツールの任意の `face` 引数は目録の ID を実行時に検証し、動きの前に再生します。アセットの全文語彙は system prompt に一度だけ展開し、モーションのスキーマはそれを参照します。`play_asset.id` は ID のみを列挙します。表示失敗は結果へ付記し、動きは続けます。ディスプレイが未接続、または目録が空なら `play_asset` と `face` プロパティを提示せず、null 以外の face 引数は拒否します。`register()` したカスタム `Expressive` サブクラスも同じように束縛し、共通の基底クラスや他のツールセットは変更しません。include/exclude は利用可能性のフィルターより先に、登録名へ適用します。
 

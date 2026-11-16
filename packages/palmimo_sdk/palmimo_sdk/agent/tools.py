@@ -46,11 +46,14 @@ import base64
 import contextlib
 import logging
 import math
+import os
+import warnings
 from collections.abc import Callable
 from typing import Any, ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from palmimo_sdk._display_names import resolve_asset_name
 from palmimo_sdk.engine import MotionEngine
 from palmimo_sdk.robot import MotionCancelled, NeckPitchDegrees, NeckYawDegrees
 
@@ -296,6 +299,9 @@ def _servo_observation(robot: PalmimoLike, text: str) -> ToolResult:
 _EXPRESSIVE_SAY_MAX_CHARS = 60
 
 
+FaceExpression = Literal["HAPPY", "EXCITED", "SURPRISE", "CURIOUS", "THINKING", "ANGRY", "SAD", "SHY", "SLEEPY", "LOVE"]
+
+
 class Expressive(Tool):
     """Mixin adding optional ``face`` / ``say`` arguments to a motion tool.
 
@@ -364,10 +370,16 @@ class Expressive(Tool):
         """Best-effort ``display.play(face)``; returns a note on failure, else ``None``."""
         if self.face is None:
             return None
-        if robot.display is None:
+        display = robot.display
+        if display is None:
             return f"face {self.face!r} not shown: no face display attached"
         try:
-            reply = robot.display.play(self.face)
+            id = resolve_asset_name(
+                self.face, os.environ.get("PALMIMO_APP_ID"), lambda: (asset["id"] for asset in display.catalog())
+            )
+            if id != self.face:
+                warnings.warn("Short display names are deprecated; use catalog ids", DeprecationWarning, stacklevel=2)
+            reply = display.play(id)
         except Exception as exc:
             return f"face {self.face!r} not shown: {exc}"
         if _is_empty_display_reply(reply):
@@ -928,6 +940,63 @@ class PlayAssetTool(Tool):
         except Exception as exc:
             return ToolResult(text=f"failed to play {self.id!r}: {exc}", is_error=True)
         return ToolResult(text=f"playing {self.id!r}: {reply}")
+
+
+def _play_legacy_asset(robot: PalmimoLike, name: str, hold_ms: int | None) -> ToolResult:
+    display = robot.display
+    if display is None:
+        return ToolResult(text="no face display attached")
+    try:
+        id = resolve_asset_name(
+            name, os.environ.get("PALMIMO_APP_ID"), lambda: (asset["id"] for asset in display.catalog())
+        )
+    except Exception as error:
+        return ToolResult(text=str(error), is_error=True)
+    return PlayAssetTool(id=id, hold_ms=hold_ms).execute(robot)
+
+
+class SetFaceTool(Tool):
+    """Show a facial expression. Use to express an emotion/reaction, e.g. happy, sad, surprised."""
+
+    name: ClassVar[str] = "set_face"
+    description: ClassVar[str] = (
+        "Show a facial expression on the face display and keep it until the next expression. "
+        "Use to express an emotion or reaction. Available: HAPPY, EXCITED, SURPRISE, CURIOUS, "
+        "THINKING, ANGRY, SAD, SHY, SLEEPY, LOVE."
+    )
+
+    name_: str = Field(..., alias="name", description="Expression name (e.g. 'HAPPY', 'SAD', 'CURIOUS').")
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    def execute(self, robot: PalmimoLike) -> ToolResult:
+        """Deprecated wrapper; see API reference: Migration from 0.1.x."""
+        warnings.warn("SetFaceTool is deprecated; use PlayAssetTool", DeprecationWarning, stacklevel=2)
+        return _play_legacy_asset(robot, self.name_, None)
+
+
+class ShowEmojiTool(Tool):
+    """Flash an emoji/symbol on the display for a few seconds, then auto-revert to idle."""
+
+    name: ClassVar[str] = "show_emoji"
+    description: ClassVar[str] = (
+        "Flash an emoji or symbol on the face display for a few seconds; it then auto-reverts "
+        "to the idle face (unlike set_face, which holds). Use as a quick visual reaction or a "
+        "wordless answer. Symbols: MARU (yes/correct), BATSU (no/wrong), HATENA (?), BIKKURI (!). "
+        "Emoji examples: STAR, ROCKET, SUSHI, DOG, CAT, RAINBOW, GIFT, CAMERA, GAME."
+    )
+
+    name_: str = Field(..., alias="name", description="Emoji/symbol name (e.g. 'MARU', 'HATENA', 'STAR').")
+    seconds: float = Field(
+        default=3.0, ge=0.5, le=10.0, description="How long to show it before reverting, in seconds."
+    )
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    def execute(self, robot: PalmimoLike) -> ToolResult:
+        """Deprecated wrapper; see API reference: Migration from 0.1.x."""
+        warnings.warn("ShowEmojiTool is deprecated; use PlayAssetTool", DeprecationWarning, stacklevel=2)
+        return _play_legacy_asset(robot, self.name_, max(int(self.seconds * 1000), 1))
 
 
 # ======================================================================

@@ -667,9 +667,8 @@ so guarding each step against `Exception` alone let it escape with the
 peripherals half-closed and the servos still energised.
 
 ### `robot.set_expression(name: str, hold_ms: int = 0) -> str | None`
-Deprecated display alias using the [legacy expression map](#legacy-expression-map).
-Names ignore case and surrounding spaces. When attached, the display emits
-`DeprecationWarning`. `hold_ms > 0` returns to idle after that many milliseconds;
+Deprecated display alias using the [legacy expression map](#migration-from-01x).
+See that section for name resolution. Calls emit `DeprecationWarning`. `hold_ms > 0` returns to idle after that many milliseconds;
 `0` holds until another display command. Returns the successful firmware reply,
 or `None` when no display is attached. With an attached display, malformed names
 or invalid `hold_ms` raise `ValueError`; unsupported names and playback failures
@@ -1611,7 +1610,7 @@ contract. `disconnect()` closes the port and invalidates the catalog cache.
 | `asset_info(id)` | The same metadata plus `params`, a dictionary from slot IDs to integer dimensions; follows every slot page. Invalid asset metadata returns `None`; invalid slots are omitted with a warning |
 | `stream_frame(w, h, rgb565_bytes)` | Reply string. One RGB565 little-endian frame, integer dimensions 1–169 and exactly `w * h * 2` bytes. Transfers at most 16 KiB ahead of ACKs and waits for the final response |
 | `catalog(tags=(), locale=None)` | List of the described entries below, matching **all** requested tags |
-| `set_expression(name, hold_ms=0)` | Deprecated playback using the [legacy expression map](#legacy-expression-map). Emits `DeprecationWarning`; `0` holds indefinitely. Malformed names or invalid holds raise `ValueError`; unsupported names and playback failures raise `FaceDisplayError` |
+| `set_expression(name, hold_ms=0)` | Deprecated playback using the [legacy expression map](#migration-from-01x). Emits `DeprecationWarning`; `0` holds indefinitely. Malformed names or invalid holds raise `ValueError`; unsupported names and playback failures raise `FaceDisplayError` |
 | `list_expressions()` | Deprecated space-separated standard names from `catalog()`. Emits `DeprecationWarning`; use `catalog()` for metadata |
 
 The reader always runs, including while no command is pending. Tap callbacks and
@@ -1626,11 +1625,42 @@ transfers, I/O failures, and `ERR XFER TIMEOUT` close the connection; reconnect
 before reuse so a delayed reply cannot satisfy another command. Asset storage
 commands (PUT, DEL, READ) are not exposed.
 
-### Legacy expression map
+### Migration from 0.1.x
 
-`set_expression()` normalizes case and surrounding spaces, then resolves only
-these names. `hold_ms` must be a nonnegative integer. Assets can still be absent
-from a device; a failed PLAY raises `FaceDisplayError`.
+The following compatibility entry points remain deprecated in 0.2.x and are
+scheduled for removal in 0.3.0. Calls emit `DeprecationWarning`. The old classes
+remain importable from `palmimo_sdk.agent.tools`; `FaceExpression` remains an
+importable type alias, while motion `face` arguments accept `str | None`.
+
+| Compatibility entry point | Preferred API |
+|---|---|
+| `FaceDisplay.set_expression(name, hold_ms=0)` | `display.play(id, hold_ms=None)`; a positive `hold_ms` is forwarded |
+| `Palmimo.set_expression(name, hold_ms=0)` | `robot.display.play(id, hold_ms=None)` when a display is attached |
+| `SetFaceTool(name=...)` / `set_face` | `PlayAssetTool(id=...)` / `play_asset`; holds until another command |
+| `ShowEmojiTool(name=..., seconds=3.0)` / `show_emoji` | `PlayAssetTool(id=..., hold_ms=3000)`; `seconds` remains 0.5–10.0 |
+| A short name in a motion's `face` argument | A catalog asset ID in `face` |
+| `display.list_expressions()` | `display.catalog()` |
+
+`set_face` and `show_emoji` are absent from the default toolset. They are
+available through explicit `AgentToolSet(..., include=["set_face", "show_emoji"])`
+or custom registration. The default MCP tools are unchanged.
+
+All deprecated name entry points use the same resolution order:
+
+1. A name containing `/` is passed through as an asset ID. Playback permits
+   standard assets and declared assets of the current app, as `play()` does.
+2. Other names ignore surrounding spaces and case. Names in the table below
+   select the standard asset, even if the app declares the same short name.
+3. Otherwise, if the app selected by `PALMIMO_APP_ID` has that lowercased name
+   in its catalog, the ID is `<app ID>/<name>`.
+4. Unresolved names fail with guidance to use `play()` with a catalog ID or
+   declare the asset in the app. `set_expression()` raises `FaceDisplayError`;
+   the legacy tools return `ToolResult(is_error=True)`. Malformed input and
+   negative or non-integer `hold_ms` still raise `ValueError`.
+
+Motion arguments are checked against their connected catalog snapshot after
+resolution; explicit IDs remain preferred. A zero `hold_ms` keeps the display
+until another command; positive values return to idle after that many ms.
 
 | Names | Standard asset |
 |---|---|
@@ -1639,9 +1669,13 @@ from a device; a failed PLAY raises `FaceDisplayError`.
 | `SLEEP`, `SLEEPING` | `palmimo/sleeping` |
 | `SHY`, `EXCITED`, `CURIOUS`, `THINKING`, `ANGRY`, `SAD`, `SLEEPY`, `LOVE`, `MARU`, `BATSU`, `GROOVE` | `palmimo/<lowercase name>` |
 
-Other names, including `HATENA`, `BIKKURI`, `WAKEUP`, `IDEA`, `HEART`, and topic
-emoji names, have no legacy mapping and raise an exception. Use `play()` with
-an explicit catalog ID for other assets; use `wake()` for the wake screen.
+Old topic emoji names do not imply built-in firmware artwork. An app can
+ship an asset named `sushi` in its schema 2 manifest and catalog: with
+`PALMIMO_APP_ID` set, old `set_expression("SUSHI")` and
+`ShowEmojiTool(name="SUSHI")` calls then select `<app ID>/sushi` without code
+changes. The same applies to names such as `HATENA`, `BIKKURI`, `WAKEUP`,
+`IDEA`, and `HEART` when the app supplies them. Use `wake()` for the built-in
+wake screen. A missing device asset can still cause PLAY to fail.
 
 ### Catalog entries
 
@@ -1707,8 +1741,8 @@ owns a snapshot, not the connection. Construct it after connecting, or call
 session. A failed refresh clears old choices and re-raises. Refresh and custom
 registration raise `RuntimeError` during an active tool call.
 
-`play_asset(id, hold_ms=None, params=None)` replaces the separate `set_face` and
-`show_emoji` agent tools. IDs and descriptions come from that snapshot; a positive
+`play_asset(id, hold_ms=None, params=None)` is the preferred display tool;
+see [migration from 0.1.x](#migration-from-01x) for compatibility entry points. IDs and descriptions come from that snapshot; a positive
 integer `hold_ms` returns to idle afterwards. Optional `params` maps declared
 slot IDs to numeric arrays. Schemas describe their dimensions and descriptions;
 validation checks slots, finite values, and dimensions for the selected asset

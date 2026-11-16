@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
+import os
+import warnings
 from collections.abc import Iterable
 from typing import Any, Literal
 
 from pydantic import Field, create_model, field_validator
+
+from palmimo_sdk._display_names import resolve_asset_name
 
 from .tools import Expressive, PlayAssetTool, Tool
 
@@ -42,7 +46,17 @@ def bind_display_tool(cls: type[Tool], catalog: list[dict[str, Any]]) -> type[To
         fields["id"] = (choices, Field(description="Asset id from the connected display catalog."))
 
     def validate_asset(value: str | None) -> str | None:
-        if value is not None and value not in ids:
+        if value is None:
+            return None
+        if issubclass(cls, Expressive):
+            try:
+                resolved = resolve_asset_name(value, os.environ.get("PALMIMO_APP_ID"), lambda: ids)
+            except LookupError as error:
+                raise ValueError(str(error)) from error
+            if resolved != value:
+                warnings.warn("Short display names are deprecated; use catalog ids", DeprecationWarning, stacklevel=2)
+            value = resolved
+        if value not in ids:
             raise ValueError("Asset is outside the connected display catalog")
         return value
 
