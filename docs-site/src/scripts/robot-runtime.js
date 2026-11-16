@@ -58,7 +58,7 @@ export function readableTraceback(traceback) {
  * be run outside a browser.
  *
  * @param {any} pyodide A loaded Pyodide instance.
- * @param {Record<string, string>} payload Module path -> Python source.
+ * @param {Record<string, string>} payload Package path -> source or resource text.
  * @param {(text: string) => void} onOutput Called with anything the code prints.
  */
 export function bootstrap(pyodide, payload, onOutput) {

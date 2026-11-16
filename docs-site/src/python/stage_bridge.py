@@ -34,10 +34,10 @@ import io
 import math
 import time
 import wave
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, Protocol, runtime_checkable
 
-from palmimo_sdk import kinematics
+from palmimo_sdk import FaceDisplay, FaceDisplayError, kinematics
 
 
 LEGS: tuple[int, ...] = kinematics.LEFT_LEGS + kinematics.RIGHT_LEGS
@@ -197,6 +197,12 @@ class DisplaySink(Protocol):
 
     def set_expression(self, name: str, hold_ms: int = 0) -> str: ...
 
+    def play(self, id: str, hold_ms: int | None = None) -> str: ...
+
+    def stop(self) -> str: ...
+
+    def catalog(self, *, tags: Iterable[str] = (), locale: str | None = None) -> list[dict[str, Any]]: ...
+
 
 class StageCamera:
     """The robot's head camera, over the stage this page is drawing.
@@ -260,18 +266,28 @@ class StageCamera:
         self._consumers.append(fn)
 
 
-class StageDisplay:
-    """The robot's face display, over the screen the stage draws on its head.
+class StageDisplay(FaceDisplay):
+    """A display backed by the stage's available faces, exposed as catalog assets.
 
-    A :class:`DisplaySink`. The replies are shaped like the firmware's own
-    (``OK HAPPY``) because that is what the contract returns and what a reader
-    comparing this page against the hardware would expect to read back.
-
-    The faces are the stage's reading of the twelve the firmware ships, not a
-    copy of its artwork -- see ``robot-face.js``.
+    The SDK supplies legacy expression aliases. The stage supplies its own
+    artwork and catalog, without loading assets from the robot's filesystem.
+    Timed playback holds until the next command; the stage has no firmware timer.
     """
 
+    ASSETS = {
+        "palmimo/happy": "HAPPY",
+        "palmimo/excited": "EXCITED",
+        "palmimo/surprise": "SURPRISED",
+        "palmimo/thinking": "THINKING",
+        "palmimo/angry": "ANGRY",
+        "palmimo/sad": "SAD",
+        "palmimo/sleepy": "SLEEPY",
+        "palmimo/sleeping": "SLEEP",
+        "palmimo/love": "LOVE",
+    }
+
     def __init__(self) -> None:
+        super().__init__()
         self._connected = False
         self.expression = "IDLE"
 
@@ -286,26 +302,34 @@ class StageDisplay:
         self._connected = False
 
     def wake(self) -> str:
-        """Host-boot-complete, the way the real display marks it: IDEA, then IDLE."""
-        return self.set_expression("IDEA")
+        """Show the stage's wake screen without a firmware timer."""
+        self._show("IDEA")
+        return "OK WAKE"
 
-    def idle(self) -> str:
-        return self.set_expression("IDLE")
+    def stop(self) -> str:
+        self._show("IDLE")
+        return "OK STOP"
 
-    def set_expression(self, name: str, hold_ms: int = 0) -> str:
-        """Show *name*. ``hold_ms`` is accepted and ignored: holding for a time
-        and then returning to IDLE is the firmware's own timer, and this page
-        has no thread to run it on."""
-        wanted = name.strip().upper()
+    def catalog(self, *, tags: Iterable[str] = (), locale: str | None = None) -> list[dict[str, Any]]:
+        """List the stage's assets, which have no tags or translated descriptions."""
+        if tuple(tags):
+            return []
+        return [{"id": id, "description": expression.title()} for id, expression in self.ASSETS.items()]
+
+    def play(self, id: str, hold_ms: int | None = None) -> str:
+        """Show an available stage asset until another command replaces it."""
+        if id not in self.ASSETS:
+            raise FaceDisplayError(f"Stage has no asset {id!r}")
+        if hold_ms is not None and (type(hold_ms) is not int or hold_ms <= 0):
+            raise ValueError("hold_ms must be a positive integer or None")
+        self._show(self.ASSETS[id])
+        return f"OK PLAY {id}"
+
+    def _show(self, expression: str) -> None:
         stage = _stage()
-        if stage is None:
-            return "ERR NO STAGE"
-        try:
-            stage.face(wanted)
-        except Exception:
-            return f"ERR {wanted}"
-        self.expression = wanted
-        return f"OK {wanted}"
+        if stage is not None:
+            stage.face(expression)
+        self.expression = expression
 
 
 class StageMic:
