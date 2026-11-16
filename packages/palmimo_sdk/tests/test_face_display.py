@@ -92,10 +92,13 @@ def _factory(captured: list[FakeSerial]) -> Callable[..., FakeSerial]:
         ("LOVE", "love"),
     ],
 )
-def test_set_expression_is_deprecated_play_alias(hold_ms: int, name: str, asset: str) -> None:
+def test_set_expression_is_deprecated_play_alias(
+    hold_ms: int, name: str, asset: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Without this, supported legacy expressions send asset IDs that do not exist."""
     fakes: list[FakeSerial] = []
     with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
+        monkeypatch.setattr(face, "catalog", lambda **kwargs: [{"id": f"palmimo/{asset}"}])
         fakes[0].auto = lambda cmd: f"OK PLAY palmimo/{asset}"
         with pytest.warns(DeprecationWarning):
             assert face.set_expression(name, hold_ms) == f"OK PLAY palmimo/{asset}"
@@ -364,7 +367,7 @@ def test_catalog_joins_owned_declared_present_assets_and_localizes(
         assert face.play("palmimo/unlisted") == "OK PLAY palmimo/unlisted"
 
 
-@pytest.mark.parametrize("id", ["palmimo/happy\nSTOP", "palmimo/happy\r", "é/foo", "../foo", "palmimo/", "zip.other/x"])
+@pytest.mark.parametrize("id", ["palmimo/happy\nSTOP", "palmimo/ha\rppy", "é/foo", "../foo", "palmimo/", "zip.other/x"])
 def test_play_rejects_invalid_or_unowned_ids_before_writing(id: str) -> None:
     fakes: list[FakeSerial] = []
     with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
@@ -721,21 +724,21 @@ def test_catalog_ignores_unowned_assets_and_invalid_declarations(
     else:
         monkeypatch.setenv("PALMIMO_APP_ID", app_id)
     if app_id == "Acme.my-app":
-        app_dir = tmp_path / app_id
+        app_dir = tmp_path / app_id.lower()
         app_dir.mkdir()
         (app_dir / "assets.json").write_text(
-            json.dumps({"schema": 1, "assets": [{"id": app_id + "/x", "description": "App"}]})
+            json.dumps({"schema": 1, "assets": [{"id": app_id.lower() + "/x", "description": "App"}]})
         )
     fakes: list[FakeSerial] = []
     with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
 
         def respond(command: str) -> str:
             if command == "ASSET LIST":
-                return "OK ASSET LIST next=- palmimo/a:image:1:1234abcd Acme.my-app/x:image:1:1234abcd other.app/x:image:1:1234abcd"
+                return "OK ASSET LIST next=- palmimo/a:image:1:1234abcd acme.my-app/x:image:1:1234abcd other.app/x:image:1:1234abcd"
             return f"OK ASSET INFO {command.split()[2]} kind=image bytes=1 crc32=1234abcd next=- params=-"
 
         fakes[0].auto = respond
-        expected = ["palmimo/a"] + (["Acme.my-app/x"] if app_id == "Acme.my-app" else [])
+        expected = ["palmimo/a"] + (["acme.my-app/x"] if app_id == "Acme.my-app" else [])
         assert [a["id"] for a in face.catalog()] == expected
 
 
@@ -871,19 +874,23 @@ def test_catalog_skips_invalid_info_without_losing_other_assets(
         ("Happy", -1, ValueError),
     ],
 )
-def test_set_expression_rejects_unsupported_names_without_play(name: str, hold_ms: int, error: type[Exception]) -> None:
+def test_set_expression_rejects_unsupported_names_without_play(
+    name: str, hold_ms: int, error: type[Exception], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Without this, removed aliases can unexpectedly play unrelated assets or return ERR strings."""
     fakes: list[FakeSerial] = []
     with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
+        monkeypatch.setattr(face, "catalog", lambda **kwargs: [])
         with pytest.warns(DeprecationWarning), pytest.raises(error):
             face.set_expression(name, hold_ms)
         assert fakes[0].writes == [b"HELLO\n"]
 
 
-def test_set_expression_raises_on_firmware_rejection() -> None:
+def test_set_expression_raises_on_firmware_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
     """Without this, callers cannot rely on exceptions for failed deprecated playback."""
     fakes: list[FakeSerial] = []
     with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
+        monkeypatch.setattr(face, "catalog", lambda **kwargs: [{"id": "palmimo/happy"}])
         fakes[0].auto = lambda cmd: "ERR PLAY UNKNOWN"
         with pytest.warns(DeprecationWarning), pytest.raises(FaceDisplayError):
             face.set_expression("HAPPY")

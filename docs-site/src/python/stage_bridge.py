@@ -319,16 +319,23 @@ class StageDisplay(FaceDisplay):
         """List the stage's assets, which have no tags or translated descriptions."""
         if tuple(tags):
             return []
-        return [{"id": id, "description": expression.title()} for id, expression in self.ASSETS.items()]
+        return [
+            {"id": id, "name": id.split("/", 1)[1], "description": expression.title()}
+            for id, expression in self.ASSETS.items()
+        ]
 
     def play(self, id: str, hold_ms: int | None = None) -> str:
         """Show an available stage asset until another command replaces it."""
+        return super().play(id, hold_ms)
+
+    def _command(self, line: str, expected: str, *, allow_error: bool = False) -> str:
+        if not line.startswith("PLAY "):
+            raise FaceDisplayError("Unsupported stage command")
+        id = line.split()[1]
         if id not in self.ASSETS:
             raise FaceDisplayError(f"Stage has no asset {id!r}")
-        if hold_ms is not None and (type(hold_ms) is not int or hold_ms <= 0):
-            raise ValueError("hold_ms must be a positive integer or None")
         self._show(self.ASSETS[id])
-        return f"OK PLAY {id}"
+        return expected
 
     def _show(self, expression: str) -> None:
         stage = _stage()

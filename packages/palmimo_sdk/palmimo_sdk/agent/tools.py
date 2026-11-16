@@ -46,11 +46,14 @@ import base64
 import contextlib
 import logging
 import math
+import os
+import warnings
 from collections.abc import Callable
 from typing import Any, ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from palmimo_sdk._display_names import resolve_asset_name
 from palmimo_sdk.engine import MotionEngine
 from palmimo_sdk.robot import MotionCancelled, NeckPitchDegrees, NeckYawDegrees
 
@@ -179,6 +182,7 @@ class Tool(BaseModel):
     long_running: ClassVar[bool] = False
     _display_enabled: ClassVar[bool] = True
     _display_asset_ids: ClassVar[tuple[str, ...]] = ()
+    _display_asset_names: ClassVar[dict[str, str]] = {}
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
         raise NotImplementedError
@@ -296,6 +300,9 @@ def _servo_observation(robot: PalmimoLike, text: str) -> ToolResult:
 _EXPRESSIVE_SAY_MAX_CHARS = 60
 
 
+FaceExpression = Literal["HAPPY", "EXCITED", "SURPRISE", "CURIOUS", "THINKING", "ANGRY", "SAD", "SHY", "SLEEPY", "LOVE"]
+
+
 class Expressive(Tool):
     """Mixin adding optional ``face`` / ``say`` arguments to a motion tool.
 
@@ -364,16 +371,24 @@ class Expressive(Tool):
         """Best-effort ``display.play(face)``; returns a note on failure, else ``None``."""
         if self.face is None:
             return None
-        if robot.display is None:
+        display = robot.display
+        if display is None:
             return f"face {self.face!r} not shown: no face display attached"
+        id = self.face
         try:
-            reply = robot.display.play(self.face)
+            id = resolve_asset_name(
+                self.face,
+                os.environ.get("PALMIMO_APP_ID"),
+                lambda: (asset["id"] for asset in display.catalog()),
+                allow_aliases=True,
+            )
+            reply = display.play(id)
         except Exception as exc:
-            return f"face {self.face!r} not shown: {exc}"
+            return f"face {id!r} not shown: {exc}"
         if _is_empty_display_reply(reply):
-            return f"face {self.face!r} not shown: no reply from display (serial timeout?)"
+            return f"face {id!r} not shown: no reply from display (serial timeout?)"
         if _is_display_error_reply(reply):
-            return f"face {self.face!r} not shown: display replied {reply!r}"
+            return f"face {id!r} not shown: display replied {reply!r}"
         return None
 
     def _finish_say(self, handle: _SpeechHandleLike | None) -> str | None:
@@ -861,8 +876,8 @@ class PlayAssetTool(Tool):
     """Play a catalog asset, optionally returning to idle after a hold."""
 
     name: ClassVar[str] = "play_asset"
-    description: ClassVar[str] = "Play a display asset by its catalog id."
-    id: str = Field(description="Asset id from the connected display catalog.")
+    description: ClassVar[str] = "Play a display asset by its catalog name or full id."
+    id: str = Field(description="Display name or full id from the connected display catalog.")
     hold_ms: int | None = Field(
         default=None, gt=0, description="Milliseconds before returning to idle; null holds indefinitely."
     )
@@ -892,7 +907,7 @@ class PlayAssetTool(Tool):
             variants.append(
                 {
                     "type": "object",
-                    "description": id,
+                    "description": cls._display_asset_names.get(id, id),
                     "properties": {
                         sid: {
                             "type": "array",
@@ -913,21 +928,85 @@ class PlayAssetTool(Tool):
         return schema
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
-        if robot.display is None:
-            return ToolResult(text="no display attached", is_error=True)
-        try:
-            reply = robot.display.play(self.id, self.hold_ms)
-            if _is_empty_display_reply(reply) or _is_display_error_reply(reply):
-                return ToolResult(text=f"failed to play {self.id!r}: {reply!r}", is_error=True)
-            for sid, values in (self.params or {}).items():
-                result = robot.display.param(sid, *values)
-                if result == "ERR PARAM NOSLOT":
-                    logging.getLogger(__name__).warning("Display slot %s is unavailable; continuing playback", sid)
-                elif _is_empty_display_reply(result) or _is_display_error_reply(result):
-                    return ToolResult(text=f"failed to override {sid!r}: {result!r}", is_error=True)
-        except Exception as exc:
-            return ToolResult(text=f"failed to play {self.id!r}: {exc}", is_error=True)
-        return ToolResult(text=f"playing {self.id!r}: {reply}")
+        return _execute_asset(robot, self.id, self.hold_ms, self.params)
+
+
+def _execute_asset(
+    robot: PalmimoLike,
+    name: str,
+    hold_ms: int | None,
+    params: dict[str, list[float]] | None = None,
+    *,
+    allow_aliases: bool = False,
+) -> ToolResult:
+    """Execute playback and map transport failures to tool results."""
+    display = robot.display
+    if display is None:
+        return ToolResult(text="no display attached", is_error=True)
+    id = name
+    try:
+        id = resolve_asset_name(
+            name,
+            os.environ.get("PALMIMO_APP_ID"),
+            lambda: (asset["id"] for asset in display.catalog()),
+            allow_aliases=allow_aliases,
+        )
+        reply = display.play(id, hold_ms)
+        if _is_empty_display_reply(reply) or _is_display_error_reply(reply):
+            return ToolResult(text=f"failed to play {id!r}: {reply!r}", is_error=True)
+        for sid, values in (params or {}).items():
+            result = display.param(sid, *values)
+            if result == "ERR PARAM NOSLOT":
+                logging.getLogger(__name__).warning("Display slot %s is unavailable; continuing playback", sid)
+            elif _is_empty_display_reply(result) or _is_display_error_reply(result):
+                return ToolResult(text=f"failed to override {sid!r}: {result!r}", is_error=True)
+    except Exception as exc:
+        return ToolResult(text=f"failed to play {id!r}: {exc}", is_error=True)
+    return ToolResult(text=f"playing {id!r}: {reply}")
+
+
+class SetFaceTool(Tool):
+    """Show a facial expression. Use to express an emotion/reaction, e.g. happy, sad, surprised."""
+
+    name: ClassVar[str] = "set_face"
+    description: ClassVar[str] = (
+        "Show a facial expression on the face display and keep it until the next expression. "
+        "Use to express an emotion or reaction. Available: HAPPY, EXCITED, SURPRISE, CURIOUS, "
+        "THINKING, ANGRY, SAD, SHY, SLEEPY, LOVE."
+    )
+
+    name_: str = Field(..., alias="name", description="Expression name (e.g. 'HAPPY', 'SAD', 'CURIOUS').")
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    def execute(self, robot: PalmimoLike) -> ToolResult:
+        """Deprecated wrapper; see API reference: Migration from 0.1.x."""
+        warnings.warn("SetFaceTool is deprecated; use PlayAssetTool", DeprecationWarning, stacklevel=2)
+        return _execute_asset(robot, self.name_, None, allow_aliases=True)
+
+
+class ShowEmojiTool(Tool):
+    """Flash an emoji/symbol on the display for a few seconds, then auto-revert to idle."""
+
+    name: ClassVar[str] = "show_emoji"
+    description: ClassVar[str] = (
+        "Flash an emoji or symbol on the face display for a few seconds; it then auto-reverts "
+        "to the idle face (unlike set_face, which holds). Use as a quick visual reaction or a "
+        "wordless answer. Symbols: MARU (yes/correct), BATSU (no/wrong), HATENA (?), BIKKURI (!). "
+        "Emoji examples: STAR, ROCKET, SUSHI, DOG, CAT, RAINBOW, GIFT, CAMERA, GAME."
+    )
+
+    name_: str = Field(..., alias="name", description="Emoji/symbol name (e.g. 'MARU', 'HATENA', 'STAR').")
+    seconds: float = Field(
+        default=3.0, ge=0.5, le=10.0, description="How long to show it before reverting, in seconds."
+    )
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    def execute(self, robot: PalmimoLike) -> ToolResult:
+        """Deprecated wrapper; see API reference: Migration from 0.1.x."""
+        warnings.warn("ShowEmojiTool is deprecated; use PlayAssetTool", DeprecationWarning, stacklevel=2)
+        return _execute_asset(robot, self.name_, max(int(self.seconds * 1000), 1), allow_aliases=True)
 
 
 # ======================================================================

@@ -165,8 +165,9 @@ silently pass the literal `{typo}` through to argv instead of a real value.
 A schema 2 manifest declares the face-display assets the app plays. The host
 converts each file when the app is installed (a file it cannot convert fails
 the install) and writes the converted assets to the display before the app
-starts. The app plays them by id, `<app ID>/<name>`; see the
-[face display protocol](display-protocol.md).
+starts. SDK calls can use the asset name without embedding the installation's
+app ID; see [Display names](api-reference.md#display-names) for resolution and
+ownership. The [wire protocol](display-protocol.md) uses full IDs.
 
 ```toml
 schema = 2

@@ -182,7 +182,9 @@ for pos in robot.play(routine, fps=60):
     send_to_hardware(pos)
 ```
 
-Use explicit catalog IDs for new display actions; the deprecated
-`set_expression()` accepts only the [legacy expression map](../reference/api-reference.md#legacy-expression-map).
+Use selections from the connected catalog for new display actions; see
+[Display names](../reference/api-reference.md#display-names). The deprecated
+compatibility contract for `set_expression()` is defined in
+[migration from 0.1.x](../reference/api-reference.md#migration-from-01x).
 
 Register custom Expressive subclasses on the connected AgentToolSet so their face argument receives its catalog choices; see [Agent display vocabulary](../reference/api-reference.md#agent-display-vocabulary).

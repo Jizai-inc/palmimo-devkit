@@ -42,15 +42,15 @@ def make_tools(display: CatalogDisplay | None, **kwargs: Any) -> AgentToolSet:
 
 
 @pytest.mark.parametrize("locale", [None, "ja-jp"])
-def test_agent_schema_uses_catalog_ids_and_requested_language(locale: str | None) -> None:
+def test_agent_schema_uses_catalog_names_and_requested_language(locale: str | None) -> None:
     """Without this, tool vocabulary can diverge from the selected catalog and locale."""
     display = CatalogDisplay()
     tools = make_tools(display, display_tags=["face"], display_locale=locale)
     schemas = {t["function"]["name"]: t["function"] for t in tools.to_openai_tools()}
-    ids = [a["id"] for a in display.entries]
-    assert schemas["play_asset"]["parameters"]["properties"]["id"]["enum"] == ids
+    names = [a["name"] for a in tools.display_catalog]
+    assert schemas["play_asset"]["parameters"]["properties"]["id"]["enum"] == names
     assert schemas["forward"]["parameters"]["properties"]["face"]["anyOf"][0]["type"] == "string"
-    assert display.queries == [(("face",), locale)]
+    assert display.queries == [((), locale)]
 
 
 @pytest.mark.parametrize("state", ["missing", "empty", "disconnected"])
@@ -235,12 +235,12 @@ async def test_vocabulary_mutation_is_rejected_during_a_tool_call(operation: str
         assert not (await task).is_error
 
 
-def test_catalog_growth_does_not_multiply_tool_schema_cost() -> None:
-    """Without this, every motion tool repeats the entire growing asset catalog."""
-    entries = [
-        {"id": f"example/face_{index:03}", "description": f"Display reaction {index}.", "tags": ["face"], "params": {}}
-        for index in range(100)
-    ]
-    small = json.dumps(make_tools(CatalogDisplay()).to_openai_tools())
-    large = json.dumps(make_tools(CatalogDisplay(entries)).to_openai_tools())
-    assert len(large) - len(small) < 8000
+def test_catalog_growth_does_not_repeat_asset_meanings_in_tool_schemas() -> None:
+    """Asset choices may grow without repeating their meanings in every tool."""
+    inventory = json.loads((Path(__file__).parents[3] / "tests/fixtures/display-assets/catalog.json").read_text())
+    tools = make_tools(CatalogDisplay(inventory["assets"]))
+    schemas = json.dumps(tools.to_openai_tools())
+    for asset in inventory["assets"]:
+        assert asset["description"] not in schemas
+    choices = tools.tool_models["play_asset"].parameters_schema()["properties"]["id"]["enum"]
+    assert choices == [asset["name"] for asset in tools.display_catalog]
