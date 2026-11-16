@@ -13,6 +13,7 @@ stop logging.
 from __future__ import annotations
 
 import importlib.metadata
+import logging
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,9 @@ from .settings import PROJECT_ROOT
 _PACKAGES = ("palmimo-sdk", "palmimo-companion-agent")
 
 _GIT_TIMEOUT_S = 2.0
+_SHORT_HASH_LEN = 7
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -33,8 +37,9 @@ class CodeVersion:
     Args:
         commit: Short hash of ``HEAD``; ``None`` outside a git checkout.
         branch: Checked-out branch; ``None`` when detached or unknown.
-        dirty: Whether the working tree differs from ``HEAD``, untracked files
-            included; ``None`` when it could not be determined.
+        dirty: Whether a tracked file differs from ``HEAD``; ``None`` when it
+            could not be determined. Untracked files do not count, so an event
+            log written inside the checkout does not mark it dirty.
         packages: Installed version of each distribution in :data:`_PACKAGES`,
             ``None`` for one that is not installed.
     """
@@ -45,18 +50,22 @@ class CodeVersion:
     packages: dict[str, str | None]
 
 
-def _git(directory: Path, *args: str) -> str | None:
+def _git_status(directory: Path) -> str | None:
     try:
         completed = subprocess.run(
-            ["git", "-C", str(directory), *args],
+            ["git", "-C", str(directory), "status", "--porcelain=v2", "--branch", "--untracked-files=no"],
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT_S,
             check=True,
         )
-    except (OSError, subprocess.SubprocessError):
+    except subprocess.CalledProcessError as exc:
+        _log.warning("git could not describe %s: %s", directory, exc.stderr.strip())
         return None
-    return completed.stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        _log.warning("git could not describe %s: %s", directory, exc)
+        return None
+    return completed.stdout
 
 
 def _package_version(name: str) -> str | None:
@@ -68,12 +77,20 @@ def _package_version(name: str) -> str | None:
 
 def resolve_code_version(directory: Path = PROJECT_ROOT) -> CodeVersion:
     """Describe the code in *directory*'s checkout and the installed packages."""
-    commit = _git(directory, "rev-parse", "--short", "HEAD")
-    branch = _git(directory, "rev-parse", "--abbrev-ref", "HEAD") if commit else None
-    status = _git(directory, "status", "--porcelain") if commit else None
+    status = _git_status(directory)
+    headers: dict[str, str] = {}
+    changed = False
+    for line in (status or "").splitlines():
+        if line.startswith("# "):
+            key, _, value = line[2:].partition(" ")
+            headers[key] = value
+        else:
+            changed = True
+    oid = headers.get("branch.oid", "")
+    head = headers.get("branch.head", "")
     return CodeVersion(
-        commit=commit or None,
-        branch=None if branch in (None, "", "HEAD") else branch,
-        dirty=None if status is None else bool(status),
+        commit=oid[:_SHORT_HASH_LEN] if oid and oid != "(initial)" else None,
+        branch=head if head and head != "(detached)" else None,
+        dirty=None if status is None else changed,
         packages={name: _package_version(name) for name in _PACKAGES},
     )

@@ -54,11 +54,12 @@ def emit_run_start(version: CodeVersion, settings: PipelineSettings, *, out: Tex
     """Write the ``run_start`` line that opens one process's events in *out*.
 
     It names the code the process started from and a hash of its resolved
-    settings, so a log read later says which code and configuration wrote the
+    settings other than ``log_path``, which changes where lines go, not what
+    the robot does, so a log read later says which code and configuration wrote the
     lines after it. The settings carry no API keys (see
     :meth:`~palmimo_companion_agent.settings.CompanionSettings.with_env_file`).
     """
-    resolved = json.dumps(settings.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
+    resolved = json.dumps(settings.model_dump(mode="json", exclude={"log_path"}), sort_keys=True, ensure_ascii=False)
     _write_line(
         {
             "kind": "run_start",

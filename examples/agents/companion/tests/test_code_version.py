@@ -41,6 +41,12 @@ def test_resolve_code_version_reports_a_dirty_tree_when_a_tracked_file_changed(c
     assert resolve_code_version(checkout).dirty is True
 
 
+def test_resolve_code_version_keeps_a_tree_clean_when_only_an_untracked_file_appears(checkout: Path) -> None:
+    (checkout / "events.jsonl").write_text("{}\n")
+
+    assert resolve_code_version(checkout).dirty is False
+
+
 def test_resolve_code_version_leaves_git_fields_unknown_outside_a_checkout(tmp_path: Path) -> None:
     version = resolve_code_version(tmp_path)
 
