@@ -31,6 +31,37 @@ test('the SDK boots and stands at neutral', () => {
   }
 });
 
+test('the stage covers SDK legacy aliases and the standard face catalog', async () => {
+  const standard = JSON.parse(fs.readFileSync(
+    path.join(HERE, '..', 'tests', 'fixtures', 'display-assets', 'catalog.json'), 'utf8'
+  ));
+  const expected = standard.assets.filter((asset) => asset.tags.includes('face')).map((asset) => asset.id).sort();
+  const aliases = JSON.parse(pyodide.runPython(
+    'import json; from palmimo_sdk.io.display import _EXPRESSION_ASSETS; json.dumps(_EXPRESSION_ASSETS)'
+  ));
+  const sdkAssets = [...new Set(Object.values(aliases).map((asset) => `palmimo/${asset}`))].sort();
+  const stageAssets = JSON.parse(pyodide.runPython('json.dumps(sorted(StageDisplay.ASSETS))'));
+  assert.deepEqual(sdkAssets.filter((id) => !expected.includes(id)), []);
+  assert.deepEqual(stageAssets, expected);
+
+  const faces = [];
+  globalThis.palmimoStage = { face: (name) => faces.push(name) };
+  try {
+    for (const id of expected) {
+      assert.equal((await runtime.run(`robot.display.play(${JSON.stringify(id)})`)).error, null, id);
+    }
+    for (const alias of Object.keys(aliases)) {
+      assert.equal((await runtime.run(`robot.set_expression(${JSON.stringify(alias)})`)).error, null, alias);
+    }
+    assert.equal(faces.length, expected.length + Object.keys(aliases).length);
+    for (const face of faces) {
+      assert.ok(knowsExpression(face), `stage cannot render ${face}`);
+    }
+  } finally {
+    delete globalThis.palmimoStage;
+  }
+});
+
 test('the display plays catalog assets and SDK legacy aliases, then stops at idle', async () => {
   const faces = [];
   globalThis.palmimoStage = { face: (name) => faces.push(name) };

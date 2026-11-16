@@ -35,7 +35,7 @@ import math
 import time
 import wave
 from collections.abc import Callable, Iterable, Mapping
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from palmimo_sdk import FaceDisplay, FaceDisplayError, kinematics
 
@@ -274,8 +274,16 @@ class StageDisplay(FaceDisplay):
     Timed playback holds until the next command; the stage has no firmware timer.
     """
 
-    ASSETS = {
+    ASSETS: ClassVar[dict[str, str]] = {
         "palmimo/happy": "HAPPY",
+        "palmimo/shy": "HAPPY",
+        "palmimo/curious": "THINKING",
+        "palmimo/maru": "HAPPY",
+        "palmimo/batsu": "ANGRY",
+        "palmimo/groove": "EXCITED",
+        "palmimo/wakeup": "IDEA",
+        "palmimo/hatena": "THINKING",
+        "palmimo/bikkuri": "SURPRISED",
         "palmimo/excited": "EXCITED",
         "palmimo/surprise": "SURPRISED",
         "palmimo/thinking": "THINKING",
