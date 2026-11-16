@@ -413,6 +413,14 @@ stops or an SSH session drops.
   whether the robot is bearing load. That is not in tension with leaving torque on
   above: a guard acts while control still works, this is what happens when it does not
 
+The face backend is a protocol 2 asset player. The platform owns firmware and
+asset storage; FaceDisplay owns serialized playback commands and tap delivery.
+The facade and agent compatibility APIs share one name resolver before protocol 2
+playback; [Display names](../reference/api-reference.md#display-names)
+defines that compatibility boundary.
+Its catalog joins declarations with live firmware metadata, so vocabulary follows
+the assets actually installed. See [FaceDisplay](../reference/api-reference.md#facedisplay).
+
 ## I/O Runtime Environment Requirements
 
 `palmimo_sdk`'s core is hardware-independent, but the execution host that drives real
@@ -424,3 +432,5 @@ I/O is assumed to be a Raspberry Pi by default, with the following prerequisites
 - **Serial permissions** — the execution user belongs to the `dialout` group
 - **Device naming** — a stable OpenRB-150 port name via `udev` (fixed so the number
   doesn't change across USB unplug/replug)
+
+AgentToolSet binds display schemas and prompt vocabulary to one connected catalog snapshot; see [Agent display vocabulary](../reference/api-reference.md#agent-display-vocabulary).

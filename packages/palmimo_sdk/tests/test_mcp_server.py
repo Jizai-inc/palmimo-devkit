@@ -3,13 +3,14 @@
 import asyncio
 import base64
 import contextlib
+import json
 import logging
 import signal
 import subprocess
 import sys
 import threading
 import time
-from types import FrameType
+from types import FrameType, SimpleNamespace
 from typing import Any, ClassVar, NoReturn, cast
 
 import anyio
@@ -23,13 +24,15 @@ from mcp.client.stdio import FORCE_KILL_TIMEOUT, PROCESS_TERMINATION_TIMEOUT
 from mcp.client.streamable_http import streamable_http_client
 
 import palmimo_sdk
-from palmimo_sdk import MotionCancelled, Palmimo
+from palmimo_sdk import FaceDisplay, MotionCancelled, Palmimo
 from palmimo_sdk.agent import PalmimoLike
 from palmimo_sdk.agent.tools import Tool, ToolResult
 from palmimo_sdk.agent.toolset import TOOL_MODELS, AgentToolSet
 from palmimo_sdk.mcp import __main__ as mcp_main
 from palmimo_sdk.mcp import build_mcp_server
 from palmimo_sdk.mcp.__main__ import _build_http_app, _parse_args, _split_names
+
+from .conftest import CatalogDisplay
 
 
 class FakeRobot:
@@ -55,8 +58,8 @@ async def test_list_tools_mirrors_toolset_registration() -> None:
         result = await client.list_tools()
 
     by_name = {tool.name: tool for tool in result.tools}
-    assert set(by_name) == set(TOOL_MODELS)
-    for name, cls in TOOL_MODELS.items():
+    assert set(by_name) == set(TOOL_MODELS) - {"play_asset"}
+    for name, cls in toolset.tool_models.items():
         assert by_name[name].description == cls.description
         assert by_name[name].input_schema == cls.parameters_schema()
 
@@ -834,7 +837,7 @@ def _patch_connected_robot(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
     wholesale so no real backend is opened.
     """
     _patch_all_peripheral_builders(monkeypatch)
-    monkeypatch.setattr(mcp_main, "_build_display", lambda: cast(Any, object()))
+    monkeypatch.setattr(mcp_main, "_build_display", lambda: cast(Any, SimpleNamespace(is_connected=False)))
     park_calls: list[bool] = []
     monkeypatch.setattr(Palmimo, "connect", lambda self: None)
     monkeypatch.setattr(Palmimo, "disconnect", lambda self, *, park=True: park_calls.append(park))
@@ -1741,3 +1744,95 @@ def test_main_identifies_reservations_as_mcp(monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setattr(mcp_main.anyio, "run", lambda *args: None)
     mcp_main.main([])
     assert observed == [app or "palmimo-mcp"]
+
+
+def test_main_stops_on_incompatible_display_firmware(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+    """Without this, an old display silently becomes an absent display in MCP."""
+    build_display = mcp_main._build_display
+    _patch_all_peripheral_builders(monkeypatch)
+    monkeypatch.setattr(mcp_main, "_build_display", build_display)
+    error = palmimo_sdk.FaceDisplayFirmwareError("Incompatible display firmware")
+
+    class OldDisplay:
+        def connect(self) -> None:
+            raise error
+
+    monkeypatch.setattr(mcp_main, "FaceDisplay", OldDisplay)
+    served: list[bool] = []
+    monkeypatch.setattr(mcp_main.uvicorn, "run", lambda *args, **kwargs: served.append(True))
+    with pytest.raises(SystemExit) as caught:
+        mcp_main.main(["--transport", "http"])
+    assert caught.value.code == 1
+    assert not served
+    assert capsys.readouterr().err
+
+
+@pytest.mark.parametrize("failure", ["timeout", "malformed", "unknown", "firmware"])
+def test_main_handles_display_catalog_failures(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], failure: str
+) -> None:
+    _patch_all_peripheral_builders(monkeypatch)
+    error = (palmimo_sdk.FaceDisplayFirmwareError if failure == "firmware" else palmimo_sdk.FaceDisplayError)(failure)
+
+    display = CatalogDisplay()
+    display.failure = error
+    monkeypatch.setattr(mcp_main, "_build_display", lambda: display)
+    served: list[Any] = []
+
+    def capture_toolset(tools: AgentToolSet, **kwargs: Any) -> object:
+        served.append(tools)
+        return object()
+
+    monkeypatch.setattr(mcp_main, "build_mcp_server", capture_toolset)
+    monkeypatch.setattr(mcp_main.anyio, "run", lambda *args: None)
+    if failure == "firmware":
+        with pytest.raises(SystemExit) as caught:
+            mcp_main.main([])
+        assert caught.value.code == 1 and not served
+    else:
+        mcp_main.main([])
+        assert len(served) == 1
+        assert served[0].display_catalog == []
+        assert "play_asset" not in served[0].tool_names
+        assert "wave" in served[0].tool_names
+    assert capsys.readouterr().err
+
+
+@pytest.mark.parametrize("include", [["play_asset", "wave"], ["wave"]])
+async def test_mcp_initialization_exposes_catalog_meanings_once(
+    include: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PALMIMO_APP_ID", "com.example.app")
+    display = CatalogDisplay(
+        [
+            {
+                "id": "com.example.app/asset_42",
+                "description": "Signal that the next task is ready.",
+                "params": {"tint": {"dim": 4, "description": "Accent tint for the ready signal."}},
+            }
+        ]
+    )
+    tools = AgentToolSet(Palmimo(display=cast(FaceDisplay, display)), include=include)
+
+    async with Client(build_mcp_server(tools)) as client:
+        instructions = client.instructions
+        assert instructions is not None
+        for value in (
+            "asset_42",
+            "Signal that the next task is ready.",
+            "Accent tint for the ready signal.",
+        ):
+            assert instructions.count(value) == 1
+        assert "com.example.app/asset_42" not in instructions
+        listed = await client.list_tools()
+        for tool in listed.tools:
+            expected = tools.tool_models[tool.name]
+            assert tool.input_schema == expected.parameters_schema()
+            assert tool.description == expected.description
+        if "play_asset" in include:
+            result = await client.call_tool("play_asset", {"id": "com.example.app/asset_42"})
+            assert not result.is_error
+            assert display.calls == [("com.example.app/asset_42", None)]
+        assert {tool.name for tool in listed.tools} == set(include)
+        schemas = json.dumps([tool.model_dump() for tool in listed.tools])
+        assert "Signal that the next task is ready." not in schemas

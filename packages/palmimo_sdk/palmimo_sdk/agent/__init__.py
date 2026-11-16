@@ -25,9 +25,10 @@ package docstring). Install the ``palmimo-sdk[agent]`` extra to use it.
 
 from __future__ import annotations
 
+from .display import render_display_prompt
 from .receiver import PalmimoLike
 from .tools import Tool, ToolResult
 from .toolset import AgentToolSet
 
 
-__all__ = ["AgentToolSet", "PalmimoLike", "Tool", "ToolResult"]
+__all__ = ["AgentToolSet", "PalmimoLike", "Tool", "ToolResult", "render_display_prompt"]

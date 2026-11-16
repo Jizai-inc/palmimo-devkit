@@ -69,9 +69,9 @@ def my_new_motion(self) -> None:
 
 ## ステップ 5: LLM のツール呼び出しに公開する（palmimo_sdk.agent）
 
-新しいファサードのモーションは、ツールを用意するまで LLM エージェントからは見えません。 `palmimo_sdk/agent/tools.py` では、`Tool` を直接継承せず、`Expressive` のサブクラスを追加します。これにより、他の移動・ジェスチャー・首のツールと同じオプションの `face` / `say` 引数を使えます（動きながら話したり表情を変えたりできます）。 `execute()` ではなく `_act()` を実装し、`_run_motion` のパターンに従います。モーションを設定 → `run(seconds=)` → 必ず `stop()` を実行、という流れです。 `long_running: ClassVar[bool] = True` を設定します。時間指定のブロッキングモーションは、呼び出し側が `Palmimo.cancel()`/`MotionCancelled` による割り込みと競合させる可能性があります（`robot.cancel()` を参照）。`Tool` 基底クラスの既定値 `False` のままにするのは、内部でブロッキングする `run()` をまったく呼ばないツール（`set_face`/`show_emoji`/ `say`/`capture` 型の呼び出し）か、`run()` を呼んでも意図的に対象外とするツールだけです（`tools.py` の `stop` 自身のコメントを参照）。その後、 `palmimo_sdk/agent/toolset.py` の `TOOL_MODELS` にツールを登録します（SDK に含めるツールの唯一の正本です）。対応するスキーマとディスパッチのテストを `packages/palmimo_sdk/tests/test_agent_tools.py` に追加します。
+新しいファサードのモーションは、ツールを用意するまで LLM エージェントからは見えません。 `palmimo_sdk/agent/tools.py` では、`Tool` を直接継承せず、`Expressive` のサブクラスを追加します。これにより、他の移動・ジェスチャー・首のツールと同じオプションの `face` / `say` 引数を使えます（動きながら話したり表情を変えたりできます）。 `execute()` ではなく `_act()` を実装し、`_run_motion` のパターンに従います。モーションを設定 → `run(seconds=)` → 必ず `stop()` を実行、という流れです。 `long_running: ClassVar[bool] = True` を設定します。時間指定のブロッキングモーションは、呼び出し側が `Palmimo.cancel()`/`MotionCancelled` による割り込みと競合させる可能性があります（`robot.cancel()` を参照）。`Tool` 基底クラスの既定値 `False` のままにするのは、内部でブロッキングする `run()` をまったく呼ばないツール（`play_asset`/`say`/`capture` 型の呼び出し）か、`run()` を呼んでも意図的に対象外とするツールだけです（`tools.py` の `stop` 自身のコメントを参照）。その後、 `palmimo_sdk/agent/toolset.py` の `TOOL_MODELS` にツールを登録します（SDK に含めるツールの唯一の正本です）。対応するスキーマとディスパッチのテストを `packages/palmimo_sdk/tests/test_agent_tools.py` に追加します。
 
-`long_running=True` は、`_run_motion` 経由で動く時間指定の移動・ジェスチャーツールだけのものではありません。`look`/`look_center` も `long_running=True` です。これらは `robot.run(seconds=_NECK_SETTLE_SECONDS)` でブロックし、首の目標値を実際にドライバーへ送り続けるためです（目標値を設定するだけでは何も動きません）。`Tool` 基底クラスの既定値 `False` のままにするツールは、内部にブロッキングする `run()` がなく即座に完了するもの（`set_face`、 `show_emoji`、`say`、`capture`）か、`stop` のように `run()` を呼んでも意図的に対象外とするものだけです。`stop()` は、実行中の動作を止めるためにエージェントが使うツールそのものなので、`stop()` をキャンセルと競合させる意味がありません。
+`long_running=True` は、`_run_motion` 経由で動く時間指定の移動・ジェスチャーツールだけのものではありません。`look`/`look_center` も `long_running=True` です。これらは `robot.run(seconds=_NECK_SETTLE_SECONDS)` でブロックし、首の目標値を実際にドライバーへ送り続けるためです（目標値を設定するだけでは何も動きません）。`Tool` 基底クラスの既定値 `False` のままにするツールは、内部にブロッキングする `run()` がなく即座に完了するもの（`play_asset`、`say`、`capture`）か、`stop` のように `run()` を呼んでも意図的に対象外とするものだけです。`stop()` は、実行中の動作を止めるためにエージェントが使うツールそのものなので、`stop()` をキャンセルと競合させる意味がありません。
 
 モーションを意図的に LLM 用に公開しない場合に限り、このステップを省略します。その場合は `toolset.py` にコメントを残し、見落としではなく判断による省略だと分かるようにしてください。
 
@@ -131,3 +131,9 @@ routine = [
 for pos in robot.play(routine, fps=60):
     send_to_hardware(pos)
 ```
+
+顔も変えるモーションツールでは、[FaceDisplay](../reference/api-reference.md#facedisplay) で標準または自分のアプリのアセットを選びます。表示の I/O はエンジンの歩容ではなくツール層に置いてください。
+
+新しい表示動作には接続目録の選択肢を使ってください。[表示名](../reference/api-reference.md#表示名)を参照してください。非推奨の `set_expression()` の契約は [0.1.x からの移行](../reference/api-reference.md#01x-からの移行)を参照してください。
+
+カスタムの Expressive サブクラスは、接続済みの AgentToolSet へ登録し、face 引数に目録の選択肢を反映してください。[エージェントの表示語彙](../reference/api-reference.md#エージェントの表示語彙)を参照してください。

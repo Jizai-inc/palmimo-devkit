@@ -1,7 +1,7 @@
 # MCP Server
 
 `palmimo_sdk.mcp` exposes the same agent tools the wake-word example drives
-(forward, wave, set_face, say, capture, ...) over the
+(forward, wave, play_asset, say, capture, ...) over the
 [Model Context Protocol](https://modelcontextprotocol.io/), so any
 MCP-speaking client — Claude Code, Claude Desktop, or another MCP agent — can
 list and call them directly. Built on the MCP Python SDK 2.x, which can
@@ -126,6 +126,10 @@ start. The server states this in the `instructions` it returns from
 or a bus that could not be reached), the movement tools still compute the
 motion and succeed, and their result ends with
 `(no servo bus connected; nothing moved)`.
+
+Incompatible display firmware aborts startup with an error on stderr and exit
+status 1. This differs from an absent display; see
+[firmware selection](../reference/display-protocol.md#firmware-selection).
 
 ## Tool-Call Logging
 

@@ -1,6 +1,6 @@
 # MCP サーバー
 
-`palmimo_sdk.mcp` は、ウェイクワードのサンプルが使うものと同じエージェントツール（forward、wave、set_face、say、capture、...）を [Model Context Protocol](https://modelcontextprotocol.io/) 経由で公開します。 MCP に対応するクライアントであれば、Claude Code、Claude Desktop、その他の MCP エージェントから、直接ツールを一覧取得し、呼び出せます。MCP Python SDK 2.x を基に構築しており、接続するクライアントに合わせて、最新のプロトコルリビジョン（2026-07-28）と古いリビジョン（2024-11-05〜2025-11-25）のどちらもネゴシエーションできます。
+`palmimo_sdk.mcp` は、ウェイクワードのサンプルが使うものと同じエージェントツール（forward、wave、play_asset、say、capture、...）を [Model Context Protocol](https://modelcontextprotocol.io/) 経由で公開します。 MCP に対応するクライアントであれば、Claude Code、Claude Desktop、その他の MCP エージェントから、直接ツールを一覧取得し、呼び出せます。MCP Python SDK 2.x を基に構築しており、接続するクライアントに合わせて、最新のプロトコルリビジョン（2026-07-28）と古いリビジョン（2024-11-05〜2025-11-25）のどちらもネゴシエーションできます。
 
 ## インストール
 
@@ -85,6 +85,8 @@ claude mcp add palmimo http://<robot-host>:8765/mcp --transport http --header "A
 ## 周辺機器がない場合の縮退動作
 
 サーバーの起動時に接続できなかった周辺機器も、ツール一覧からは隠しません。そのツールは一覧に残り、呼び出すと未接続であることを説明するメッセージを返します。ツールが消えたり、サーバーが起動を拒否したりはしません。サーバーは `initialize` で返す `instructions` にこの動作を記載するので、クライアントは最初から把握できます。サーボバスがない場合（`--no-servo`、または接続できなかった場合）、動作のツールは動きの計算を行って成功し、結果の末尾に `(no servo bus connected; nothing moved)` を付けます。
+
+ディスプレイの FW が非互換なら、stderr に理由を出し、終了コード 1 で起動を中止します。ディスプレイがない場合とは区別します。[FW の選択](../reference/display-protocol.md#fw-の選択)を参照してください。
 
 ## ツール呼び出しのログ
 

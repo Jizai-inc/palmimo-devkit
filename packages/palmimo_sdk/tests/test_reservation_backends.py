@@ -29,7 +29,14 @@ from palmimo_sdk.io import microphone as microphone_module
 from palmimo_sdk.io._dynamixel_bus import DynamixelBus
 from palmimo_sdk.reservation import ReservationSetupError
 
+from .test_face_display import FakeSerial
 from .test_reservation import contender, holder
+
+
+def _display_serial() -> MagicMock:
+    fake = FakeSerial("fake", 115200)
+    fake.auto = lambda cmd: "OK HELLO proto=2 fw=2.0 caps=assets" if cmd == "HELLO" else "OK " + cmd
+    return MagicMock(wraps=fake)
 
 
 @pytest.fixture
@@ -65,7 +72,7 @@ def backend_factory(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], Any]:
             monkeypatch.setattr(cv2, "VideoCapture", lambda _: cap)
             return HeadCamera()
         if resource == "display":
-            return FaceDisplay(port="fake", serial_factory=lambda *args, **kwargs: MagicMock())
+            return FaceDisplay(port="fake", serial_factory=lambda *args, **kwargs: _display_serial())
         if resource == "speaker":
             engine = MagicMock(name="fake")
 
@@ -600,9 +607,8 @@ def test_mcp_probe_propagates_external_resource_holder(
 
 
 def test_display_reconnects_after_close_failure(directory: Path) -> None:
-    first, second = MagicMock(), MagicMock()
+    first, second = _display_serial(), _display_serial()
     first.close.side_effect = OSError("USB disconnected")
-    second.readline.return_value = b"OK\n"
     display = FaceDisplay(port="fake", serial_factory=MagicMock(side_effect=[first, second]))
     try:
         display.connect()
@@ -611,8 +617,8 @@ def test_display_reconnects_after_close_failure(directory: Path) -> None:
         assert not display.is_connected
         assert contender("display", directory).returncode == 23
         display.connect()
-        assert display.set_expression("happy") == "OK"
-        second.write.assert_called_once()
+        assert display.play("palmimo/happy") == "OK PLAY palmimo/happy"
+        assert second.write.call_count == 2
         assert display.is_connected
     finally:
         first.close.side_effect = None

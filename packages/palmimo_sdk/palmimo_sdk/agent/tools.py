@@ -44,11 +44,16 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import logging
+import math
+import os
+import warnings
 from collections.abc import Callable
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from palmimo_sdk._display_names import resolve_asset_name
 from palmimo_sdk.engine import MotionEngine
 from palmimo_sdk.robot import MotionCancelled, NeckPitchDegrees, NeckYawDegrees
 
@@ -85,9 +90,8 @@ class ToolResult:
     speaker attached" (:class:`SayTool`) is a normal, successful observation
     for the LLM to read and react to, not a protocol-level failure. But an
     individual :class:`Tool`'s own ``execute()`` MAY set it when a
-    device-level command itself fails -- e.g. :class:`SetFaceTool` /
-    :class:`ShowEmojiTool` set it when the face display rejects the
-    expression/emoji name (an ``ERR`` reply) or times out with no reply at
+    device-level command itself fails -- e.g. :class:`PlayAssetTool` set it when the face display rejects the
+    asset id (an ``ERR`` reply) or times out with no reply at
     all, since either case is a genuine command failure the LLM must not
     mistake for success. :meth:`~palmimo_sdk.agent.toolset.AgentToolSet.call`
     sets it additionally on its own failure paths (unknown tool name,
@@ -176,6 +180,9 @@ class Tool(BaseModel):
     #: meaningful to race that way; the async toolset is what actually
     #: does the racing.
     long_running: ClassVar[bool] = False
+    _display_enabled: ClassVar[bool] = True
+    _display_asset_ids: ClassVar[tuple[str, ...] | None] = None
+    _display_asset_names: ClassVar[dict[str, str]] = {}
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
         raise NotImplementedError
@@ -193,6 +200,10 @@ class Tool(BaseModel):
         """
         schema = cls.model_json_schema()
         _strip_titles(schema)
+        if not cls._display_enabled:
+            schema.get("properties", {}).pop("face", None)
+            if "face" in schema.get("required", []):
+                schema["required"].remove("face")
         return schema
 
 
@@ -282,20 +293,14 @@ def _servo_observation(robot: PalmimoLike, text: str) -> ToolResult:
 # EXPRESSIVE MIXIN (talk / show a face while moving)
 # ======================================================================
 
-# The face-expression vocabulary an LLM may pass alongside a motion, via
-# Expressive.face. Kept in sync BY HAND with SetFaceTool.description's list --
-# SetFaceTool's own `name_` field stays a plain str (its whole point is
-# letting the LLM name any expression the firmware knows, including ones
-# added there later); this Literal exists only so a MOTION tool's optional
-# `face` argument gets a closed, LLM-friendly enum in its schema instead of
-# an open string.
-FaceExpression = Literal["HAPPY", "EXCITED", "SURPRISE", "CURIOUS", "THINKING", "ANGRY", "SAD", "SHY", "SLEEPY", "LOVE"]
-
 # Character cap on Expressive.say -- mirrors SayTool's own tolerance for a
 # runaway thought-dump, but shorter: this is a quip said WHILE the robot is
 # busy moving/gesturing, not the main event, so it is truncated (never
 # rejected) well below SayTool.text's 500-char cap.
 _EXPRESSIVE_SAY_MAX_CHARS = 60
+
+
+FaceExpression = Literal["HAPPY", "EXCITED", "SURPRISE", "CURIOUS", "THINKING", "ANGRY", "SAD", "SHY", "SLEEPY", "LOVE"]
 
 
 class Expressive(Tool):
@@ -313,11 +318,10 @@ class Expressive(Tool):
     used to be their ``execute()``) instead of ``execute()`` directly --
     :meth:`execute` here handles the face/say choreography around it:
 
-    1. If ``face`` is set, applies it via ``robot.set_expression(face)``
+    1. If ``face`` is set, applies it via ``robot.display.play(face)``
        BEFORE the action starts. A failure (no display, an ``ERR`` reply, an
        empty/timed-out reply, or a raised exception) is noted in the result
-       text but never stops the action or raises -- the same "descriptive,
-       not fatal" policy :class:`SetFaceTool` itself follows.
+       text without preventing the motion.
     2. If ``say`` is set, starts it via ``robot.say(say)`` BEFORE the action.
        ``Speaker.say()`` is itself non-blocking (a background
        :class:`~palmimo_sdk.io.speaker.SpeechHandle`), so this returns
@@ -334,7 +338,7 @@ class Expressive(Tool):
        whole call ``is_error`` -- only the action's own outcome does.
     """
 
-    face: FaceExpression | None = Field(
+    face: str | None = Field(
         default=None,
         description=(
             "Facial expression to show at the same time as this action (before it starts). "
@@ -364,19 +368,29 @@ class Expressive(Tool):
         raise NotImplementedError
 
     def _apply_face(self, robot: PalmimoLike) -> str | None:
-        """Best-effort ``set_expression(face)``; returns a note on failure, else ``None``."""
+        """Best-effort ``display.play(face)``; returns a note on failure, else ``None``."""
         if self.face is None:
             return None
-        if robot.display is None:
+        display = robot.display
+        if display is None:
             return f"face {self.face!r} not shown: no face display attached"
+        id = self.face
         try:
-            reply = robot.set_expression(self.face)
+            id = resolve_asset_name(
+                self.face,
+                os.environ.get("PALMIMO_APP_ID"),
+                lambda: (asset["id"] for asset in display.catalog()),
+                allow_aliases=True,
+            )
+            if self._display_asset_ids is not None and id not in self._display_asset_ids:
+                return f"face {id!r} not shown: asset is outside the connected display catalog"
+            reply = display.play(id)
         except Exception as exc:
-            return f"face {self.face!r} not shown: {exc}"
+            return f"face {id!r} not shown: {exc}"
         if _is_empty_display_reply(reply):
-            return f"face {self.face!r} not shown: no reply from display (serial timeout?)"
+            return f"face {id!r} not shown: no reply from display (serial timeout?)"
         if _is_display_error_reply(reply):
-            return f"face {self.face!r} not shown: display replied {reply!r}"
+            return f"face {id!r} not shown: display replied {reply!r}"
         return None
 
     def _finish_say(self, handle: _SpeechHandleLike | None) -> str | None:
@@ -848,22 +862,7 @@ class LookCenterTool(Expressive):
 
 
 def _is_display_error_reply(reply: str | None) -> bool:
-    """True when a face-display reply reports a firmware-side failure.
-
-    The firmware's error contract (see ``FaceDisplay.set_expression`` and
-    firmware/display/src/face_serial.c) is a reply that IS the ``ERR`` token
-    or starts with the ``ERR `` token followed by a space -- e.g.
-    ``ERR NOT_A_FACE (try LIST)`` for an unknown expression/emoji name.
-    Matched by token rather than by bare prefix so a reply that merely starts
-    with the letters "ERR" without being that token -- ``ERROR ...``,
-    ``ERRATA ...`` -- is not misclassified as this specific firmware failure.
-    Stripped and case-normalized before the check so incidental whitespace or
-    casing doesn't hide a failure behind the success wording (that's the
-    original bug this guards against: without it, an ``ERR ...`` reply was
-    reported back to the LLM inside a "showing expression ..." sentence,
-    reading as a success and misleading the tool-calling loop into thinking
-    the expression was set).
-    """
+    """Recognize a firmware ERR token from a structural display receiver."""
     if reply is None:
         return False
     normalized = reply.strip().upper()
@@ -871,18 +870,101 @@ def _is_display_error_reply(reply: str | None) -> bool:
 
 
 def _is_empty_display_reply(reply: str | None) -> bool:
-    """True when a face-display reply is empty or whitespace-only.
-
-    ``FaceDisplay._command()`` returns ``""`` when no reply line arrives
-    within its serial timeout (see io/display.py) -- a wedged/rebooting
-    display MCU, or a USB-CDC hiccup that ate the reply, looks exactly like
-    this rather than like a firmware ``ERR``. Without this check, an empty
-    reply got embedded verbatim into a "showing expression ... (display
-    replied: )" success sentence, misleading the tool-calling loop into
-    thinking the expression was actually set when the display may never have
-    received (or acted on) the command at all.
-    """
+    """Recognize an absent reply from a structural display receiver."""
     return reply is None or reply.strip() == ""
+
+
+class PlayAssetTool(Tool):
+    """Play a catalog asset, optionally returning to idle after a hold."""
+
+    name: ClassVar[str] = "play_asset"
+    description: ClassVar[str] = "Play a display asset by its catalog name or full id."
+    id: str = Field(description="Display name or full id from the connected display catalog.")
+    hold_ms: int | None = Field(
+        default=None, gt=0, description="Milliseconds before returning to idle; null holds indefinitely."
+    )
+
+    params: dict[str, list[float]] | None = Field(
+        default=None, description="Declared slot overrides applied after playback starts."
+    )
+    _display_parameters: ClassVar[dict[str, dict[str, Any]]] = {}
+
+    @model_validator(mode="after")
+    def _validate_parameters(self) -> Self:
+        declared = self._display_parameters.get(self.id, {})
+        for sid, values in (self.params or {}).items():
+            if sid not in declared or len(values) != declared[sid]["dim"] or not all(math.isfinite(v) for v in values):
+                raise ValueError(
+                    "Slot overrides must match the selected asset's declared dimensions and contain finite values"
+                )
+        return self
+
+    @classmethod
+    def parameters_schema(cls) -> dict[str, Any]:
+        schema = super().parameters_schema()
+        variants = []
+        for id, params in cls._display_parameters.items():
+            if not params:
+                continue
+            variants.append(
+                {
+                    "type": "object",
+                    "description": cls._display_asset_names.get(id, id),
+                    "properties": {
+                        sid: {
+                            "type": "array",
+                            "items": {"type": "number"},
+                            "minItems": p["dim"],
+                            "maxItems": p["dim"],
+                            "description": p["description"],
+                        }
+                        for sid, p in params.items()
+                    },
+                    "additionalProperties": False,
+                }
+            )
+        if variants:
+            schema["properties"]["params"] = {"anyOf": [*variants, {"type": "null"}], "default": None}
+        else:
+            schema["properties"].pop("params", None)
+        return schema
+
+    def execute(self, robot: PalmimoLike) -> ToolResult:
+        return _execute_asset(robot, self.id, self.hold_ms, self.params)
+
+
+def _execute_asset(
+    robot: PalmimoLike,
+    name: str,
+    hold_ms: int | None,
+    params: dict[str, list[float]] | None = None,
+    *,
+    allow_aliases: bool = False,
+) -> ToolResult:
+    """Execute playback and map transport failures to tool results."""
+    display = robot.display
+    if display is None:
+        return ToolResult(text="no display attached", is_error=True)
+    id = name
+    try:
+        id = resolve_asset_name(
+            name,
+            os.environ.get("PALMIMO_APP_ID"),
+            lambda: (asset["id"] for asset in display.catalog()),
+            allow_aliases=allow_aliases,
+        )
+        reply = display.play(id, hold_ms)
+        if _is_empty_display_reply(reply) or _is_display_error_reply(reply):
+            return ToolResult(text=f"failed to play {id!r}: {reply!r}", is_error=True)
+        for sid, values in (params or {}).items():
+            result = display.param(sid, *values)
+            if result == "ERR PARAM NOSLOT":
+                logging.getLogger(__name__).warning("Display slot %s is unavailable; continuing playback", sid)
+            elif _is_empty_display_reply(result) or _is_display_error_reply(result):
+                return ToolResult(text=f"failed to override {sid!r}: {result!r}", is_error=True)
+    except Exception as exc:
+        return ToolResult(text=f"failed to play {id!r}: {exc}", is_error=True)
+    return ToolResult(text=f"playing {id!r}: {reply}")
 
 
 class SetFaceTool(Tool):
@@ -900,23 +982,9 @@ class SetFaceTool(Tool):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
-        if robot.display is None:
-            return ToolResult(text="no face display attached; could not show expression")
-        # Goes through the public robot.set_expression() facade rather than
-        # robot.display.set_expression() directly, matching how every other
-        # tool talks to Palmimo only through its facade methods.
-        reply = robot.set_expression(self.name_)
-        if _is_empty_display_reply(reply):
-            return ToolResult(
-                text=f"failed to show expression {self.name_!r}: no reply from display (serial timeout?)",
-                is_error=True,
-            )
-        if _is_display_error_reply(reply):
-            return ToolResult(
-                text=f"failed to show expression {self.name_!r}: display replied {reply!r}",
-                is_error=True,
-            )
-        return ToolResult(text=f"showing expression {self.name_!r} (display replied: {reply})")
+        """Deprecated wrapper; see API reference: Migration from 0.1.x."""
+        warnings.warn("SetFaceTool is deprecated; use PlayAssetTool", DeprecationWarning, stacklevel=2)
+        return _execute_asset(robot, self.name_, None, allow_aliases=True)
 
 
 class ShowEmojiTool(Tool):
@@ -938,23 +1006,9 @@ class ShowEmojiTool(Tool):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
-        if robot.display is None:
-            return ToolResult(text="no face display attached; could not show emoji")
-        # Same firmware contract as set_face (`EXPR <name> <ms>`): a nonzero
-        # hold_ms makes the display revert to idle by itself, so there is no
-        # revert bookkeeping on the host side.
-        reply = robot.set_expression(self.name_, hold_ms=max(int(self.seconds * 1000), 1))
-        if _is_empty_display_reply(reply):
-            return ToolResult(
-                text=f"failed to show emoji {self.name_!r}: no reply from display (serial timeout?)",
-                is_error=True,
-            )
-        if _is_display_error_reply(reply):
-            return ToolResult(
-                text=f"failed to show emoji {self.name_!r}: display replied {reply!r}",
-                is_error=True,
-            )
-        return ToolResult(text=f"showing emoji {self.name_!r} for {self.seconds}s (display replied: {reply})")
+        """Deprecated wrapper; see API reference: Migration from 0.1.x."""
+        warnings.warn("ShowEmojiTool is deprecated; use PlayAssetTool", DeprecationWarning, stacklevel=2)
+        return _execute_asset(robot, self.name_, max(int(self.seconds * 1000), 1), allow_aliases=True)
 
 
 # ======================================================================

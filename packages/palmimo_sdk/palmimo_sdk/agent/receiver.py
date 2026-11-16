@@ -17,6 +17,7 @@ against this Protocol instead of the concrete facade.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Protocol, runtime_checkable
 
 from palmimo_sdk.robot import NeckPitchDegrees, NeckPitchNormalized, NeckYawDegrees, NeckYawNormalized
@@ -48,6 +49,19 @@ class _CameraLike(Protocol):
     def latest(self, *, timeout: float = 2.0) -> Any | None: ...
 
 
+class _DisplayLike(Protocol):
+    """Catalog and playback surface used by the agent layer."""
+
+    @property
+    def is_connected(self) -> bool: ...
+
+    def catalog(self, *, tags: Iterable[str] = (), locale: str | None = None) -> list[dict[str, Any]]: ...
+
+    def play(self, id: str, hold_ms: int | None = None) -> str: ...
+
+    def param(self, sid: str, *values: float) -> str: ...
+
+
 @runtime_checkable
 class PalmimoLike(Protocol):
     """Structural surface of :class:`~palmimo_sdk.robot.Palmimo` the agent layer depends on (see module docstring).
@@ -69,7 +83,7 @@ class PalmimoLike(Protocol):
     # read from, never assigned, so a read-only property is enough.
     # ----------------------------------------------------------------
     @property
-    def display(self) -> object | None: ...
+    def display(self) -> _DisplayLike | None: ...
 
     @property
     def camera(self) -> _CameraLike | None: ...

@@ -118,6 +118,7 @@ def _example_project_dirs() -> list[Path]:
 EXAMPLE_PROJECT_DIRS = _example_project_dirs()
 PYPROJECT_FILES = [
     SOFTWARE_ROOT / "pyproject.toml",
+    SOFTWARE_ROOT / "docs-site/pyproject.toml",
     *(d / "pyproject.toml" for d in _workspace_member_dirs()),
     *(d / "pyproject.toml" for d in EXAMPLE_PROJECT_DIRS),
 ]

@@ -79,8 +79,8 @@ pattern — set motion → `run(seconds=)` → guaranteed `stop()`. Set
 `long_running: ClassVar[bool] = True` (a timed, blocking motion is one a
 caller may race against a `Palmimo.cancel()`/`MotionCancelled` interruption —
 see `robot.cancel()`); leave it at the `Tool` base's default `False` only for
-a tool with no blocking `run()` underneath at all (`set_face`/`show_emoji`/
-`say`/`capture`-style calls), or one that is deliberately excluded despite
+a tool with no blocking `run()` underneath at all
+(`play_asset`/`say`/`capture`-style calls), or one that is deliberately excluded despite
 calling `run()` (see `stop`'s own comment in `tools.py`). Then
 register the tool in `TOOL_MODELS` in `palmimo_sdk/agent/toolset.py` (the
 single source of truth for what ships with the SDK). Add the matching
@@ -91,8 +91,8 @@ through `_run_motion` — `look`/`look_center` are also `long_running=True`,
 because they block on `robot.run(seconds=_NECK_SETTLE_SECONDS)` to actually
 stream the neck target to the driver (setting the target alone doesn't move
 anything). The only tools left at the `Tool` base's default `False` are ones
-that are either instant with no blocking `run()` underneath (`set_face`,
-`show_emoji`, `say`, `capture`), or — like `stop` — deliberately excluded
+that are either instant with no blocking `run()` underneath (`play_asset`,
+`say`, `capture`), or — like `stop` — deliberately excluded
 even though they do call `run()`: racing `stop()` against a cancellation is
 pointless, since `stop()` is itself the tool an agent reaches for to halt an
 in-flight action.
@@ -164,6 +164,10 @@ call.
 | `LEFT_LEGS` / `RIGHT_LEGS` | [1,2,3] / [4,5,6] | Side groups |
 | `self.NEUTRAL` | 2048 | Center position constant |
 
+For a motion tool that also changes the face, choose a standard or app asset
+through [FaceDisplay](../reference/api-reference.md#facedisplay); keep display I/O
+in the tool layer rather than in the engine gait.
+
 ## Choreography
 
 Once tested, add your motion to choreography sequences:
@@ -177,3 +181,10 @@ routine = [
 for pos in robot.play(routine, fps=60):
     send_to_hardware(pos)
 ```
+
+Use selections from the connected catalog for new display actions; see
+[Display names](../reference/api-reference.md#display-names). The deprecated
+compatibility contract for `set_expression()` is defined in
+[migration from 0.1.x](../reference/api-reference.md#migration-from-01x).
+
+Register custom Expressive subclasses on the connected AgentToolSet so their face argument receives its catalog choices; see [Agent display vocabulary](../reference/api-reference.md#agent-display-vocabulary).

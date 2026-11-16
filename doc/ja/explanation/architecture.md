@@ -149,3 +149,7 @@ scripts/                                # Supported user diagnostics (diagnose_s
 - **ランタイム** — `uv`（[ソフトウェアのセットアップ](../guides/installation.md)が成功する必要があります）
 - **シリアルの権限** — 実行ユーザーが `dialout` グループに所属していること
 - **デバイス名** — `udev` による安定した OpenRB-150 のポート名（USB の抜き差しで番号が変わらないよう固定します）
+
+顔のバックエンドはプロトコル 2 のアセットプレーヤーです。platform が FW とアセットの保存を所有し、FaceDisplay が直列化した再生命令とタップ通知を所有します。ファサードとエージェントの互換 API は共通の名前解決を経てプロトコル 2 の再生に接続します。互換性の境界は [表示名](../reference/api-reference.md#表示名)で定義します。目録は宣言と実機の情報を照合するため、語彙は実際に入っているアセットに追従します。[FaceDisplay](../reference/api-reference.md#facedisplay) を参照してください。
+
+AgentToolSet は表示スキーマとプロンプトの語彙を同じ接続時の目録へ束縛します。[エージェントの表示語彙](../reference/api-reference.md#エージェントの表示語彙)を参照してください。

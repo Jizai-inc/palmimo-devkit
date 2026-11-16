@@ -15,7 +15,7 @@ the servo bus (mirroring
 connect/open it right away, catching failure (missing optional dependency,
 no hardware attached, wrong port, ...) and warning instead of raising, so the
 server still starts compute-only / voice-less / camera-less rather than
-refusing to run at all. Reservation errors instead abort startup and identify
+refusing to run at all. Reservation and incompatible-display-firmware errors instead abort startup and identify
 the holder or storage problem. Warnings go to **stderr** -- stdio transport reserves
 stdout for the MCP protocol stream itself, so anything printed to stdout
 there would corrupt it. Each ``--no-*`` flag skips probing (and therefore
@@ -74,7 +74,16 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 
-from palmimo_sdk import FaceDisplay, HeadCamera, Palmimo, PortDetectionError, Speaker, SpeakerConfig
+from palmimo_sdk import (
+    FaceDisplay,
+    FaceDisplayError,
+    FaceDisplayFirmwareError,
+    HeadCamera,
+    Palmimo,
+    PortDetectionError,
+    Speaker,
+    SpeakerConfig,
+)
 from palmimo_sdk._signals import signals_ignored
 from palmimo_sdk.agent import AgentToolSet
 from palmimo_sdk.agent.toolset import TOOL_MODELS
@@ -182,7 +191,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-display",
         action="store_true",
-        help="Do not attach the face display -- set_face/show_emoji report no display attached.",
+        help="Do not attach the face display -- display actions and face arguments are omitted.",
     )
     parser.add_argument(
         "--no-speaker",
@@ -381,11 +390,11 @@ def _build_servo_driver(servo_port: str | None) -> ServoDriver | None:
 
 
 def _build_display() -> FaceDisplay | None:
-    """Build and probe-connect the face display, degrading to ``None`` on failure."""
+    """Probe the display; missing hardware degrades, incompatible firmware aborts."""
     display = FaceDisplay()
     try:
         display.connect()
-    except ReservationError:
+    except (ReservationError, FaceDisplayFirmwareError):
         raise
     except Exception as exc:  # no display attached, missing `face` extra (pyserial), etc.
         print(f"face display not available -- expressions disabled ({exc})", file=sys.stderr)
@@ -811,14 +820,23 @@ def main(argv: list[str] | None = None) -> None:
             camera = None if args.no_camera else _build_camera()
 
             robot = Palmimo(driver=driver, display=display, speaker=speaker, camera=camera)
-            toolset = AgentToolSet(robot, include=include, exclude=exclude)
-            server = build_mcp_server(toolset, log_tool_calls=args.log_tool_calls)
-
             # robot.connect() raises if nothing is attached at all (a fully
             # compute-only run, e.g. every peripheral --no-*'d or unreachable)
             # -- so only connect when there is something to connect.
             if robot.has_connectable_resource:
                 robot.connect()
+            try:
+                toolset = AgentToolSet(robot, include=include, exclude=exclude)
+            except FaceDisplayFirmwareError:
+                raise
+            except FaceDisplayError as exc:
+                print(
+                    f"WARNING: display catalog unavailable; continuing without display assets: {exc}", file=sys.stderr
+                )
+                if display is not None:
+                    display.disconnect()
+                toolset = AgentToolSet(robot, include=include, exclude=exclude)
+            server = build_mcp_server(toolset, log_tool_calls=args.log_tool_calls)
             if args.transport == "stdio":
                 anyio.run(_serve_stdio, server)
             else:
@@ -836,7 +854,7 @@ def main(argv: list[str] | None = None) -> None:
                     port=args.port,
                     log_level="warning",
                 )
-        except ReservationError as exc:
+        except (ReservationError, FaceDisplayFirmwareError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             raise SystemExit(1) from None
         finally:

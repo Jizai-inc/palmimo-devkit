@@ -162,15 +162,15 @@ const EXPRESSIONS = {
   },
 };
 
-// The names the SDK offers, against what the firmware resolves each of them
-// to. Its own table, so the page answers `set_expression("smile")` with the
-// face the robot would show rather than one invented for the web.
+// Stage-local names for the artwork this renderer supplies. StageDisplay
+// exposes these faces as a catalog; the SDK resolves legacy aliases to assets.
 const RESOLVES_TO = {
   IDLE: 'IDLE',
   HAPPY: 'HAPPY',
   SMILE: 'HAPPY',
   LAUGH: 'EXCITED',
   IDEA: 'EXCITED',
+  EXCITED: 'EXCITED',
   SURPRISED: 'SURPRISE',
   THINKING: 'THINKING',
   ANGRY: 'ANGRY',
@@ -182,9 +182,7 @@ const RESOLVES_TO = {
 };
 
 /**
- * Whether the stage can show *name*, which is the SDK's vocabulary and not
- * this file's own: a name the SDK offers and the stage cannot draw is a hole
- * in the page, so a test holds the two together.
+ * Whether the stage has artwork for *name*.
  *
  * @param {string} name
  * @returns {boolean}
@@ -412,7 +410,7 @@ export function mountFace(model, joints) {
 
   return {
     /**
-     * Show *name*, which is any expression the SDK offers.
+     * Show a stage-local face named *name*.
      *
      * @param {string} name
      */

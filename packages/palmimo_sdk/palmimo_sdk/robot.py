@@ -65,6 +65,7 @@ import os
 import signal
 import threading
 import time
+import warnings
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -2222,16 +2223,14 @@ class Palmimo:
     # ================================================================
 
     def set_expression(self, name: str, hold_ms: int = 0) -> str | None:
-        """Show a face expression on the attached display.
+        """Deprecated display alias; see API reference: Migration from 0.1.x.
 
-        *name* is case-insensitive; firmware aliases are resolved on-device.
-        ``hold_ms > 0`` auto-returns the face to IDLE after that many ms;
-        ``0`` (default) holds until the next expression. Returns the firmware
-        reply line, or ``None`` when no display is attached (a no-op, mirroring
-        :meth:`set_p_gain` with no driver).
+        Returns None if no display is attached; otherwise forwards the reply
+        and validation errors from FaceDisplay.set_expression().
         """
         if self._display is not None:
             return self._display.set_expression(name, hold_ms)
+        warnings.warn("set_expression() is deprecated; use display.play()", DeprecationWarning, stacklevel=2)
         return None
 
     # ================================================================

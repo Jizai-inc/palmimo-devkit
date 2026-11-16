@@ -55,6 +55,7 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     # pydantic-validated Tool / ToolResult / AgentToolSet. The only part of the
     # SDK that imports pydantic at module level.
     "palmimo_sdk.agent": frozenset({"agent"}),
+    "palmimo_sdk.agent.display": frozenset({"agent"}),
     "palmimo_sdk.agent.receiver": frozenset({"agent"}),
     "palmimo_sdk.agent.tools": frozenset({"agent"}),
     "palmimo_sdk.agent.toolset": frozenset({"agent"}),
@@ -109,6 +110,7 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:FaceDisplay": frozenset({"face"}),
     "palmimo_sdk:FaceDisplayConnectTimeoutError": frozenset({"face"}),
     "palmimo_sdk:FaceDisplayError": frozenset({"face"}),
+    "palmimo_sdk:FaceDisplayFirmwareError": frozenset({"face"}),
     "palmimo_sdk:find_face_port": frozenset({"face"}),
     # -- [vision]: the head camera, over cv2.
     "palmimo_sdk:HeadCamera": frozenset({"vision"}),
