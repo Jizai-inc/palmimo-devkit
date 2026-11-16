@@ -1789,9 +1789,10 @@ different asset selected by an intervening action.
 Motion tools' optional `face` argument follows [Display names](#display-names)
 and plays before motion. Asset meanings are rendered once in the system prompt;
 tool schemas enumerate the available display selections without repeating those meanings.
-Display failure is noted without preventing motion. Without
+Unknown or unavailable faces are ignored and noted in the result, just like
+display failures, without preventing motion. Without
 a connected display or with an empty catalog, `play_asset` and motion `face`
-properties are omitted, and non-null face arguments are rejected. Custom
+properties are omitted; a supplied face is still handled as a best-effort request. Custom
 `Expressive` subclasses registered with `register()` are bound in the same way;
 shared base classes and other toolsets are not changed. Include/exclude operates
 on registered tool names before this availability filter.

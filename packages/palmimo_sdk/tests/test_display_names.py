@@ -107,7 +107,9 @@ async def test_display_entries_share_ownerless_resolution(
             tools = AgentToolSet(robot, include=["forward" if entry == "face" else "play_asset"])
             args = {"face": name, "seconds": 0.5} if entry == "face" else {"id": name}
             result = await tools.call(tools.tool_names[0], args)
-            assert result.is_error == (expected is None)
+            assert result.is_error == (expected is None and entry != "face")
+            if entry == "face" and expected is None:
+                assert "not shown" in result.text
     assert display.commands == ([f"PLAY {expected}" + (f" {hold}" if hold else "")] if expected else [])
 
 
@@ -161,7 +163,10 @@ async def test_filtered_tool_names_preserve_shadowing_and_accept_full_ids(
         return {"id": value} if entry == "play_asset" else {"face": value, "seconds": 0.5}
 
     for value in ("happy", "smile"):
-        assert (await tools.call(entry, arguments(value))).is_error
+        result = await tools.call(entry, arguments(value))
+        assert result.is_error == (entry == "play_asset")
+        if entry == "forward":
+            assert "not shown" in result.text
     for value in ("sad", "PALMIMO/SAD"):
         assert not (await tools.call(entry, arguments(value))).is_error
     assert display.commands == ["PLAY palmimo/sad", "PLAY palmimo/sad"]

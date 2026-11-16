@@ -68,7 +68,9 @@ async def test_legacy_names_resolve_consistently(
         args = {"name": name} if entry == "set_face" else {"face": name, "seconds": 0.5}
         with pytest.warns(DeprecationWarning) if entry == "set_face" else contextlib.nullcontext():
             result = await toolset.call(include[0], args)
-        assert result.is_error == (expected is None)
+        assert result.is_error == (expected is None and entry != "face")
+        if entry == "face" and expected is None:
+            assert "not shown" in result.text
     assert display.commands == ([f"PLAY {expected}"] if expected else [])
 
 

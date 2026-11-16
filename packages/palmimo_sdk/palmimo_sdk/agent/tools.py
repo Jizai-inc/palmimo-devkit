@@ -181,7 +181,7 @@ class Tool(BaseModel):
     #: does the racing.
     long_running: ClassVar[bool] = False
     _display_enabled: ClassVar[bool] = True
-    _display_asset_ids: ClassVar[tuple[str, ...]] = ()
+    _display_asset_ids: ClassVar[tuple[str, ...] | None] = None
     _display_asset_names: ClassVar[dict[str, str]] = {}
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
@@ -382,6 +382,8 @@ class Expressive(Tool):
                 lambda: (asset["id"] for asset in display.catalog()),
                 allow_aliases=True,
             )
+            if self._display_asset_ids is not None and id not in self._display_asset_ids:
+                return f"face {id!r} not shown: asset is outside the connected display catalog"
             reply = display.play(id)
         except Exception as exc:
             return f"face {id!r} not shown: {exc}"
