@@ -32,15 +32,22 @@ test('the SDK boots and stands at neutral', () => {
 });
 
 test('the stage covers SDK legacy aliases and the standard face catalog', async () => {
+  // Without this, the console offers assets that the robot cannot play.
   const standard = JSON.parse(fs.readFileSync(
     path.join(HERE, '..', 'tests', 'fixtures', 'display-assets', 'catalog.json'), 'utf8'
   ));
-  const expected = standard.assets.filter((asset) => asset.tags.includes('face')).map((asset) => asset.id).sort();
+  const expected = standard.assets.map((asset) => asset.id).sort();
+  assert.deepEqual(expected, [
+    'angry', 'batsu', 'curious', 'excited', 'groove', 'happy', 'love',
+    'maru', 'sad', 'shy', 'sleeping', 'sleepy', 'surprise', 'thinking',
+  ].map((name) => `palmimo/${name}`));
   const aliases = JSON.parse(pyodide.runPython(
     'import json; from palmimo_sdk.io.display import _EXPRESSION_ASSETS; json.dumps(_EXPRESSION_ASSETS)'
   ));
   const sdkAssets = [...new Set(Object.values(aliases).map((asset) => `palmimo/${asset}`))].sort();
-  const stageAssets = JSON.parse(pyodide.runPython('json.dumps(sorted(StageDisplay.ASSETS))'));
+  const stageAssets = JSON.parse(pyodide.runPython(
+    'json.dumps(sorted(asset["id"] for asset in robot.display.catalog()))'
+  ));
   assert.deepEqual(sdkAssets.filter((id) => !expected.includes(id)), []);
   assert.deepEqual(stageAssets, expected);
 
