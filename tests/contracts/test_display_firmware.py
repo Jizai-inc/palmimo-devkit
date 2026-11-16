@@ -2,10 +2,9 @@
 
 import json
 import subprocess
+from importlib.resources import files
 from pathlib import Path
 from zipfile import ZipFile
-
-from palmimo_sdk.io.display import DISPLAY_PROTOCOL  # noqa: TID251 -- Contract checks the backend requirement.
 
 
 def test_wheel_declares_the_display_protocol_required_by_client(tmp_path: Path) -> None:
@@ -21,5 +20,5 @@ def test_wheel_declares_the_display_protocol_required_by_client(tmp_path: Path) 
     (wheel,) = tmp_path.glob("*.whl")
     with ZipFile(wheel) as archive:
         declaration = json.loads(archive.read("palmimo_sdk/display_firmware.json"))
-    assert declaration == {"schema": 1, "protocol": DISPLAY_PROTOCOL}
-    assert DISPLAY_PROTOCOL == 2
+    installed = json.loads(files("palmimo_sdk").joinpath("display_firmware.json").read_text())
+    assert declaration == installed == {"schema": 1, "protocol": 2}
