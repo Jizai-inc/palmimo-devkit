@@ -25,7 +25,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any, NoReturn
 
-from .._display_names import EXPRESSION_ASSETS, resolve_asset_name
+from .._display_names import EXPRESSION_ASSETS, named_catalog, resolve_asset_name
 from ..reservation import Reservation, acquire_resource
 from ._timeout import ProbeTimeoutError, run_with_timeout
 
@@ -170,7 +170,7 @@ class FaceDisplay:
         self._reply_queue = queue.Queue()
         self._stop = threading.Event()
         self._catalog = None
-        app_id = os.environ.get("PALMIMO_APP_ID")
+        app_id = os.environ.get("PALMIMO_APP_ID", "").strip().lower()
         self._app_id = app_id if app_id and "." in app_id and _APP_ID.fullmatch(app_id) else None
         factory = self._serial_factory
         if factory is None:
@@ -296,11 +296,15 @@ class FaceDisplay:
         self.disconnect()
 
     def play(self, id: str, hold_ms: int | None = None) -> str:
-        """Play a standard asset or a present, described asset belonging to this app.
+        """Play a name or full asset id; see API reference: Display names.
 
-        Standard names are always permitted. A positive hold_ms returns to idle
-        afterwards; None holds until the next command.
+        A positive hold_ms returns to idle afterwards; None holds until the
+        next command. The wire command and reply always use the full id.
         """
+        try:
+            id = resolve_asset_name(id, self._app_id, lambda: (asset["id"] for asset in self.catalog()))
+        except LookupError as error:
+            raise ValueError(str(error)) from error
         self._validate_id(id)
         owner = id.split("/", 1)[0]
         if owner != "palmimo" and (owner != self._app_id or not any(asset["id"] == id for asset in self.catalog())):
@@ -321,7 +325,10 @@ class FaceDisplay:
             raise ValueError("Expected a nonnegative integer hold_ms")
         try:
             id = resolve_asset_name(
-                name, os.environ.get("PALMIMO_APP_ID"), lambda: (asset["id"] for asset in self.catalog())
+                name,
+                os.environ.get("PALMIMO_APP_ID"),
+                lambda: (asset["id"] for asset in self.catalog()),
+                allow_aliases=True,
             )
         except LookupError as error:
             raise FaceDisplayError(str(error)) from error
@@ -529,7 +536,7 @@ class FaceDisplay:
     def catalog(self, *, tags: Iterable[str] = (), locale: str | None = None) -> list[dict[str, Any]]:
         """Return present, described standard/current-app assets matching every tag.
 
-        Entries include id, kind, description, tags, params (description/dim), and
+        Entries include id, name, kind, description, tags, params (description/dim), and
         translations. Descriptions select exact locale, base language, then source.
         Declarations and live metadata are cached until disconnect/reconnect.
         """
@@ -545,7 +552,7 @@ class FaceDisplay:
             sources = self._catalog
         requested = set(tags)
         result = []
-        for source in sources:
+        for source in named_catalog(sources, self._app_id):
             if not requested.issubset(source["tags"]):
                 continue
             entry = json.loads(json.dumps(source))

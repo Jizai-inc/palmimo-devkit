@@ -42,8 +42,8 @@ class PlaybackDisplay(FaceDisplay):
     [
         ("palmimo/happy", "palmimo/happy"),
         ("com.example.app/sushi", "com.example.app/sushi"),
-        (" Happy ", "palmimo/happy"),
-        ("hApPy", "palmimo/happy"),
+        (" Happy ", "com.example.app/happy"),
+        ("hApPy", "com.example.app/happy"),
         ("SUSHI", "com.example.app/sushi"),
         ("missing", None),
         ("other.app/sushi", None),
@@ -82,7 +82,7 @@ def test_show_emoji_delegates_timed_playback(
     with pytest.warns(DeprecationWarning):
         result = tool.execute(Palmimo(display=display))
     assert result.is_error == (hold is None)
-    expected = "palmimo/happy" if name == "happy" else "com.example.app/sushi"
+    expected = "com.example.app/happy" if name == "happy" else "com.example.app/sushi"
     assert display.commands == ([f"PLAY {expected} {hold}"] if hold else [])
 
 

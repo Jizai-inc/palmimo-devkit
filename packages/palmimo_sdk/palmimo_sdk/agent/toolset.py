@@ -39,12 +39,14 @@ import asyncio
 import contextlib
 import copy
 import json
+import os
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 from typing import Any
 
 from pydantic import ValidationError
 
+from palmimo_sdk._display_names import named_catalog
 from palmimo_sdk.robot import MotionCancelled
 
 from .display import bind_display_tool
@@ -190,6 +192,7 @@ class AgentToolSet:
         self._display_tags = tuple(display_tags)
         self._display_locale = display_locale
         self._display_catalog: list[dict[str, Any]] = []
+        self._display_resolution_ids: tuple[str, ...] = ()
         self.refresh_display()
 
     @property
@@ -199,7 +202,7 @@ class AgentToolSet:
 
     def _bind_models(self, catalog: list[dict[str, Any]]) -> dict[str, type[Tool]]:
         return {
-            name: bind_display_tool(cls, catalog)
+            name: bind_display_tool(cls, catalog, self._display_resolution_ids)
             for name, cls in self._base_tools.items()
             if catalog or not issubclass(cls, PlayAssetTool)
         }
@@ -213,15 +216,14 @@ class AgentToolSet:
         if self.is_busy():
             raise RuntimeError("Cannot refresh display vocabulary during a tool call")
         self._display_catalog = []
+        self._display_resolution_ids = ()
         self._tools.clear()
         self._tools.update(self._bind_models([]))
         display = getattr(self._robot, "display", None)
-        catalog = (
-            display.catalog(tags=self._display_tags, locale=self._display_locale)
-            if display is not None and display.is_connected
-            else []
-        )
-        catalog = copy.deepcopy(catalog)
+        catalog = display.catalog(locale=self._display_locale) if display is not None and display.is_connected else []
+        catalog = named_catalog(copy.deepcopy(catalog), os.environ.get("PALMIMO_APP_ID"))
+        self._display_resolution_ids = tuple(asset["id"] for asset in catalog)
+        catalog = [asset for asset in catalog if set(self._display_tags).issubset(asset.get("tags", []))]
         models = self._bind_models(catalog)
         self._display_catalog = catalog
         self._tools.clear()
@@ -238,7 +240,9 @@ class AgentToolSet:
             raise RuntimeError("Cannot register tools during a tool call")
         self._base_tools[tool_cls.name] = tool_cls
         if self._display_catalog or not issubclass(tool_cls, PlayAssetTool):
-            self._tools[tool_cls.name] = bind_display_tool(tool_cls, self._display_catalog)
+            self._tools[tool_cls.name] = bind_display_tool(
+                tool_cls, self._display_catalog, self._display_resolution_ids
+            )
         else:
             self._tools.pop(tool_cls.name, None)
 

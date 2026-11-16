@@ -698,7 +698,7 @@ except PortDetectionError as e:
 
 | メソッド | 戻り値と動作 |
 |---|---|
-| `play(id, hold_ms=None)` | 応答文字列。標準アセット、または実機と説明のある自分のアプリのアセットをループ再生します。正の整数 `hold_ms` を指定するとその時間の後に待機画面へ戻ります。`None` は無期限です。標準の名前は目録になくても常に許可し、存在しなければ FW がエラーを返します。それ以外の ID は PLAY を送る前に `ValueError` で拒否します |
+| `play(id, hold_ms=None)` | 応答文字列。[表示名](#表示名)または ID 全体で標準と自アプリの資産を再生します。正の整数 `hold_ms` はその後に待機画面へ戻し、`None` は無期限です。応答は ID 全体を含みます。明示した標準 ID は目録になくても送信し、欠落は FW が報告します。不正または所有者が異なる指定は PLAY 前に `ValueError` です |
 | `stop()` / `idle()` | 応答文字列。ライブフレームを終了して待機画面へ戻り、パラメーターをリセットします。`idle()` は互換用の別名です |
 | `param(sid, *values)` | 応答文字列。有限の十進数値をスロットへ設定します。`ERR PARAM NOSLOT` は警告ログを出してそのまま返し、例外にしません。標準アセットを画像に差し替えられます |
 | `on_tap(callback)` | `callback(x, y)` を登録し、`None` で解除します。座標はパネルの画素、0〜479 です |
@@ -716,6 +716,30 @@ except PortDetectionError as e:
 
 受信スレッドは、コマンドの待機中でなくても常に動きます。タップと `on_power_event(bool)` のコールバックはこのスレッドで実行します。短くスレッドセーフにし、重い処理はアプリのイベントループへ渡してください。コールバックから同期的な表示コマンドを呼ぶと `FaceDisplayError` になります。コールバックの例外はログに記録し、受信は継続します。コマンドは最終応答まで直列化し、イベントを読み飛ばします。`timeout` は各コマンドまたはフレーム転送全体の上限です。ポートを開く処理には別の `connect_timeout` を使います。FW の最終エラーは上記の NOSLOT を除いて `FaceDisplayError` になります。タイムアウト、不正な応答、転送の中断、I/O の失敗、`ERR XFER TIMEOUT` では接続を閉じます。遅延応答を別のコマンドの応答として扱わないよう、再利用の前に再接続してください。保存用の PUT、DEL、READ は公開しません。
 
+### 表示名
+
+`FaceDisplay.play(id, hold_ms=None)`、`play_asset` の `id`、モーションの `face` は、ID 全体に加えて名前だけの指定も受け付けます。非推奨 API も同じ解決関数を使います。ID 全体を含め、前後の空白を除いて小文字化します。`play(" SUSHI ")` や `play("Palmimo/Happy")` も有効です。所有者なしの名前は正規化後に `^[a-z0-9][a-z0-9._-]{0,39}$` に一致する必要があります。
+
+次の順に解決します。
+
+1. `/` を含めば ID 全体です。標準と自アプリだけを許可する従来の所有者検査を行います。
+2. `PALMIMO_APP_ID` が選ぶアプリに同名の宣言があれば、そのアセットです。たとえば標準にもアプリにも `happy` があれば、`happy` は `<アプリ ID>/happy` になります。
+3. なければ標準目録の `palmimo/<名前>` を選びます。
+4. 非推奨 API とモーションの `face` だけは、両方の完全一致で見つからない場合に下表の旧別名も受け付けます。旧別名の使用は非推奨です。
+5. どれにも該当しなければ失敗します。他アプリは探索しません。`PALMIMO_APP_ID` がなければ、所有者なしの名前は標準目録だけで解決します。
+
+| 旧別名 | 標準アセット |
+|---|---|
+| `smile`、`laugh` | `palmimo/happy` |
+| `surprised` | `palmimo/surprise` |
+| `sleep` | `palmimo/sleeping` |
+
+アプリに実際に `smile` という資産があれば、`set_expression()` でも旧別名よりその資産を優先します。新しい `play()` / `play_asset` は別名を使いません。解決できない名前は目録 ID を使うかアプリに宣言するよう案内します。`play()` は未解決・不正・所有者違いを `ValueError`、`set_expression()` は未解決の名前を `FaceDisplayError` にします。ツールは未接続・解決失敗・再生失敗を `ToolResult(is_error=True)` で返します。直接呼ぶ SDK の不正な入力は引き続き `ValueError` です。
+
+`catalog()` は ID 全体の `id` を残し、その項目を選べる最短の `name` を追加します。通常はアセット名だけです。標準とアプリが同名なら、アプリは `happy`、標準は `palmimo/happy` です。衝突判定はタグで絞る前の全目録を使うため、返すどの `name` も `play()` へ渡すとその項目の `id` になります。
+
+ツールスキーマの選択肢と `render_display_prompt()` は `name` を使います。既存コードのため、同じ項目の ID 全体も検証時に受け付けます。`face` はさらに旧別名も使えます。タグで除外したアプリ資産を、同名の標準資産へ黙って置き換えることはありません。パラメーターは解決先のスロットで検証します。名前の展開は SDK 内部だけで行い、PLAY、応答、FW イベント内のアセット ID は ID 全体のままです。`assets()` は FW の ID 全体の一覧をそのまま返します。
+
 ### 0.1.x からの移行
 
 以下の互換 API は 0.2.x では非推奨として残し、0.3.0 で削除する予定です。呼び出すと `DeprecationWarning` を出します。旧クラスは `palmimo_sdk.agent.tools` から import できます。型別名 `FaceExpression` も import できますが、モーションの `face` 引数は `str | None` を受け取ります。
@@ -726,26 +750,12 @@ except PortDetectionError as e:
 | `Palmimo.set_expression(name, hold_ms=0)` | ディスプレイがある場合の `robot.display.play(id, hold_ms=None)` |
 | `SetFaceTool(name=...)` / `set_face` | `PlayAssetTool(id=...)` / `play_asset`。次のコマンドまで保持します |
 | `ShowEmojiTool(name=..., seconds=3.0)` / `show_emoji` | `PlayAssetTool(id=..., hold_ms=3000)`。`seconds` は従来どおり 0.5〜10.0 です |
-| モーションの `face` 引数に渡す短い名前 | `face` に渡す目録のアセット ID |
+| モーションの `face` 引数に渡す旧別名 | 目録の `name` または ID 全体 |
 | `display.list_expressions()` | `display.catalog()` |
 
 `set_face` と `show_emoji` は既定のツール一覧には含みません。`AgentToolSet(..., include=["set_face", "show_emoji"])` の明示指定か、独自の登録で使えます。MCP の既定のツールは変わりません。
 
-非推奨の名前を受け取る入口は、共通の順序で解決します。
-
-1. `/` を含む名前はアセット ID としてそのまま渡します。`play()` と同じく、標準と自分のアプリが宣言した資産だけを再生できます。
-2. 他の名前は前後の空白と大文字小文字を正規化します。下表にある名前なら標準アセットを優先し、アプリにも同じ短い名前がある場合も標準を選びます。
-3. それ以外で、`PALMIMO_APP_ID` のアプリの目録に小文字化した名前があれば、`<アプリ ID>/<名前>` を使います。
-4. 解決できなければ、目録の ID を `play()` に渡すかアプリで宣言するよう案内して失敗します。`set_expression()` は `FaceDisplayError`、旧ツールは `ToolResult(is_error=True)` を返します。不正な入力、負または整数でない `hold_ms` は引き続き `ValueError` です。
-
-モーションの引数は解決後に接続目録のスナップショットで検証します。明示的な ID が推奨です。`hold_ms=0` は次のコマンドまで保持し、正の値はそのミリ秒後に待機画面へ戻します。
-
-| 名前 | 標準アセット |
-|---|---|
-| `HAPPY`、`SMILE`、`LAUGH` | `palmimo/happy` |
-| `SURPRISE`、`SURPRISED` | `palmimo/surprise` |
-| `SLEEP`、`SLEEPING` | `palmimo/sleeping` |
-| `SHY`、`EXCITED`、`CURIOUS`、`THINKING`、`ANGRY`、`SAD`、`SLEEPY`、`LOVE`、`MARU`、`BATSU`、`GROOVE` | `palmimo/<小文字の名前>` |
+非推奨の入口も、自アプリ優先の検索と旧別名の扱いを含めて[表示名](#表示名)に従います。`set_face(name)` は `play_asset(id=name)` と、`show_emoji(name, seconds)` は `play_asset(id=name, hold_ms=seconds*1000)` と同じ再生・エラー結果です。旧ツールだけが別名を受け付け、`params` 引数を持ちません。`hold_ms=0` は次のコマンドまで保持し、正の値はそのミリ秒後に待機画面へ戻します。
 
 旧絵文字名に対応する画像が FW に内蔵されているとは限りません。アプリの schema 2 マニフェストと目録に `sushi` というアセットを用意すれば、`PALMIMO_APP_ID` が設定された環境で旧コードの `set_expression("SUSHI")` や `ShowEmojiTool(name="SUSHI")` が `<アプリ ID>/sushi` を選びます。`HATENA`、`BIKKURI`、`WAKEUP`、`IDEA`、`HEART` もアプリが用意すれば同様です。内蔵の起動画面には `wake()` を使います。実機にアセットがなければ PLAY は失敗する場合があります。
 
@@ -753,7 +763,7 @@ except PortDetectionError as e:
 
 `catalog()` は platform の標準宣言と自分のアプリの解決済み宣言を、ASSET LIST と ASSET INFO に照合します。宣言形式とパスの正本は[ディスプレイのアセット](app-manifest.md#ディスプレイのアセット)です。`PALMIMO_APP_ID` でアプリを選び、未設定ならアプリのアセットはありません。標準とそのアプリのもので、説明があり実機に存在するものだけを提示します。宣言があって実機にない ID は省き、件数と同期に起因する理由をログに出します。宣言ファイルの欠落・不正や不正なエントリーもログに出します。最初の問い合わせで宣言と実機の情報をキャッシュし、再接続で読み直します。
 
-各エントリーは `id`、`kind`（`vector`、`image`、`gif`）、`description`、`tags`、`params`（スロット ID → `{"description": str, "dim": int}`）、`translations` を持ちます。宣言され、現在のアセットにも残っているスロットだけを含みます。`kind` と `dim` は実機から取得するため、ベクターから画像へ差し替えるとスロットはなくなります。`translations` は宣言のロケールマップを保持します。`locale` はアセットと各パラメーターの説明を、完全一致、基本言語、元の文の順に選びます。`None` は元の文です。返されたエントリーを変更しても、キャッシュには影響しません。
+各エントリーは `id`、`name`（[表示名](#表示名)を参照）、`kind`（`vector`、`image`、`gif`）、`description`、`tags`、`params`（スロット ID → `{"description": str, "dim": int}`）、`translations` を持ちます。宣言され、現在のアセットにも残っているスロットだけを含みます。`kind` と `dim` は実機から取得するため、ベクターから画像へ差し替えるとスロットはなくなります。`translations` は宣言のロケールマップを保持します。`locale` はアセットと各パラメーターの説明を、完全一致、基本言語、元の文の順に選びます。`None` は元の文です。返されたエントリーを変更しても、キャッシュには影響しません。
 
 ### `find_face_port() -> str | None`
 接続されているフェイスディスプレイのシリアルデバイスパスを返します。見つからない場合は `None` を返します。フェイスディスプレイの USB ベンダー ID（`0x2E8A`）で照合するため、Pi のようにフェイスとサーボバスがどちらも `/dev/ttyACM*` として現れる環境でも、バスではなくフェイスを選びます。複数のフェイスディスプレイが接続されている場合は、警告を記録して最初の 1 つを返します。
@@ -783,11 +793,11 @@ except DynamixelConnectTimeoutError as e:
 
 `AgentToolSet(robot, include=None, exclude=None, display_tags=(), display_locale=None)` は、接続中のディスプレイの[目録](#目録のエントリー)から ID と翻訳済みの説明を使います。`display_tags` は全指定タグの一致、`display_locale` は目録と同じ完全一致・基本言語・原文の選択です。ツールセットはスナップショットを所有し、接続は所有しません。接続後に構築するか、接続と再接続の後、新しいモデルセッションの前に `refresh_display()` を呼びます。更新失敗時は古い選択肢を消して例外を再送出します。ツールの実行中に更新やカスタム登録を行うと `RuntimeError` です。
 
-`play_asset(id, hold_ms=None, params=None)` が推奨の表示ツールです。互換 API は [0.1.x からの移行](#01x-からの移行)を参照してください。ID と説明はスナップショットから取得し、正の整数 `hold_ms` でそのミリ秒後に待機画面へ戻ります。任意の `params` は宣言されたスロット ID を数値配列へ対応付けます。スキーマに説明と次元を含み、PLAY の前に選んだアセットのスロット、有限値、次元を検証します。パラメーターのスキーマは利用可能なスロット形状の和を示し、選んだアセットとの対応は実行前の検証で確認します。上書きは PLAY の後に行います。NOSLOT は警告で再生を続け、それ以外の表示失敗はエラー結果です。再生と分離したパラメーター操作を設けないため、途中の別の動作が選んだアセットへ誤って適用しません。
+`play_asset(id, hold_ms=None, params=None)` が推奨の表示ツールです。互換 API は [0.1.x からの移行](#01x-からの移行)を参照してください。名前と説明はスナップショットから取得し、正の整数 `hold_ms` でそのミリ秒後に待機画面へ戻ります。任意の `params` は宣言されたスロット ID を数値配列へ対応付けます。スキーマに説明と次元を含み、PLAY の前に選んだアセットのスロット、有限値、次元を検証します。パラメーターのスキーマは利用可能なスロット形状の和を示し、選んだアセットとの対応は実行前の検証で確認します。上書きは PLAY の後に行います。NOSLOT は警告で再生を続け、それ以外の表示失敗はエラー結果です。再生と分離したパラメーター操作を設けないため、途中の別の動作が選んだアセットへ誤って適用しません。
 
-モーションツールの任意の `face` 引数は目録の ID を実行時に検証し、動きの前に再生します。アセットの全文語彙は system prompt に一度だけ展開し、モーションのスキーマはそれを参照します。`play_asset.id` は ID のみを列挙します。表示失敗は結果へ付記し、動きは続けます。ディスプレイが未接続、または目録が空なら `play_asset` と `face` プロパティを提示せず、null 以外の face 引数は拒否します。`register()` したカスタム `Expressive` サブクラスも同じように束縛し、共通の基底クラスや他のツールセットは変更しません。include/exclude は利用可能性のフィルターより先に、登録名へ適用します。
+モーションツールの任意の `face` 引数は[表示名](#表示名)に従い、動きの前に再生します。アセットの意味は system prompt に一度だけ展開し、ツールスキーマは意味を重複させずに表示の選択肢を列挙します。表示失敗は結果へ付記し、動きは続けます。ディスプレイが未接続、または目録が空なら `play_asset` と `face` プロパティを提示せず、null 以外の face 引数は拒否します。`register()` したカスタム `Expressive` サブクラスも同じように束縛し、共通の基底クラスや他のツールセットは変更しません。include/exclude は利用可能性のフィルターより先に、登録名へ適用します。
 
-`toolset.display_catalog` はアプリのプロンプト用にスナップショットのコピーを返します。`palmimo_sdk.agent.render_display_prompt(template, catalog)` はリテラルの `{{display_assets}}` を、その目録の ID・説明・パラメーター情報に置き換えます。空なら利用不可を示し、固定の代替語彙は加えません。MCP も同じ束縛済みのスキーマを公開し、CLI は接続後に構築します。組み込みサーバーを再接続した場合は、新しいモデルセッション向けの一覧取得前にツールセットを更新してください。
+`toolset.display_catalog` はアプリのプロンプト用にスナップショットのコピーを返します。`palmimo_sdk.agent.render_display_prompt(template, catalog)` はリテラルの `{{display_assets}}` を、その目録の表示の選択肢・説明・パラメーター情報に置き換えます。空なら利用不可を示し、固定の代替語彙は加えません。MCP も同じ束縛済みのスキーマを公開し、CLI は接続後に構築します。組み込みサーバーを再接続した場合は、新しいモデルセッション向けの一覧取得前にツールセットを更新してください。
 
 ## palmimo_sdk.agent の型付け
 
@@ -800,7 +810,7 @@ except DynamixelConnectTimeoutError as e:
 ### `build_mcp_server(toolset: AgentToolSet, log_tool_calls: str = "summary") -> mcp.server.lowlevel.Server`
 `toolset` の登録済みツールを一覧する低レベルの MCP サーバーを構築します（`mcp_types.Tool.input_schema` は各 `Tool.parameters_schema()` を反映します）。 MCP Python SDK 2.x の `Server` が受け取る `on_list_tools`/`on_call_tool` ハンドラーを通じて、`tools/call` 要求を `await toolset.call(name, arguments)` へ振り分けます。サーバーを構築しても、ロボットの接続や配信の開始はしません。後述の CLI を参照してください。
 
-初期化時の instructions は、接続先の表示目録の ID、アセットの意味、スロットの説明を 1 か所に含みます。`play_asset` を除外してモーションツールだけが `face` 引数を受け取る場合も同様です。ツールスキーマにはアセットの意味を重複して含めません。この語彙はサーバー構築時の `toolset.display_catalog` を使います。その後に目録を更新した場合、更新された instructions の公開には新しいサーバーが必要です。
+初期化時の instructions は、接続先の表示目録の名前、アセットの意味、スロットの説明を 1 か所に含みます。`play_asset` を除外してモーションツールだけが `face` 引数を受け取る場合も同様です。ツールスキーマにはアセットの意味を重複して含めません。この語彙はサーバー構築時の `toolset.display_catalog` を使います。その後に目録を更新した場合、更新された instructions の公開には新しいサーバーが必要です。
 
 ```python
 from palmimo_sdk import Palmimo

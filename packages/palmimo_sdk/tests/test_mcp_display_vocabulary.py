@@ -26,7 +26,10 @@ class CatalogDisplay:
 
 
 @pytest.mark.parametrize("include", [["play_asset", "wave"], ["wave"]])
-async def test_mcp_initialization_exposes_catalog_meanings_once(include: list[str]) -> None:
+async def test_mcp_initialization_exposes_catalog_meanings_once(
+    include: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PALMIMO_APP_ID", "com.example.app")
     display = CatalogDisplay()
     tools = AgentToolSet(Palmimo(display=cast(FaceDisplay, display)), include=include)
 
@@ -34,11 +37,12 @@ async def test_mcp_initialization_exposes_catalog_meanings_once(include: list[st
         instructions = client.instructions
         assert instructions is not None
         for value in (
-            "com.example.app/asset_42",
+            "asset_42",
             "Signal that the next task is ready.",
             "Accent tint for the ready signal.",
         ):
             assert instructions.count(value) == 1
+        assert "com.example.app/asset_42" not in instructions
         listed = await client.list_tools()
         assert {tool.name for tool in listed.tools} == set(include)
         schemas = json.dumps([tool.model_dump() for tool in listed.tools])

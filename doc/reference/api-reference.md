@@ -1597,7 +1597,7 @@ contract. `disconnect()` closes the port and invalidates the catalog cache.
 
 | Method | Result and behavior |
 |---|---|
-| `play(id, hold_ms=None)` | Reply string. Loops a standard asset or a present, described asset of the current app. A positive integer `hold_ms` returns to idle afterwards; `None` holds indefinitely. Standard names are always allowed, including ones absent from the catalog; firmware reports missing assets. Other IDs raise `ValueError` before sending PLAY |
+| `play(id, hold_ms=None)` | Reply string. Loops a standard asset or a present, described asset of the current app. A positive integer `hold_ms` returns to idle afterwards; `None` holds indefinitely. Accepts a [display name](#display-names) or full ID; replies always contain the full ID. Explicit standard IDs remain permitted when absent from the catalog; firmware reports missing assets. Invalid or unowned inputs raise `ValueError` before sending PLAY |
 | `stop()` / `idle()` | Reply string. Idle screen, leaving live frames and resetting parameters; `idle()` is a compatibility alias |
 | `param(sid, *values)` | Reply string. Finite decimal slot values. `ERR PARAM NOSLOT` logs a warning and is returned without an exception, allowing standard assets to be replaced by images |
 | `on_tap(callback)` | Registers `callback(x, y)`, or `None` to unsubscribe. Coordinates are panel pixels, 0–479 |
@@ -1625,6 +1625,56 @@ transfers, I/O failures, and `ERR XFER TIMEOUT` close the connection; reconnect
 before reuse so a delayed reply cannot satisfy another command. Asset storage
 commands (PUT, DEL, READ) are not exposed.
 
+### Display names
+
+`FaceDisplay.play(id, hold_ms=None)`, the `play_asset` tool's `id`, and a motion
+tool's `face` accept names as well as full IDs. The same resolver is used by
+the deprecated APIs. Inputs are trimmed and lowercased, including full IDs:
+`play(" SUSHI ")` and `play("Palmimo/Happy")` are valid forms. Ownerless names
+must match `^[a-z0-9][a-z0-9._-]{0,39}$` after normalization.
+
+Resolution follows this order:
+
+1. An input containing `/` is a full ID. Playback retains the existing
+   standard/current-app ownership checks.
+2. A name declared in the app selected by `PALMIMO_APP_ID` selects that app's
+   asset. For example, `happy` selects `<app ID>/happy` when both the app and
+   standard catalog contain that name.
+3. Otherwise a name in the standard catalog selects `palmimo/<name>`.
+4. Only deprecated APIs and motion `face` arguments also accept the legacy
+   aliases below, after both exact-name lookups fail. Alias use is deprecated.
+5. If nothing matches, playback fails; no other app's asset is searched. With
+   no `PALMIMO_APP_ID`, ownerless lookup only uses the standard catalog.
+
+| Legacy alias | Standard asset |
+|---|---|
+| `smile`, `laugh` | `palmimo/happy` |
+| `surprised` | `palmimo/surprise` |
+| `sleep` | `palmimo/sleeping` |
+
+An app's asset actually named `smile` wins over the alias, including through
+`set_expression()`. New `play()` / `play_asset` calls do not use aliases.
+Unresolved names prompt the caller to use a catalog ID or declare an app asset.
+`play()` raises `ValueError` for unresolved, invalid, or unowned input;
+`set_expression()` uses `FaceDisplayError` for unresolved names. Tool execution
+returns `ToolResult(is_error=True)` for unavailable displays, resolution errors,
+and playback failures. Malformed input still raises `ValueError` at the direct
+SDK boundary.
+
+`catalog()` retains each full `id` and adds `name`, the shortest input that
+selects that entry. Normally it is the asset name alone. If the app shadows a
+standard name, the app uses `happy` and the standard entry uses `palmimo/happy`.
+Collision detection uses the whole catalog before tag filtering, so every
+returned `name` round-trips through `play()` to its own `id`.
+
+Tool schema choices and `render_display_prompt()` use `name`. Tool validation
+also accepts the same entry's full ID for existing callers, with `face` additionally
+allowing aliases. A tool's tag filter limits its accepted assets; a filtered-out
+app asset cannot silently fall back to the standard asset it shadows. Parameter
+validation uses the resolved asset's slots. The SDK expands names internally:
+PLAY commands, replies, and asset IDs exposed by firmware events stay full IDs.
+`assets()` remains the firmware's unmodified full-ID inventory.
+
 ### Migration from 0.1.x
 
 The following compatibility entry points remain deprecated in 0.2.x and are
@@ -1638,36 +1688,19 @@ importable type alias, while motion `face` arguments accept `str | None`.
 | `Palmimo.set_expression(name, hold_ms=0)` | `robot.display.play(id, hold_ms=None)` when a display is attached |
 | `SetFaceTool(name=...)` / `set_face` | `PlayAssetTool(id=...)` / `play_asset`; holds until another command |
 | `ShowEmojiTool(name=..., seconds=3.0)` / `show_emoji` | `PlayAssetTool(id=..., hold_ms=3000)`; `seconds` remains 0.5–10.0 |
-| A short name in a motion's `face` argument | A catalog asset ID in `face` |
+| A legacy alias in a motion's `face` argument | The catalog entry's `name` or full ID |
 | `display.list_expressions()` | `display.catalog()` |
 
 `set_face` and `show_emoji` are absent from the default toolset. They are
 available through explicit `AgentToolSet(..., include=["set_face", "show_emoji"])`
 or custom registration. The default MCP tools are unchanged.
 
-All deprecated name entry points use the same resolution order:
-
-1. A name containing `/` is passed through as an asset ID. Playback permits
-   standard assets and declared assets of the current app, as `play()` does.
-2. Other names ignore surrounding spaces and case. Names in the table below
-   select the standard asset, even if the app declares the same short name.
-3. Otherwise, if the app selected by `PALMIMO_APP_ID` has that lowercased name
-   in its catalog, the ID is `<app ID>/<name>`.
-4. Unresolved names fail with guidance to use `play()` with a catalog ID or
-   declare the asset in the app. `set_expression()` raises `FaceDisplayError`;
-   the legacy tools return `ToolResult(is_error=True)`. Malformed input and
-   negative or non-integer `hold_ms` still raise `ValueError`.
-
-Motion arguments are checked against their connected catalog snapshot after
-resolution; explicit IDs remain preferred. A zero `hold_ms` keeps the display
+Deprecated entry points follow [Display names](#display-names), including app-first
+lookup and optional alias fallback. `set_face(name)` has the same playback and
+error result as `play_asset(id=name)`; `show_emoji(name, seconds)` corresponds to
+`play_asset(id=name, hold_ms=seconds*1000)`. Only the deprecated entries accept
+aliases, and they have no `params` argument. A zero `hold_ms` keeps the display
 until another command; positive values return to idle after that many ms.
-
-| Names | Standard asset |
-|---|---|
-| `HAPPY`, `SMILE`, `LAUGH` | `palmimo/happy` |
-| `SURPRISE`, `SURPRISED` | `palmimo/surprise` |
-| `SLEEP`, `SLEEPING` | `palmimo/sleeping` |
-| `SHY`, `EXCITED`, `CURIOUS`, `THINKING`, `ANGRY`, `SAD`, `SLEEPY`, `LOVE`, `MARU`, `BATSU`, `GROOVE` | `palmimo/<lowercase name>` |
 
 Old topic emoji names do not imply built-in firmware artwork. An app can
 ship an asset named `sushi` in its schema 2 manifest and catalog: with
@@ -1688,7 +1721,7 @@ firmware are omitted with a counted diagnostic identifying synchronization as th
 reason. Missing or malformed declaration files and invalid entries are logged.
 The first catalog query caches declarations and live metadata until reconnect.
 
-Each entry has `id`, `kind` (`vector`, `image`, `gif`), `description`, `tags`,
+Each entry has `id`, `name` (see [Display names](#display-names)), `kind` (`vector`, `image`, `gif`), `description`, `tags`,
 `params` (slot ID → `{"description": str, "dim": int}`), and `translations`.
 Only declared slots that remain in the live asset are included. `kind` and `dim`
 come from firmware, so replacing a vector asset with an image removes its slots.
@@ -1733,7 +1766,7 @@ except DynamixelConnectTimeoutError as e:
 ## Agent display vocabulary
 
 `AgentToolSet(robot, include=None, exclude=None, display_tags=(), display_locale=None)`
-uses the connected display's [catalog](#catalog-entries) for both asset IDs and
+uses the connected display's [catalog](#catalog-entries) for display selections and
 localized descriptions. `display_tags` requires every requested tag;
 `display_locale` follows the catalog's exact/base/original selection. The toolset
 owns a snapshot, not the connection. Construct it after connecting, or call
@@ -1742,7 +1775,7 @@ session. A failed refresh clears old choices and re-raises. Refresh and custom
 registration raise `RuntimeError` during an active tool call.
 
 `play_asset(id, hold_ms=None, params=None)` is the preferred display tool;
-see [migration from 0.1.x](#migration-from-01x) for compatibility entry points. IDs and descriptions come from that snapshot; a positive
+see [migration from 0.1.x](#migration-from-01x) for compatibility entry points. Names and descriptions come from that snapshot; a positive
 integer `hold_ms` returns to idle afterwards. Optional `params` maps declared
 slot IDs to numeric arrays. Schemas describe their dimensions and descriptions;
 validation checks slots, finite values, and dimensions for the selected asset
@@ -1753,9 +1786,9 @@ Other display failures produce an error result. There is no parameter-editing
 operation detached from playback, so overrides cannot accidentally affect a
 different asset selected by an intervening action.
 
-Motion tools' optional `face` argument accepts catalog IDs, checked at runtime, and
-plays before motion. The full asset vocabulary is rendered once in the system
-prompt; motion schemas refer to it, and `play_asset.id` lists only the IDs.
+Motion tools' optional `face` argument follows [Display names](#display-names)
+and plays before motion. Asset meanings are rendered once in the system prompt;
+tool schemas enumerate the available display selections without repeating those meanings.
 Display failure is noted without preventing motion. Without
 a connected display or with an empty catalog, `play_asset` and motion `face`
 properties are omitted, and non-null face arguments are rejected. Custom
@@ -1765,8 +1798,8 @@ on registered tool names before this availability filter.
 
 `toolset.display_catalog` returns a copy of the snapshot for application prompts.
 `palmimo_sdk.agent.render_display_prompt(template, catalog)` replaces the literal
-`{{display_assets}}` with IDs, descriptions, and parameter metadata from that
-snapshot, or an unavailable message when empty. It adds no fallback vocabulary.
+`{{display_assets}}` with display selections, descriptions, and parameter metadata
+from that snapshot, or an unavailable message when empty. It adds no fallback vocabulary.
 MCP exposes these same bound schemas; its CLI connects before building them.
 After reconnecting an embedded server, refresh its toolset before listing tools
 for a new model session.
@@ -1799,7 +1832,7 @@ the `on_list_tools`/`on_call_tool` handlers `Server` takes on the MCP Python
 SDK 2.x. Building the server does not connect the robot or start serving —
 see the CLI below.
 
-Initialization instructions carry the connected display catalog's ids, asset
+Initialization instructions carry the connected display catalog's names, asset
 meanings, and slot descriptions once, including when `play_asset` is excluded
 and only motion tools accept a `face` argument. Tool schemas do not repeat the
 asset meanings. This vocabulary uses `toolset.display_catalog` at server
