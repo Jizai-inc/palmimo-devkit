@@ -177,6 +177,13 @@ class Tool(BaseModel):
     #: does the racing.
     long_running: ClassVar[bool] = False
 
+    #: Whether this tool's ``execute()`` commands the servos (legs or neck).
+    #: ``False`` by default. :meth:`~palmimo_sdk.agent.toolset.AgentToolSet.call`
+    #: appends ``(no servo bus connected; nothing moved)`` to the result of a
+    #: tool marked ``True`` when the robot has no servo bus, so ``execute()``
+    #: itself never has to check for one.
+    drives_servos: ClassVar[bool] = False
+
     def execute(self, robot: PalmimoLike) -> ToolResult:
         raise NotImplementedError
 
@@ -273,11 +280,6 @@ def _ran(verb: str, seconds: float) -> ToolResult:
 _NO_SERVO_NOTE = "no servo bus connected; nothing moved"
 
 
-def _servo_observation(robot: PalmimoLike, text: str) -> ToolResult:
-    """*text*, noting that nothing moved when the robot has no servo bus."""
-    return ToolResult(text=text if robot.is_connected else f"{text} ({_NO_SERVO_NOTE})")
-
-
 # ======================================================================
 # EXPRESSIVE MIXIN (talk / show a face while moving)
 # ======================================================================
@@ -333,6 +335,8 @@ class Expressive(Tool):
        ``handle.error`` in the result text. A speech failure never marks the
        whole call ``is_error`` -- only the action's own outcome does.
     """
+
+    drives_servos: ClassVar[bool] = True
 
     face: FaceExpression | None = Field(
         default=None,
@@ -415,8 +419,6 @@ class Expressive(Tool):
             say_note = self._finish_say(handle)
         if say_note is not None:
             notes.append(say_note)
-        if not robot.is_connected:
-            notes.append(_NO_SERVO_NOTE)
         if not notes:
             return result
         return ToolResult(text=f"{result.text} ({'; '.join(notes)})", images=result.images, is_error=result.is_error)
@@ -712,10 +714,11 @@ class SleepTool(Tool):
     # barge-in's cancel() as "handled" while the sleep glide finishes on its
     # own, silently swallowing the interrupt instead of surfacing it.
     long_running: ClassVar[bool] = False
+    drives_servos: ClassVar[bool] = True
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
         robot.sleep()
-        return _servo_observation(robot, "went to sleep")
+        return ToolResult(text="went to sleep")
 
 
 class WakeTool(Tool):
@@ -728,10 +731,11 @@ class WakeTool(Tool):
     # time.sleep() glide, so there is no MotionCancelled for long_running=True
     # to ever race against.
     long_running: ClassVar[bool] = False
+    drives_servos: ClassVar[bool] = True
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
         robot.wake()
-        return _servo_observation(robot, "woke up")
+        return ToolResult(text="woke up")
 
 
 # ======================================================================
@@ -1051,6 +1055,7 @@ class StopTool(Tool):
     # in-flight action, so there is nothing meaningful left to cancel it
     # with.
     long_running: ClassVar[bool] = False
+    drives_servos: ClassVar[bool] = True
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
         robot.stop()
@@ -1059,4 +1064,4 @@ class StopTool(Tool):
         # here streams the recentering. No try/finally needed -- the motion
         # is already IDLE, so there's nothing left to stop on an exception.
         robot.run(seconds=_NECK_SETTLE_SECONDS)
-        return _servo_observation(robot, "stopped and recentered gaze")
+        return ToolResult(text="stopped and recentered gaze")

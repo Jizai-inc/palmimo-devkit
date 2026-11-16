@@ -716,6 +716,51 @@ except DynamixelConnectTimeoutError as e:
     print(e)  # "Timed out connecting to the Dynamixel servo bus on ... "
 ```
 
+## palmimo_sdk.agent.Tool
+
+独自ツールは `Tool` を継承し、ClassVar の `name` と `description` を設定し、 LLM に見せる引数を pydantic のフィールドとして宣言し、 `execute(robot) -> ToolResult` を実装します。ツールセットへは `AgentToolSet.register(MyTool)` で登録します。 MCP サーバーもツールを `AgentToolSet.call()` 経由で呼ぶので、 MCP クライアントからも同じように使えます。
+
+ツールの振る舞いは 2 つの ClassVar で示します。どちらも既定値は `False` です。
+
+| ClassVar | `True` にする条件 | 効果 |
+|----------|------------------|------|
+| `long_running` | `execute()` が途中で中断されうる時間付きの動作（`robot.run(seconds=...)`）を実行する | `AgentToolSet.cancel_running()` で中断してよいツールであることを示す |
+| `drives_servos` | `execute()` が脚または首を動かす | ロボットにサーボバスがないとき、 `AgentToolSet.call()` が結果の末尾に `(no servo bus connected; nothing moved)` を付ける |
+
+ロボットを動かすツールは `drives_servos = True` を設定し、サーボバスがない場合の扱いは `AgentToolSet.call()` に任せます。 `execute()` の中で `robot.is_connected` を確かめる必要はありません。周辺機器（ディスプレイ、スピーカー、カメラ）だけを使うツールは `False` のままにします。そうしたツールは、周辺機器がないことを自分の結果テキストで伝えます。
+
+```python
+from typing import ClassVar
+
+from pydantic import Field
+
+from palmimo_sdk.agent import AgentToolSet, PalmimoLike, Tool, ToolResult
+
+
+class GlanceLeftTool(Tool):
+    name: ClassVar[str] = "glance_left"
+    description: ClassVar[str] = "Turn the head left for a moment, then back to center."
+    long_running: ClassVar[bool] = True
+    drives_servos: ClassVar[bool] = True
+
+    seconds: float = Field(default=1.0, gt=0, le=5, description="How long to hold the glance.")
+
+    def execute(self, robot: PalmimoLike) -> ToolResult:
+        robot.look(yaw=0.6)
+        try:
+            robot.run(seconds=self.seconds)
+        finally:
+            robot.look_center()
+            robot.run(seconds=0.5)
+        return ToolResult(text=f"glanced left for {self.seconds}s")
+
+
+tools = AgentToolSet(robot)
+tools.register(GlanceLeftTool)
+```
+
+サーボバスがない状態で `glance_left` を呼ぶと、 `glanced left for 1.0s (no servo bus connected; nothing moved)` が返ります。
+
 ## palmimo_sdk.agent の型付け
 
 `palmimo_sdk` は `py.typed` マーカー（PEP 561）を同梱し、型注釈を型チェッカーへ届けます。エージェント層の受け手である `Tool.execute(robot)` と `AgentToolSet(robot, ...)` の型は `palmimo_sdk.agent.PalmimoLike` です。ツールが使うファサードのインターフェースだけを列挙した `Protocol` です。実際の `Palmimo` はそのまま満たします。ハードウェア不要のテストダブルも、使うメンバーだけを実装すれば構造的に満たし、継承やキャストは不要です。

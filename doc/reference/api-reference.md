@@ -1613,6 +1613,60 @@ except DynamixelConnectTimeoutError as e:
     print(e)  # "Timed out connecting to the Dynamixel servo bus on ... "
 ```
 
+## palmimo_sdk.agent.Tool
+
+A custom tool subclasses `Tool`, sets the `name` and `description`
+ClassVars, declares its LLM-visible arguments as pydantic fields, and
+implements `execute(robot) -> ToolResult`. Register it on a toolset with
+`AgentToolSet.register(MyTool)`; MCP clients see it too, because the MCP
+server calls tools through `AgentToolSet.call()`.
+
+Two ClassVars describe how the tool behaves. Both default to `False`.
+
+| ClassVar | Set it to `True` when | Effect |
+|----------|----------------------|--------|
+| `long_running` | `execute()` runs a timed motion (`robot.run(seconds=...)`) that a caller may cancel mid-way | Marks the tool as safe to race against `AgentToolSet.cancel_running()` |
+| `drives_servos` | `execute()` commands the legs or neck | `AgentToolSet.call()` appends `(no servo bus connected; nothing moved)` to the result when the robot has no servo bus |
+
+A tool that moves the robot sets `drives_servos = True` and leaves the
+missing-bus case to `AgentToolSet.call()`; `execute()` does not check
+`robot.is_connected` itself. Leave it `False` for a tool that only uses a
+peripheral (display, speaker, camera): that tool reports a missing
+peripheral in its own result text.
+
+```python
+from typing import ClassVar
+
+from pydantic import Field
+
+from palmimo_sdk.agent import AgentToolSet, PalmimoLike, Tool, ToolResult
+
+
+class GlanceLeftTool(Tool):
+    name: ClassVar[str] = "glance_left"
+    description: ClassVar[str] = "Turn the head left for a moment, then back to center."
+    long_running: ClassVar[bool] = True
+    drives_servos: ClassVar[bool] = True
+
+    seconds: float = Field(default=1.0, gt=0, le=5, description="How long to hold the glance.")
+
+    def execute(self, robot: PalmimoLike) -> ToolResult:
+        robot.look(yaw=0.6)
+        try:
+            robot.run(seconds=self.seconds)
+        finally:
+            robot.look_center()
+            robot.run(seconds=0.5)
+        return ToolResult(text=f"glanced left for {self.seconds}s")
+
+
+tools = AgentToolSet(robot)
+tools.register(GlanceLeftTool)
+```
+
+Called without a servo bus, `glance_left` returns
+`glanced left for 1.0s (no servo bus connected; nothing moved)`.
+
 ## palmimo_sdk.agent typing
 
 `palmimo_sdk` ships a `py.typed` marker (PEP 561), so its annotations reach

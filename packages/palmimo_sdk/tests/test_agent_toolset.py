@@ -17,9 +17,9 @@ from palmimo_sdk.robot import MotionCancelled
 class FakeRobot:
     """Minimal duck-typed Palmimo double — records calls, never sleeps."""
 
-    def __init__(self, *, run_raises: BaseException | None = None) -> None:
+    def __init__(self, *, run_raises: BaseException | None = None, servo_connected: bool = True) -> None:
         self.calls: list[tuple[Any, ...]] = []
-        self.is_connected = True
+        self.is_connected = servo_connected
         self.display = None
         self.speaker = None
         self.camera = None
@@ -40,6 +40,12 @@ class FakeRobot:
 
     def stop(self) -> None:
         self.calls.append(("stop",))
+
+    def sleep(self) -> None:
+        self.calls.append(("sleep",))
+
+    def wake(self) -> None:
+        self.calls.append(("wake",))
 
     def look(self, pitch: float = 0.0, yaw: float = 0.0) -> None:
         self.calls.append(("look", pitch, yaw))
@@ -294,6 +300,52 @@ async def test_call_motion_cancelled_is_reported_as_interrupted_not_error() -> N
     assert isinstance(result, ToolResult)
     assert result.is_error is False
     assert result.text.startswith("interrupted:")
+
+
+class ServoPingTool(PingTool):
+    name: ClassVar[str] = "servo_ping"
+    drives_servos: ClassVar[bool] = True
+
+
+@pytest.mark.parametrize("attached", [True, False], ids=["attached", "no_servo_bus"])
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("forward", "moved forward for 1.5s"),
+        ("sleep", "went to sleep"),
+        ("wake_up", "woke up"),
+        ("stop", "stopped and recentered gaze"),
+        ("servo_ping", "pong"),
+    ],
+)
+async def test_call_notes_missing_servo_bus_for_a_drives_servos_tool(name: str, text: str, attached: bool) -> None:
+    tools = AgentToolSet(cast(PalmimoLike, FakeRobot(servo_connected=attached)))
+    tools.register(ServoPingTool)
+    result = await tools.call(name, {})
+    assert result.text == (text if attached else f"{text} (no servo bus connected; nothing moved)")
+
+
+async def test_call_leaves_a_tool_without_drives_servos_unnoted_without_a_servo_bus() -> None:
+    tools = AgentToolSet(cast(PalmimoLike, FakeRobot(servo_connected=False)), include=[])
+    tools.register(PingTool)
+    result = await tools.call("ping", {})
+    assert result.text == "pong"
+
+
+async def test_call_notes_missing_servo_bus_on_an_interrupted_drives_servos_tool() -> None:
+    class CancelledServoTool(Tool):
+        name: ClassVar[str] = "cancelled_servo_tool"
+        description: ClassVar[str] = "Raises MotionCancelled while marked as driving the servos."
+        drives_servos: ClassVar[bool] = True
+
+        def execute(self, robot: PalmimoLike) -> ToolResult:
+            raise MotionCancelled("motion aborted")
+
+    tools = AgentToolSet(cast(PalmimoLike, FakeRobot(servo_connected=False)), include=[])
+    tools.register(CancelledServoTool)
+    result = await tools.call("cancelled_servo_tool", {})
+    assert result.text == "interrupted: motion aborted (no servo bus connected; nothing moved)"
+    assert result.is_error is False
 
 
 async def test_call_motion_cancelled_end_to_end_against_real_palmimo() -> None:
