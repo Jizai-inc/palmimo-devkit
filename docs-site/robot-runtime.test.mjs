@@ -10,6 +10,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { loadPyodide } from 'pyodide';
 import { bootstrap, readableTraceback } from './src/scripts/robot-runtime.js';
+import { knowsExpression } from './src/scripts/robot-face.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const payload = JSON.parse(
@@ -27,6 +28,28 @@ test('the SDK boots and stands at neutral', () => {
   assert.equal(Object.keys(angles).length, 21);
   for (const joint of [...LEG_JOINTS, 'neck_yaw', 'neck_pitch1', 'neck_pitch2']) {
     assert.equal(angles[joint], 0, `${joint} should stand at neutral`);
+  }
+});
+
+test('the display plays catalog assets and SDK legacy aliases, then stops at idle', async () => {
+  const faces = [];
+  globalThis.palmimoStage = { face: (name) => faces.push(name) };
+  try {
+    const catalog = await runtime.run('robot.display.catalog()');
+    assert.equal(catalog.error, null);
+    assert.match(catalog.value, /palmimo\/happy/);
+    const played = await runtime.run('[robot.display.play(asset["id"]) for asset in robot.display.catalog()]');
+    assert.equal(played.error, null);
+    assert.ok(faces.length > 0 && faces.every(knowsExpression));
+    faces.length = 0;
+    assert.equal((await runtime.run('robot.display.play("palmimo/happy")')).value, "'OK PLAY palmimo/happy'");
+    assert.equal((await runtime.run('robot.set_expression("smile")')).value, "'OK PLAY palmimo/happy'");
+    assert.equal((await runtime.run('robot.display.stop()')).value, "'OK STOP'");
+    assert.deepEqual(faces, ['HAPPY', 'HAPPY', 'IDLE']);
+    assert.match((await runtime.run('robot.display.play("palmimo/missing")')).error, /FaceDisplayError/);
+    assert.deepEqual(faces, ['HAPPY', 'HAPPY', 'IDLE']);
+  } finally {
+    delete globalThis.palmimoStage;
   }
 });
 

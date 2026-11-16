@@ -491,20 +491,20 @@ export function routeExists(route) {
 }
 
 // Collects the Python the browser has to have on disk before it can
-// `import palmimo_sdk`: the package itself, plus the site's own bridge module.
+// `import palmimo_sdk`: its sources and firmware declaration, plus the site's bridge.
 function writePythonPayload() {
   const payload = {};
   for (const dir of [SDK_PACKAGE_DIR, SITE_PYTHON_DIR]) {
     const base = dir === SDK_PACKAGE_DIR ? 'palmimo_sdk' : '';
     for (const absPath of listFilesRecursive(dir)) {
-      if (path.extname(absPath) !== '.py') {
+      if (path.extname(absPath) !== '.py' && absPath !== path.join(SDK_PACKAGE_DIR, 'display_firmware.json')) {
         continue;
       }
       const relPath = toPosix(path.relative(dir, absPath));
       payload[base === '' ? relPath : `${base}/${relPath}`] = fs.readFileSync(absPath, 'utf8');
     }
   }
-  const modules = Object.keys(payload).length;
+  const modules = Object.keys(payload).filter((name) => name.endsWith('.py')).length;
   if (modules === 0) {
     throw new Error(`No Python found under ${SDK_PACKAGE_DIR}; the console would load an empty SDK.`);
   }
