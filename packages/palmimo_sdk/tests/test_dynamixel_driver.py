@@ -757,6 +757,32 @@ def test_set_p_gain_reset_subset_restores_only_those_motors() -> None:
     assert not [w for w in bus.writes if len(w) == 2 and w[0] == "Position_P_Gain"]
 
 
+def _neck_gain_writes(bus: FakeBus) -> list[tuple[str, int]]:
+    return [(w[0], w[2]) for w in bus.writes if len(w) == 3 and w[1] == "neck_pitch1" and w[0].endswith("_Gain")]
+
+
+def test_neck_integral_holds_only_while_the_p_gain_is_at_default() -> None:
+    """The neck's I gain is cleared before P drops below default, and set again only after P is back."""
+    driver, bus, _ = make_driver()
+    driver.connect()
+    connect_i = [w for w in bus.writes if len(w) == 3 and w[0] == "Position_I_Gain"]
+    assert {w[1] for w in connect_i} == {"neck_pitch1", "neck_pitch2", "neck_yaw"}
+    assert all(w[2] > 0 for w in connect_i)
+    hold_i = connect_i[0][2]
+
+    bus.writes.clear()
+    driver.set_position_p_gain(0, motors=["neck_pitch1"])  # limp
+    assert _neck_gain_writes(bus) == [("Position_I_Gain", 0), ("Position_P_Gain", 0)]
+
+    bus.writes.clear()
+    driver.set_position_p_gain(None, motors=["neck_pitch1"])
+    assert _neck_gain_writes(bus) == [("Position_P_Gain", 900), ("Position_I_Gain", hold_i)]
+
+    bus.writes.clear()
+    driver.set_position_p_gain(300, motors=["leg_1_yaw"])  # a leg softens; the neck is left alone
+    assert not [w for w in bus.writes if w[0] == "Position_I_Gain"]
+
+
 def test_set_profile_velocity_units_subset_writes_only_those_motors() -> None:
     """set_profile_velocity_units(v, motors=[...]) writes per-motor only for the given subset."""
     driver, bus, _ = make_driver()

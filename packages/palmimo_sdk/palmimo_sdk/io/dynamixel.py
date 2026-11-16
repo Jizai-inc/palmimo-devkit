@@ -22,10 +22,11 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from ..kinematics import LEG_MOTORS, NEUTRAL
+from ..thermal import NECK_MOTORS
 from ._timeout import ProbeTimeoutError, run_with_timeout
 from .base import HardwareErrorRead, ServoDriver, ServoPositions, ServoTelemetry
 
@@ -44,6 +45,12 @@ _ACCEL_RAMP_DIVISOR = 8
 # The servo's Position_P_Gain power-on default. Re-applied at connect so a prior
 # neck soft-release (which lowers the gain in RAM) can't linger on a soft reconnect.
 _DEFAULT_POSITION_P_GAIN = 900
+# Position_I_Gain the neck holds the head with while its P gain is at or above
+# the default. P alone settles short of the goal by the error it needs to carry
+# the head (about 9 degrees on pitch1); the integral term closes that gap. It is
+# zeroed before any lower P gain is written, so a softened or limp neck is
+# never pushed by the integral alone.
+_NECK_HOLD_I_GAIN = 300
 
 # The health signals the safety layer watches, read as one span. Present_Current
 # through Present_Temperature is a contiguous range on the control table, so the
@@ -356,6 +363,11 @@ class DynamixelDriver(ServoDriver):
         except Exception as exc:  # non-fatal: reset will just no-op if it fails
             logger.warning("could not apply default Position_P_Gain: %s", exc)
             self._default_p_gain = {}
+            return
+        try:
+            self._write_neck_i_gain(self._bus.motors, hold=True)
+        except Exception as exc:  # non-fatal: the neck then holds on P alone
+            logger.warning("could not apply the neck's Position_I_Gain: %s", exc)
 
     def disconnect(self) -> None:
         if self._bus is None:
@@ -424,6 +436,10 @@ class DynamixelDriver(ServoDriver):
         *motors* to write only a subset (e.g. the neck soft-release on shutdown);
         leaving it ``None`` writes every motor. Writes are RAM-only, so they take
         effect immediately without torque-off.
+
+        The neck motors also carry a Position_I_Gain while their P gain is at
+        or above the default: it is written as 0 before a lower P gain, and
+        restored after the P gain is back.
         """
         if self._bus is None:
             raise RuntimeError("Driver is not connected. Call connect() before set_position_p_gain().")
@@ -431,28 +447,46 @@ class DynamixelDriver(ServoDriver):
             if not self._default_p_gain:
                 logger.warning("no captured Position_P_Gain defaults to restore; skipping")
                 return
-            if motors is None:
-                self._bus.sync_write("Position_P_Gain", self._default_p_gain, normalize=False)
-                self._p_gain = None
-            else:
-                # Restore ONLY the requested subset to their captured defaults.
-                # Per-motor write (not sync_write): a partial Position_P_Gain dict
-                # would need every motor backfilled (else real-hardware KeyError),
-                # and backfilling would clobber the gains of motors we must leave
-                # alone (e.g. legs while only the neck is restored).
-                for motor in motors:
-                    if motor in self._default_p_gain:
-                        self._bus.write("Position_P_Gain", motor, self._default_p_gain[motor], normalize=False)
+            self._write_p_gain_default(motors)
+            self._write_neck_i_gain(self._bus.motors if motors is None else motors, hold=True)
             return
         v = max(0, min(16383, int(value)))  # the servo's gain register is a 14-bit field
+        hold = v >= _DEFAULT_POSITION_P_GAIN
+        targets = self._bus.motors if motors is None else motors
+        if not hold:
+            self._write_neck_i_gain(targets, hold=False)
         if motors is None:
             self._bus.sync_write("Position_P_Gain", v, normalize=False)
             self._p_gain = v  # tracked value reflects the global gain only
         else:
-            # Per-motor write so we touch only the subset; see the None branch above
+            # Per-motor write so we touch only the subset; see _write_p_gain_default
             # for why a partial sync_write can't be used for a true subset.
             for motor in motors:
                 self._bus.write("Position_P_Gain", motor, v, normalize=False)
+        if hold:
+            self._write_neck_i_gain(targets, hold=True)
+
+    def _write_p_gain_default(self, motors: list[str] | None) -> None:
+        """Restore the captured default Position_P_Gain on *motors* (every motor when ``None``)."""
+        if motors is None:
+            self._bus.sync_write("Position_P_Gain", self._default_p_gain, normalize=False)
+            self._p_gain = None
+        else:
+            # Restore ONLY the requested subset to their captured defaults.
+            # Per-motor write (not sync_write): a partial Position_P_Gain dict
+            # would need every motor backfilled (else real-hardware KeyError),
+            # and backfilling would clobber the gains of motors we must leave
+            # alone (e.g. legs while only the neck is restored).
+            for motor in motors:
+                if motor in self._default_p_gain:
+                    self._bus.write("Position_P_Gain", motor, self._default_p_gain[motor], normalize=False)
+
+    def _write_neck_i_gain(self, motors: Iterable[str], *, hold: bool) -> None:
+        """Write the neck's hold Position_I_Gain (or 0 when *hold* is false) on the neck motors in *motors*."""
+        value = _NECK_HOLD_I_GAIN if hold else 0
+        for motor in motors:
+            if motor in NECK_MOTORS:
+                self._bus.write("Position_I_Gain", motor, value, normalize=False)
 
     def set_torque_enabled(self, enabled: bool, motors: Sequence[str] | None = None) -> None:
         """Write Torque_Enable on *motors* (every motor when ``None``), one acknowledged write each.
