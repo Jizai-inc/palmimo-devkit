@@ -80,8 +80,8 @@ tell its senders apart.
 
 ### Compatibility commands
 
-Until the Portal's QR reader moves to `STREAM`, v2 also accepts v1's `FRAME …`
-commands with their v1 replies, `IDLE` (replies `OK IDLE`, same as `STOP`), and
+The Portal's QR reader uses `STREAM`. For older Portal versions, v2 also
+accepts v1's `FRAME …` commands with their v1 replies, `IDLE` (replies `OK IDLE`, same as `STOP`), and
 `EXPR SLEEPING` (replies `OK SLEEPING`, shows the sleep screen). No other v1
 command is accepted.
 
@@ -150,6 +150,9 @@ refreshes — author motion at about 30 fps (33 ms) or faster to avoid visible
 strobing on high-contrast moving edges.
 
 ## Firmware selection
+
+The first `palmimo-sdk` version requiring protocol 2 is 0.2.0; earlier versions
+have no declaration file and require protocol 1.
 
 `palmimo_sdk` ships a file that declares the face firmware it requires. When an
 app starts, the platform reads that declaration from the app's installed
