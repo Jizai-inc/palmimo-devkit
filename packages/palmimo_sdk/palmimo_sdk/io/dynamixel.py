@@ -301,6 +301,8 @@ class DynamixelDriver(ServoDriver):
         self._iir_motors: set[str] | None = None  # None = all motors; else only these
         # Last Position_P_Gain written via set_position_p_gain (None = at default).
         self._p_gain: int | None = None
+        # Position_I_Gain last written to each neck motor, so a P ladder does not rewrite an unchanged I.
+        self._neck_i_gain: dict[str, int] = {}
         # Per-motor Position_P_Gain captured at connect, so set_position_p_gain(None)
         # can restore the firmware defaults after experimenting with higher gains.
         self._default_p_gain: dict[str, int] = {}
@@ -321,6 +323,7 @@ class DynamixelDriver(ServoDriver):
     def connect(self) -> None:
         if self.is_connected:
             return
+        self._neck_i_gain.clear()  # the servos power up with I = 0; never trust a previous session's writes
 
         # Recorded the instant port resolution succeeds, so the timeout error
         # can name the real port even when the hang happened later.
@@ -485,8 +488,10 @@ class DynamixelDriver(ServoDriver):
         """Write the neck's hold Position_I_Gain (or 0 when *hold* is false) on the neck motors in *motors*."""
         value = _NECK_HOLD_I_GAIN if hold else 0
         for motor in motors:
-            if motor in NECK_MOTORS:
+            if motor in NECK_MOTORS and self._neck_i_gain.get(motor) != value:
+                self._neck_i_gain.pop(motor, None)
                 self._bus.write("Position_I_Gain", motor, value, normalize=False)
+                self._neck_i_gain[motor] = value
 
     def set_torque_enabled(self, enabled: bool, motors: Sequence[str] | None = None) -> None:
         """Write Torque_Enable on *motors* (every motor when ``None``), one acknowledged write each.

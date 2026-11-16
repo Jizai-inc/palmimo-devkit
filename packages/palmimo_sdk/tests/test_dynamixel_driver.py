@@ -775,12 +775,27 @@ def test_neck_integral_holds_only_while_the_p_gain_is_at_default() -> None:
     assert _neck_gain_writes(bus) == [("Position_I_Gain", 0), ("Position_P_Gain", 0)]
 
     bus.writes.clear()
+    driver.set_position_p_gain(6, motors=["neck_pitch1"])  # a further park step: I is already 0
+    assert _neck_gain_writes(bus) == [("Position_P_Gain", 6)]
+
+    bus.writes.clear()
     driver.set_position_p_gain(None, motors=["neck_pitch1"])
     assert _neck_gain_writes(bus) == [("Position_P_Gain", 900), ("Position_I_Gain", hold_i)]
 
     bus.writes.clear()
     driver.set_position_p_gain(300, motors=["leg_1_yaw"])  # a leg softens; the neck is left alone
     assert not [w for w in bus.writes if w[0] == "Position_I_Gain"]
+
+    for value, i_value in ((0, 0), (None, hold_i)):  # the global path keeps the same order
+        bus.writes.clear()
+        driver.set_position_p_gain(value)
+        names = [w[0] for w in bus.writes]
+        i_writes = [w for w in bus.writes if w[0] == "Position_I_Gain"]
+        assert {w[1] for w in i_writes} == {"neck_pitch1", "neck_pitch2", "neck_yaw"}
+        assert all(w[2] == i_value for w in i_writes)
+        p_at = names.index("Position_P_Gain")
+        i_at = [i for i, n in enumerate(names) if n == "Position_I_Gain"]
+        assert all(i < p_at for i in i_at) if value == 0 else all(i > p_at for i in i_at)
 
 
 def test_set_profile_velocity_units_subset_writes_only_those_motors() -> None:
