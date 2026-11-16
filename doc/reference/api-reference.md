@@ -1765,6 +1765,13 @@ the `on_list_tools`/`on_call_tool` handlers `Server` takes on the MCP Python
 SDK 2.x. Building the server does not connect the robot or start serving —
 see the CLI below.
 
+Initialization instructions carry the connected display catalog's ids, asset
+meanings, and slot descriptions once, including when `play_asset` is excluded
+and only motion tools accept a `face` argument. Tool schemas do not repeat the
+asset meanings. This vocabulary uses `toolset.display_catalog` at server
+construction; later catalog refreshes require a new server to publish updated
+instructions.
+
 ```python
 from palmimo_sdk import Palmimo
 from palmimo_sdk.agent import AgentToolSet

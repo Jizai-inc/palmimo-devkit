@@ -780,6 +780,8 @@ except DynamixelConnectTimeoutError as e:
 ### `build_mcp_server(toolset: AgentToolSet, log_tool_calls: str = "summary") -> mcp.server.lowlevel.Server`
 `toolset` の登録済みツールを一覧する低レベルの MCP サーバーを構築します（`mcp_types.Tool.input_schema` は各 `Tool.parameters_schema()` を反映します）。 MCP Python SDK 2.x の `Server` が受け取る `on_list_tools`/`on_call_tool` ハンドラーを通じて、`tools/call` 要求を `await toolset.call(name, arguments)` へ振り分けます。サーバーを構築しても、ロボットの接続や配信の開始はしません。後述の CLI を参照してください。
 
+初期化時の instructions は、接続先の表示目録の ID、アセットの意味、スロットの説明を 1 か所に含みます。`play_asset` を除外してモーションツールだけが `face` 引数を受け取る場合も同様です。ツールスキーマにはアセットの意味を重複して含めません。この語彙はサーバー構築時の `toolset.display_catalog` を使います。その後に目録を更新した場合、更新された instructions の公開には新しいサーバーが必要です。
+
 ```python
 from palmimo_sdk import Palmimo
 from palmimo_sdk.agent import AgentToolSet

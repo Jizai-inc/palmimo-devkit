@@ -73,6 +73,7 @@ import mcp_types as types
 from mcp.server.context import ServerRequestContext
 from mcp.server.lowlevel import Server
 
+from palmimo_sdk.agent import render_display_prompt
 from palmimo_sdk.agent.tools import ToolResult
 from palmimo_sdk.agent.toolset import AgentToolSet
 
@@ -247,6 +248,7 @@ _SERVER_INSTRUCTIONS = (
     "being hidden from the tool list. Without a servo bus, movement tools "
     "still succeed and end their result with "
     "`(no servo bus connected; nothing moved)`."
+    "\n\nDisplay vocabulary:\n{{display_assets}}"
 )
 
 
@@ -254,7 +256,9 @@ def build_mcp_server(toolset: AgentToolSet, log_tool_calls: ToolCallLogDetail = 
     """Build an MCP server that lists and dispatches *toolset*'s tools.
 
     Args:
-        toolset: The tool registry/dispatcher to expose. :func:`list_tools`
+        toolset: The tool registry/dispatcher to expose. Its display catalog is
+            captured in the initialization instructions when the server is built.
+            :func:`list_tools`
             re-reads :attr:`~palmimo_sdk.agent.toolset.AgentToolSet.tool_models`
             on every request, so a :meth:`~palmimo_sdk.agent.toolset.AgentToolSet.register`
             call made after the server was built is reflected the next time a
@@ -353,7 +357,7 @@ def build_mcp_server(toolset: AgentToolSet, log_tool_calls: ToolCallLogDetail = 
     return Server(
         "palmimo",
         version=_sdk_version(),
-        instructions=_SERVER_INSTRUCTIONS,
+        instructions=render_display_prompt(_SERVER_INSTRUCTIONS, toolset.display_catalog),
         on_list_tools=list_tools,
         on_call_tool=call_tool,
     )
