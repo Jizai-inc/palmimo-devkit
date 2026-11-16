@@ -34,6 +34,7 @@ from palmimo_sdk import (
 )
 from palmimo_sdk.agent.toolset import AgentToolSet
 
+from ..code_version import resolve_code_version
 from ..core.hearing import NameCallWatch
 from ..core.perception import merge
 from ..core.reflexes import ReflexEngine
@@ -41,6 +42,7 @@ from ..core.tools import COMPANION_TOOL_MODELS, make_look_at_face_tool
 from ..core.vision import FaceLocator, FacePresenceDetector, VisionWatch, WaveDetector
 from .bus import Bus
 from .conductor import Conductor
+from .event_log import emit_run_start
 from .history import History, SystemNoteEvent
 from .llm import LlmProvider
 from .speech import SpeechPipeline
@@ -272,6 +274,7 @@ def build_runtime(settings: PipelineSettings) -> Runtime:
     if settings.log_path is not None:
         settings.log_path.parent.mkdir(parents=True, exist_ok=True)
         event_log = settings.log_path.open("a", encoding="utf-8")
+        emit_run_start(resolve_code_version(), settings, out=event_log)
 
     history = History()
     bus = Bus()
