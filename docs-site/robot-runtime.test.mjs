@@ -40,7 +40,10 @@ test('the display plays catalog assets and SDK legacy aliases, then stops at idl
     assert.match(catalog.value, /palmimo\/happy/);
     const played = await runtime.run('[robot.display.play(asset["id"]) for asset in robot.display.catalog()]');
     assert.equal(played.error, null);
-    assert.ok(faces.length > 0 && faces.every(knowsExpression));
+    assert.ok(faces.length > 0);
+    for (const face of faces) {
+      assert.ok(knowsExpression(face), `stage cannot render ${face}`);
+    }
     faces.length = 0;
     assert.equal((await runtime.run('robot.display.play("palmimo/happy")')).value, "'OK PLAY palmimo/happy'");
     assert.equal((await runtime.run('robot.set_expression("smile")')).value, "'OK PLAY palmimo/happy'");
