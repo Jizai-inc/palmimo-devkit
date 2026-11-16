@@ -274,6 +274,18 @@ def test_interrupt_reports_queued_audio_and_a_recent_write(fake_popen: type[_Fak
     playback.close()
 
 
+def test_a_write_cut_by_interrupt_is_not_reported_as_recent(fake_popen: type[_FakePopen]) -> None:
+    fake_popen.write_delay = 0.2
+    playback = Playback()
+    playback.write(b"\x00\x00")
+    _wait_until(lambda: fake_popen.instances)
+    playback.interrupt()  # lands while the writer is still inside the fake write
+    time.sleep(fake_popen.write_delay + 0.1)
+
+    assert playback.interrupt().recently_wrote is False
+    playback.close()
+
+
 def test_interrupt_does_not_report_a_stale_write_on_the_live_process(fake_popen: type[_FakePopen]) -> None:
     """One aplay lives for the whole session, so a live process alone is not 'still speaking'."""
     playback = Playback()

@@ -300,7 +300,10 @@ class Playback:
                 # else: interrupt() already reclaimed this chunk's process --
                 # an expected teardown, not a playback failure worth a warning.
             else:
-                self._last_write = time.monotonic()
+                with self._process_lock:
+                    # A write interrupt() already cut must not count as recent audio.
+                    if generation == self._generation:
+                        self._last_write = time.monotonic()
 
     def write(self, pcm: bytes) -> None:
         """Enqueue *pcm* for the writer thread. Never blocks -- safe to call from the event loop.
