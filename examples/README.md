@@ -8,6 +8,11 @@ backend directly. The Python ones (`teleop/`, `agents/wakeword/`,
 PyPI, not on this repository's SDK source, so a copy of one works the same
 outside this repository. `agents/openclaw/` carries no Python at all.
 
+These examples require the upcoming `palmimo-sdk` 0.2.0 release. Their
+lockfiles still contain the previous SDK release because 0.2.0 is not yet
+published on PyPI. Regenerate each example's lockfile and rerun its standalone
+checks after publication before installing or publishing these examples.
+
 The robot never builds a package from source on-device, so each example's
 `uv.lock` must resolve to wheels for the robot's Python on `aarch64` — a
 locked dependency with only an sdist for that platform installs fine on a
