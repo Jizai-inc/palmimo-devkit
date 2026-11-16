@@ -1357,3 +1357,18 @@ def test_open_bus_keeps_torque_off_when_a_motor_stays_unread(
     assert bus.disconnect_calls == [True]
     # Each dropped read costs a packet timeout; the total must stay inside the connect timeout.
     assert bus.read_retries == [0] * _SEED_READ_ATTEMPTS
+
+
+def test_arm_holds_and_torques_the_motor_while_another_motor_is_silent() -> None:
+    driver, bus, _calls = make_driver()
+    driver.connect()
+    # The whole-bus read fails as it does on hardware once one motor stops answering.
+    bus.read_none = True
+    del bus.telemetry["neck_yaw"]
+    bus.writes.clear()
+
+    driver.arm(["leg_1_yaw"])
+
+    tick = bus.telemetry["leg_1_yaw"]["Present_Position"]
+    assert ("Goal_Position", "leg_1_yaw", tick) in bus.writes
+    assert ("Torque_Enable", "leg_1_yaw", 1) in bus.writes

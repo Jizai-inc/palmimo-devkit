@@ -273,7 +273,7 @@ class ServoDriver(ABC):
 
         Raises:
             RuntimeError: The driver is not connected, or a motor refused torque.
-            ConnectionError: Some motor's position could not be read; torque was left off.
+            ConnectionError: Some motor's position could not be read; torque was not turned on.
         """
         raise NotImplementedError(f"{type(self).__name__} does not support arm().")
 

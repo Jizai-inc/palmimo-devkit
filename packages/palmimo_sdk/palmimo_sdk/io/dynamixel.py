@@ -181,7 +181,12 @@ def _seed_hold_pose(bus: Any, motors: Sequence[str] | None = None) -> None:
     last_error: Exception | None = None
     for _ in range(_SEED_READ_ATTEMPTS):
         try:
-            pres = bus.sync_read("Present_Position", normalize=False)
+            if motors is None:
+                pres = bus.sync_read("Present_Position", normalize=False)
+            else:
+                # Ask only these motors, so a silent motor elsewhere on the bus cannot fail the read.
+                span = bus.sync_read_span(["Present_Position"], motors=names)
+                pres = {motor: regs["Present_Position"] for motor, regs in span.values.items()}
         except OSError as exc:
             last_error = exc
             continue
@@ -193,7 +198,7 @@ def _seed_hold_pose(bus: Any, motors: Sequence[str] | None = None) -> None:
     if missing:
         raise ConnectionError(
             f"Could not read the hold pose of {', '.join(missing)} after {_SEED_READ_ATTEMPTS} attempts; "
-            "torque was left off."
+            "torque was not turned on."
         ) from last_error
     for motor in names:
         # A position read back from hardware, not a caller-chosen goal: write it verbatim.
@@ -555,7 +560,7 @@ class DynamixelDriver(ServoDriver):
 
         Raises:
             RuntimeError: The driver is not connected, or a motor refused torque.
-            ConnectionError: Some motor's position could not be read; torque was left off.
+            ConnectionError: Some motor's position could not be read; torque was not turned on.
         """
         if self._bus is None:
             raise RuntimeError("Driver is not connected. Call connect() before arm().")
