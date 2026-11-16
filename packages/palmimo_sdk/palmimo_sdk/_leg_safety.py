@@ -141,10 +141,10 @@ class LegSafety:
                 if stale is not None:
                     stale.reset()
         self._last_sample = now
-        if self._poller.restored:
+        if self._poller.rejoined:
             for guard in (self._arm_overload, self._leg_overload):
                 if guard is not None:
-                    guard.forget(self._poller.restored)
+                    guard.forget(self._poller.rejoined)
         arm = leg_motors(arm_legs)
         if self._soft_return is not None and self._soft_return_monitor.sample(telemetry.position, self._soft_return):
             self.end_soft_return()

@@ -97,6 +97,7 @@ from .overload import (
     OverloadTrip,
 )
 from .rail import RAIL_CONSECUTIVE, RAIL_UNDERVOLTAGE_V, RailTrip
+from .rearm import ReArm
 from .reservation import ReservationSetupError, ResourceBusyError
 from .robot import (
     MotionCancelled,
@@ -155,6 +156,7 @@ __all__ = [
     "PiperEngine",
     "PortDetectionError",
     "RailTrip",
+    "ReArm",
     "ReservationSetupError",
     "ResourceBusyError",
     "RoutineStep",

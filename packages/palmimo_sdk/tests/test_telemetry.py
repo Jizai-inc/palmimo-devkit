@@ -132,11 +132,11 @@ def test_set_aside_motor_is_rechecked_alone_after_the_interval_and_restored_when
     assert "m2" in driver.requests[-1]
     assert "m2" in sweep.current
     assert poller.unwatched == ()
-    assert poller.restored == ("m2",)
+    assert poller.rejoined == ("m2",)
     assert [(c.motor, c.watched) for c in poller.watch_changes.drain()] == [("m2", True)]
 
     _read(poller, driver, now + 0.1)
-    assert poller.restored == ()
+    assert poller.rejoined == ()
 
 
 def test_set_aside_motor_that_stays_silent_is_rechecked_one_motor_at_a_time() -> None:
@@ -286,3 +286,31 @@ def test_a_flapping_motor_is_logged_once_per_interval_but_every_change_is_record
 
     assert [c.watched for c in poller.watch_changes.drain()] == [False, True, False]
     assert len([r for r in caplog.records if "m2" in r.getMessage()]) == 1
+
+
+def test_blind_reads_true_while_no_read_carries_a_motor_and_false_once_one_does() -> None:
+    poller, driver = _poller(), _NoAnswerDriver("unreached")
+    for i in range(EMPTY_READS_TO_BLIND):
+        assert not poller.blind
+        poller.read(driver, i * 0.1, "read failed")
+    assert poller.blind
+
+    driver.answering = True
+    poller.read(driver, 10.0, "read failed")
+    assert not poller.blind
+
+
+def test_take_rejoined_names_motors_that_answer_after_silence_once() -> None:
+    poller, driver = _poller(), BusDriver()
+    now = _set_m2_aside(poller, driver)
+    driver.silent = {"m3"}
+    _read(poller, driver, now)  # m3 silent once: counted, not set aside
+    assert poller.take_rejoined() == ()
+
+    driver.silent = set()
+    now += RECHECK_INTERVAL_S
+    _read(poller, driver, now)
+
+    assert poller.take_rejoined() == ("m2", "m3")
+    _read(poller, driver, now + 0.1)
+    assert poller.take_rejoined() == ()

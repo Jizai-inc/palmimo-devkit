@@ -1063,10 +1063,26 @@ carry no axis at all, as when the request never reaches the bus; one warning is
 logged when the guard can see again. Nothing is actuated. The neck guard sets aside its own
 silent axes the same way, so its judgement is held while one is set aside.
 
+**Re-arming.** A servo that went silent because it lost power for a moment
+reboots with torque off and its gain and profile at their power-on defaults. So
+when an axis answers again after going silent, the next `step()` (never a
+`wake()` / `sleep()` / `return_to_neutral()` glide) re-arms it: if no hardware
+error is latched on it, it gets back the gain the robot last gave it, its goal
+is set to where it is, its profile is restored, and its torque is turned on, as
+`connect()` does. Gesture tuning is then reapplied. Every write is idempotent,
+so a servo that never rebooted is left as it was. An axis is not re-armed when a
+hardware error is latched on it (the servo shut itself down; reboot or
+power-cycle it), when the overload guard cut its torque, or when a failed
+`limp()` exit left it limp. Each attempt is recorded as a `ReArm` (frozen
+dataclass: `motor`, `armed`, `reason`, `at`) and logged.
+
 | Member | Returns |
 |--------|---------|
 | `robot.drain_watch_changes()` | `list[WatchChange]` of the leg and neck guards, oldest first; the call empties the queues, which keep the newest 64 each |
 | `robot.unwatched_motors` | Axes currently set aside, as a tuple; empty when all are watched |
+| `robot.blind_guards` | Names of the guards that cannot see the bus (3 axes set aside, or 3 empty reads), as a tuple; empty when every guard can. A blind guard judges nothing |
+| `robot.drain_rearms()` | `list[ReArm]`, oldest first; the call empties the queue, which keeps the newest 64 |
+| `robot.unarmed_motors` | Axes that answered again but were not re-armed, mapped to why, as a `dict[str, str]`; cleared by `connect()` |
 
 **Reaction.**
 
@@ -1541,6 +1557,10 @@ named motors (every motor when `None`). Both are optional capabilities; the
 defaults raise `NotImplementedError`. On `DynamixelDriver`, switching torque on
 (which `connect()` also does) raises `RuntimeError` naming any servo that has a
 hardware error latched, because torque does not take on a servo that has shut down.
+`ServoDriver.arm(motors)` puts the named motors back to work as `connect()` leaves
+them: goal at the present position, default profile, torque on (the gain is the
+caller's to write). It is an optional capability too, and what
+[re-arming](#overload-guard) uses.
 
 `ServoDriver.read_hardware_errors(motors=None)` returns a `HardwareErrorRead`
 (`palmimo_sdk.io.base.HardwareErrorRead`) in one sweep; `None` selects all motors.

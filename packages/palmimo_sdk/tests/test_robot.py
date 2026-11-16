@@ -22,11 +22,12 @@ from palmimo_sdk import (
     Speaker,
 )
 from palmimo_sdk.engine import MotionEngine
-from palmimo_sdk.io.base import ServoPositions, ServoTelemetry
+from palmimo_sdk.io.base import HardwareErrorRead, ServoPositions, ServoTelemetry
 from palmimo_sdk.kinematics import LEG_MOTORS, leg_motors
 from palmimo_sdk.overload import OVERLOAD_POLL_INTERVAL_S, SOFT_RETURN_GAIN
 from palmimo_sdk.rail import RAIL_CONSECUTIVE
 from palmimo_sdk.robot import NeckPitchDegrees, NeckPitchNormalized, NeckYawDegrees, NeckYawNormalized
+from palmimo_sdk.telemetry import RECHECK_INTERVAL_S
 from palmimo_sdk.thermal import NECK_COOL_C, NECK_HOT_C, NECK_MOTORS, NECK_STALE_S, NECK_WARM_C
 
 
@@ -2645,6 +2646,106 @@ def test_sleep_glide_records_a_trip_without_softening_the_arm() -> None:
     assert (trip.motor, trip.channel, trip.motion) == ("leg_6_yaw", "leg", "sleep")
     assert (SOFT_RETURN_GAIN, _ARM_6) not in _soft_gain_calls(driver)
     assert driver.torque_calls == []
+
+
+class _RearmDriver(_OverloadDriver):
+    """Logs, in order, every write a re-arm makes, and reports injected latched hardware errors."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.latched: dict[str, int] = {}
+        self.log: list[tuple[str, tuple[str, ...] | None]] = []
+        self.gains: list[tuple[int | None, tuple[str, ...] | None]] = []
+
+    def read_hardware_errors(self, motors: Sequence[str] | None = None) -> HardwareErrorRead:
+        asked = list(motors if motors is not None else LEG_MOTORS)
+        return HardwareErrorRead(errors={m: self.latched.get(m, 0) for m in asked if m not in self.silent})
+
+    def arm(self, motors: Sequence[str]) -> None:
+        self.log.append(("arm", tuple(motors)))
+
+    def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
+        super().set_position_p_gain(value, motors)
+        self.log.append(("gain", None if motors is None else tuple(motors)))
+        self.gains.append((value, None if motors is None else tuple(motors)))
+
+    def set_torque_enabled(self, enabled: bool, motors: Sequence[str] | None = None) -> None:
+        super().set_torque_enabled(enabled, motors)
+        self.log.append(("torque on" if enabled else "torque off", None if motors is None else tuple(motors)))
+
+
+def _silence_then_answer(robot: Palmimo, clock: _FakeClock, driver: _RearmDriver, motor: str) -> None:
+    """Leave *motor* silent long enough to be set aside, then let it answer its re-check."""
+    driver.silent = {motor}
+    _poll_steps(robot, clock, 12)
+    assert motor in robot.unwatched_motors
+    driver.silent = set()
+    driver.log.clear()
+    _poll_steps(robot, clock, round(RECHECK_INTERVAL_S / _POLL_DT) + 2)
+    assert motor not in robot.unwatched_motors
+
+
+def test_a_motor_that_answers_again_is_rearmed_holding_where_it_is() -> None:
+    driver = _RearmDriver()
+    robot, clock = _overload_robot(driver)
+
+    _silence_then_answer(robot, clock, driver, "leg_1_yaw")
+
+    one = ("leg_1_yaw",)
+    assert driver.log[:2] == [("gain", one), ("arm", one)]
+    (rearm,) = robot.drain_rearms()
+    assert (rearm.motor, rearm.armed, rearm.reason) == ("leg_1_yaw", True, "")
+    assert robot.unarmed_motors == {}
+
+
+def test_a_rearmed_motor_gets_back_the_gain_the_robot_last_gave_it() -> None:
+    driver = _RearmDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_p_gain(300)
+
+    _silence_then_answer(robot, clock, driver, "leg_1_yaw")
+
+    assert (300, ("leg_1_yaw",)) in driver.gains
+
+
+def test_a_motor_with_a_latched_hardware_error_is_not_rearmed() -> None:
+    driver = _RearmDriver()
+    driver.latched = {"leg_1_yaw": 0x20}
+    robot, clock = _overload_robot(driver)
+
+    _silence_then_answer(robot, clock, driver, "leg_1_yaw")
+
+    assert [c for c in driver.log if c[1] == ("leg_1_yaw",)] == []
+    (rearm,) = robot.drain_rearms()
+    assert not rearm.armed
+    assert "Overload" in robot.unarmed_motors["leg_1_yaw"]
+
+
+def test_an_arm_whose_torque_the_overload_guard_cut_is_not_rearmed() -> None:
+    driver = _RearmDriver(gain_raises=True)
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800}
+    _poll_steps(robot, clock, 3)
+    assert ("torque off", _ARM_6) in driver.log
+    driver.currents = {}
+
+    _silence_then_answer(robot, clock, driver, "leg_6_yaw")
+
+    assert not [c for c in driver.log if c[0] == "arm"]
+    assert "cut its torque" in robot.unarmed_motors["leg_6_yaw"]
+
+
+def test_blind_guards_names_the_leg_guard_once_the_bus_reads_empty() -> None:
+    driver = _RearmDriver()
+    robot, clock = _overload_robot(driver)
+    driver.silent = set(LEG_MOTORS)
+    _poll_steps(robot, clock, 20)
+    assert robot.blind_guards == ("leg telemetry guard",)
+
+    driver.silent = set()
+    _poll_steps(robot, clock, round(RECHECK_INTERVAL_S / _POLL_DT) * 3)
+    assert robot.blind_guards == ()
 
 
 def test_trip_frame_is_computed_but_not_written() -> None:

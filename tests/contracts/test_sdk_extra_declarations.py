@@ -79,6 +79,8 @@ MODULE_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk.overload": _NO_EXTRA,
     # A pure classifier over ServoTelemetry voltages (stdlib only).
     "palmimo_sdk.rail": _NO_EXTRA,
+    # Driver writes that put a rejoined servo back to work (stdlib only).
+    "palmimo_sdk.rearm": _NO_EXTRA,
     "palmimo_sdk.reservation": _NO_EXTRA,
     "palmimo_sdk.robot": _NO_EXTRA,
     # signal disposition and the park -- signal, contextlib, threading, time.
@@ -155,6 +157,7 @@ SYMBOL_EXTRAS: dict[str, frozenset[str]] = {
     "palmimo_sdk:RAIL_CONSECUTIVE": _NO_EXTRA,
     "palmimo_sdk:RAIL_UNDERVOLTAGE_V": _NO_EXTRA,
     "palmimo_sdk:RailTrip": _NO_EXTRA,
+    "palmimo_sdk:ReArm": _NO_EXTRA,
     "palmimo_sdk:WatchChange": _NO_EXTRA,
     "palmimo_sdk:Palmimo": _NO_EXTRA,
     "palmimo_sdk:ReservationSetupError": _NO_EXTRA,

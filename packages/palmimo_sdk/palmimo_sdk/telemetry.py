@@ -109,7 +109,8 @@ class TelemetryPoller:
         self._silent_counts: dict[str, int] = {}
         self._set_aside: list[str] = []
         self._recheck_due: float | None = None
-        self._restored: tuple[str, ...] = ()
+        self._rejoined: tuple[str, ...] = ()
+        self._rejoined_untaken: list[str] = []
         self._empty_reads = 0
         self._blind = False
         self._change_logs: dict[str, tuple[float, int]] = {}
@@ -121,9 +122,29 @@ class TelemetryPoller:
         return tuple(m for m in self._motors if m in self._set_aside)
 
     @property
-    def restored(self) -> tuple[str, ...]:
-        """Motors that rejoined the sweep on the latest :meth:`read`."""
-        return self._restored
+    def rejoined(self) -> tuple[str, ...]:
+        """Motors that answered on the latest :meth:`read` after going silent, set aside or not."""
+        return self._rejoined
+
+    @property
+    def guard_name(self) -> str:
+        """What the log calls the guard this poller reads for."""
+        return self._guard_name
+
+    @property
+    def blind(self) -> bool:
+        """Whether the guard sees nothing: too many motors set aside, reads keep coming back empty, or :attr:`disabled`."""
+        return self._blind or self._disabled
+
+    def take_rejoined(self) -> tuple[str, ...]:
+        """Return and clear every :attr:`rejoined` motor since the last call, across reads.
+
+        A motor that went silent may have rebooted with torque off, which is
+        what the caller re-arms it for.
+        """
+        rejoined = tuple(m for m in self._motors if m in self._rejoined_untaken)
+        self._rejoined_untaken.clear()
+        return rejoined
 
     @property
     def disabled(self) -> bool:
@@ -149,7 +170,7 @@ class TelemetryPoller:
                 exception is appended.
         """
         self._last_poll = now
-        self._restored = ()
+        self._rejoined = ()
         probe = self._pick_recheck(now)
         asked = [m for m in self._motors if m not in self._set_aside or m == probe]
         if not asked:
@@ -197,7 +218,8 @@ class TelemetryPoller:
             self._empty_reads += 1
         for motor in asked:
             if motor in answered:
-                self._silent_counts.pop(motor, None)
+                if self._silent_counts.pop(motor, None) is not None:
+                    self._rejoin(motor)
                 if motor == probe:
                     self._restore(motor, now)
             elif motor in telemetry.silent:
@@ -228,9 +250,14 @@ class TelemetryPoller:
         self._set_aside.remove(motor)
         # One answer suggests the bus came back as a whole, so the next set-aside motor is tried at once.
         self._recheck_due = now if self._set_aside else None
-        self._restored = (*self._restored, motor)
+        self._rejoin(motor)
         self.watch_changes.record(WatchChange(motor, self._guard_name, True, now))
         self._log_change(motor, now, "answered again; watching it")
+
+    def _rejoin(self, motor: str) -> None:
+        self._rejoined = (*self._rejoined, motor)
+        if motor not in self._rejoined_untaken:
+            self._rejoined_untaken.append(motor)
 
     def _log_change(self, motor: str, now: float, what: str) -> None:
         last, skipped = self._change_logs.get(motor, (None, 0))
@@ -283,7 +310,8 @@ class TelemetryPoller:
         self._silent_counts.clear()
         self._set_aside.clear()
         self._recheck_due = None
-        self._restored = ()
+        self._rejoined = ()
+        self._rejoined_untaken.clear()
         self._empty_reads = 0
         self._blind = False
         self._change_logs.clear()
