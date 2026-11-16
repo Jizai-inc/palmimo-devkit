@@ -253,8 +253,39 @@ def test_interrupt_reaps_the_killed_process(fake_popen: type[_FakePopen]) -> Non
 
 def test_interrupt_is_a_no_op_when_nothing_is_playing(fake_popen: type[_FakePopen]) -> None:
     playback = Playback()
-    playback.interrupt()  # must not raise
+    assert playback.interrupt() == (False, False)
     assert fake_popen.instances == []
+    playback.close()
+
+
+def test_interrupt_reports_queued_audio_and_a_recent_write(fake_popen: type[_FakePopen]) -> None:
+    fake_popen.write_delay = 0.2
+    playback = Playback()
+    playback.write(b"\x00\x00")
+    _wait_until(lambda: fake_popen.instances)
+    playback.write(b"\x01\x01")  # queued behind the busy writer
+    playback._last_write = time.monotonic()
+
+    result = playback.interrupt()
+
+    assert result.had_queued is True
+    assert result.recently_wrote is True
+    assert playback.interrupt().recently_wrote is False, "a second interrupt must not report the same audio"
+    playback.close()
+
+
+def test_interrupt_does_not_report_a_stale_write_on_the_live_process(fake_popen: type[_FakePopen]) -> None:
+    """One aplay lives for the whole session, so a live process alone is not 'still speaking'."""
+    playback = Playback()
+    playback.write(b"\x00\x00")
+    _wait_until(lambda: fake_popen.instances and fake_popen.instances[0].stdin.chunks)
+    assert playback._last_write is not None, "a completed write must record its time"
+    playback._last_write -= 5.0
+
+    result = playback.interrupt()
+
+    assert result == (False, False)
+    assert fake_popen.instances[0].killed is True
     playback.close()
 
 

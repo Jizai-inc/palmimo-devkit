@@ -374,7 +374,7 @@ async def _run(args: argparse.Namespace) -> int:
             playback = Playback(pitch, device=resolve_alsa_device(settings.speaker_device, kind="playback"))
             pacer = IdlePacer()
             bridge = ToolBridge(client, toolset, sleeping, log)
-            barge_in = BargeIn(playback, bridge, pacer)
+            barge_in = BargeIn(playback, bridge, pacer, sleeping, log)
             router = EventRouter(client, playback, barge_in, bridge, pacer, sleeping, usage, log)
             idle = IdleTicker(client, pacer, sleeping, idle_prompt, idle_tools, log)
             frames_service = FramePusher(client, frame, pacer, sleeping, args.frame_seconds, log)
