@@ -76,6 +76,7 @@ from starlette.responses import PlainTextResponse
 
 from palmimo_sdk import (
     FaceDisplay,
+    FaceDisplayError,
     FaceDisplayFirmwareError,
     HeadCamera,
     Palmimo,
@@ -824,7 +825,17 @@ def main(argv: list[str] | None = None) -> None:
             # -- so only connect when there is something to connect.
             if robot.has_connectable_resource:
                 robot.connect()
-            toolset = AgentToolSet(robot, include=include, exclude=exclude)
+            try:
+                toolset = AgentToolSet(robot, include=include, exclude=exclude)
+            except FaceDisplayFirmwareError:
+                raise
+            except FaceDisplayError as exc:
+                print(
+                    f"WARNING: display catalog unavailable; continuing without display assets: {exc}", file=sys.stderr
+                )
+                if display is not None:
+                    display.disconnect()
+                toolset = AgentToolSet(robot, include=include, exclude=exclude)
             server = build_mcp_server(toolset, log_tool_calls=args.log_tool_calls)
             if args.transport == "stdio":
                 anyio.run(_serve_stdio, server)

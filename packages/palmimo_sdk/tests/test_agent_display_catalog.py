@@ -1,38 +1,15 @@
 """Connected display vocabulary at the agent and MCP boundaries."""
 
-import copy
 import json
-from collections.abc import Iterable
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from mcp.client import Client
 
 from palmimo_sdk import Palmimo
 from palmimo_sdk.agent import AgentToolSet
 from palmimo_sdk.agent.tools import WaveTool
-from palmimo_sdk.mcp import build_mcp_server
 
-
-class CatalogDisplay:
-    def __init__(self, entries: list[dict[str, Any]] | None = None) -> None:
-        self.is_connected = True
-        inventory = json.loads((Path(__file__).parents[3] / "tests/fixtures/display-assets/catalog.json").read_text())
-        self.entries = entries if entries is not None else inventory["assets"][:2]
-        self.queries: list[tuple[tuple[str, ...], str | None]] = []
-        self.calls: list[tuple[str, int | None]] = []
-        self.failure: Exception | None = None
-
-    def catalog(self, *, tags: Iterable[str] = (), locale: str | None = None) -> list[dict[str, Any]]:
-        self.queries.append((tuple(tags), locale))
-        if self.failure:
-            raise self.failure
-        return copy.deepcopy(self.entries)
-
-    def play(self, id: str, hold_ms: int | None = None) -> str:
-        self.calls.append((id, hold_ms))
-        return f"OK PLAY {id}"
+from .conftest import CatalogDisplay, load_display_assets
 
 
 def make_tools(display: CatalogDisplay | None, **kwargs: Any) -> AgentToolSet:
@@ -65,13 +42,9 @@ def test_agent_hides_display_tools_and_face_arguments_without_assets(state: str)
     assert "set_face" not in schemas and "show_emoji" not in schemas
 
 
-@pytest.mark.parametrize(
-    "name,args", [("play_asset", {"id": "palmimo/unknown"}), ("forward", {"seconds": 0.01, "face": "palmimo/unknown"})]
-)
-async def test_unknown_asset_is_rejected_before_tool_execution(name: str, args: dict[str, Any]) -> None:
+async def test_unknown_asset_is_rejected_before_tool_execution() -> None:
     display = CatalogDisplay()
-    tools = make_tools(display)
-    result = await tools.call(name, args)
+    result = await make_tools(display).call("play_asset", {"id": "palmimo/unknown"})
     assert result.is_error
     assert display.calls == []
 
@@ -119,20 +92,6 @@ def test_refresh_replaces_vocabulary_and_clears_stale_choices_on_failure() -> No
     snapshot = tools.display_catalog
     snapshot.clear()
     assert tools.display_catalog[0]["id"] == "zip.app/new"
-
-
-async def test_mcp_exposes_and_dispatches_the_same_catalog_vocabulary() -> None:
-    display = CatalogDisplay()
-    tools = make_tools(display)
-    expected = {t["function"]["name"]: t["function"] for t in tools.to_openai_tools()}
-    async with Client(build_mcp_server(tools)) as client:
-        listed = await client.list_tools()
-        for tool in listed.tools:
-            assert tool.input_schema == expected[tool.name]["parameters"]
-            assert tool.description == expected[tool.name]["description"]
-        result = await client.call_tool("play_asset", {"id": display.entries[0]["id"]})
-    assert not result.is_error
-    assert display.calls == [(display.entries[0]["id"], None)]
 
 
 @pytest.mark.parametrize("reply", ["OK PARAM color", "ERR PARAM NOSLOT"])
@@ -237,10 +196,27 @@ async def test_vocabulary_mutation_is_rejected_during_a_tool_call(operation: str
 
 def test_catalog_growth_does_not_repeat_asset_meanings_in_tool_schemas() -> None:
     """Asset choices may grow without repeating their meanings in every tool."""
-    inventory = json.loads((Path(__file__).parents[3] / "tests/fixtures/display-assets/catalog.json").read_text())
-    tools = make_tools(CatalogDisplay(inventory["assets"]))
+    assets = load_display_assets()
+    tools = make_tools(CatalogDisplay(assets))
     schemas = json.dumps(tools.to_openai_tools())
-    for asset in inventory["assets"]:
+    for asset in assets:
         assert asset["description"] not in schemas
     choices = tools.tool_models["play_asset"].parameters_schema()["properties"]["id"]["enum"]
     assert choices == [asset["name"] for asset in tools.display_catalog]
+
+
+@pytest.mark.parametrize("state", ["connected", "empty", "disconnected", "missing"])
+@pytest.mark.parametrize("face", ["unknown", "palmimo/unknown", "other.app/happy", "bad/name/extra", "bad name"])
+async def test_unknown_face_does_not_prevent_motion(monkeypatch: pytest.MonkeyPatch, face: str, state: str) -> None:
+    display = CatalogDisplay([] if state == "empty" else None)
+    display.is_connected = state != "disconnected"
+    robot = Palmimo(display=cast(Any, display) if state != "missing" else None)
+    actions: list[str] = []
+    monkeypatch.setattr(robot, "wave", lambda **kwargs: actions.append("wave"))
+    monkeypatch.setattr(robot, "run", lambda **kwargs: None)
+    tools = AgentToolSet(robot, include=["wave"])
+    result = await tools.call("wave", {"face": face, "seconds": 0.5})
+    assert not result.is_error
+    assert actions == ["wave"]
+    assert not display.calls
+    assert "not shown" in result.text

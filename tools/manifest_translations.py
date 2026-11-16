@@ -1,9 +1,10 @@
-"""Validate optional display translations alongside a schema-1 app manifest."""
+"""Validate optional display translations alongside an app manifest."""
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 
@@ -11,7 +12,9 @@ MAX_TRANSLATIONS_BYTES = 65_536
 LOCALE_RE = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$")
 
 
-def load_translations(path: Path, env: set[str], params: set[str]) -> dict[str, dict[str, str]]:
+def load_translations(
+    path: Path, env: set[str], params: set[str], assets: Mapping[str, Mapping[str, str]] | None = None
+) -> dict[str, dict[str, str]]:
     """Reject invalid author input; older hosts ignore the companion file entirely."""
     companion = path.with_name(f"{path.name}.i18n.json")
     if companion.is_symlink():
@@ -34,6 +37,9 @@ def load_translations(path: Path, env: set[str], params: set[str]) -> dict[str, 
     if not isinstance(translations, dict) or not 1 <= len(translations) <= 32:
         raise ValueError("translations must contain 1-32 locales")
     keys = {"description"} | {f"env.{name}" for name in env} | {f"params.{name}" for name in params}
+    for name, slots in (assets or {}).items():
+        keys.add(f"assets.{name}")
+        keys.update(f"assets.{name}.params.{sid}" for sid in slots)
     for locale, messages in translations.items():
         if not LOCALE_RE.fullmatch(locale) or not isinstance(messages, dict):
             raise ValueError("translation locale must be a lowercase language tag with a message object")

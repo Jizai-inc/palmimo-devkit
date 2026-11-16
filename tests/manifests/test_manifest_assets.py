@@ -165,3 +165,20 @@ def test_manifest_rejects_unsupported_schema(app: Path, schema: str) -> None:
     path.write_text(BASE.format(schema=schema))
     with pytest.raises(ManifestError):
         load_manifest(path)
+
+
+@pytest.mark.parametrize(
+    "key", ["assets.welcome", "assets.welcome.params.eye_color", "assets.typo", "assets.welcome.params.typo"]
+)
+def test_asset_translations_follow_validated_declarations(app: Path, key: str) -> None:
+    path = app / "palmimo.toml"
+    path.write_text(BASE.format(schema=2) + ASSET + PARAM)
+    messages = {key: "Localized asset text"}
+    path.with_name("palmimo.toml.i18n.json").write_text(json.dumps({"schema": 1, "translations": {"ja": messages}}))
+    if "typo" in key:
+        with pytest.raises(ValueError):
+            load_manifest(path)
+    else:
+        assert load_manifest(path).translations["ja"] == messages
+        catalog = build_catalog("examples-v0.2.0", "a" * 40, root=app.parents[1])
+        assert catalog["apps"][0]["translations"]["ja"] == messages

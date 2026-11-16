@@ -895,3 +895,35 @@ def test_set_expression_raises_on_firmware_rejection(monkeypatch: pytest.MonkeyP
         with pytest.warns(DeprecationWarning), pytest.raises(FaceDisplayError):
             face.set_expression("HAPPY")
         assert face.is_connected
+
+
+def test_catalog_skips_assets_removed_between_list_and_info(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    standard = tmp_path / "catalog.json"
+    standard.write_text(
+        json.dumps(
+            {"schema": 1, "assets": [{"id": f"palmimo/{name}", "description": name} for name in ("gone", "happy")]}
+        )
+    )
+    monkeypatch.setattr("palmimo_sdk.io.display.STANDARD_CATALOG_PATH", standard)
+    monkeypatch.delenv("PALMIMO_APP_ID", raising=False)
+    fakes: list[FakeSerial] = []
+    with FaceDisplay(port="fake", serial_factory=_factory(fakes)) as face:
+
+        def respond(command: str) -> str:
+            if command == "ASSET LIST":
+                return "OK ASSET LIST next=- palmimo/gone:image:1:1234abcd palmimo/happy:image:1:1234abcd"
+            if command == "ASSET INFO palmimo/gone":
+                return "ERR ASSET UNKNOWN"
+            if command == "ASSET INFO palmimo/happy":
+                return "OK ASSET INFO palmimo/happy kind=image bytes=1 crc32=1234abcd next=- params=-"
+            if command == "PING":
+                return "PONG"
+            return "OK PLAY palmimo/happy"
+
+        fakes[0].auto = respond
+        assert [entry["id"] for entry in face.catalog()] == ["palmimo/happy"]
+        assert face.is_connected and face.ping()
+        assert face.play("happy") == "OK PLAY palmimo/happy"
+        assert any(record.levelname == "WARNING" for record in caplog.records)

@@ -64,9 +64,13 @@ def bind_display_tool(
             value = resolve_asset_name(
                 value, os.environ.get("PALMIMO_APP_ID"), lambda: available, allow_aliases=info.field_name == "face"
             )
-        except LookupError as error:
+        except (LookupError, ValueError) as error:
+            if info.field_name == "face":
+                return value
             raise ValueError(str(error)) from error
         if value not in ids:
+            if info.field_name == "face":
+                return value
             raise ValueError("Asset is outside the connected display catalog")
         return value
 

@@ -473,7 +473,13 @@ class FaceDisplay:
         index = 0
         while True:
             prefix = f"OK ASSET INFO {id} "
-            reply = self._command(f"ASSET INFO {id}" + (f" {index}" if index else ""), prefix)
+            try:
+                reply = self._command(f"ASSET INFO {id}" + (f" {index}" if index else ""), prefix)
+            except _FirmwareReplyError as exc:
+                if str(exc) != "ERR ASSET UNKNOWN":
+                    raise
+                logger.warning("Ignoring display asset removed before metadata was read: %s", id)
+                return None
             fields = self._fields(reply[len(prefix) :])
             if set(fields) != {"kind", "bytes", "crc32", "next", "params"}:
                 self._protocol_error("Invalid ASSET INFO fields")
