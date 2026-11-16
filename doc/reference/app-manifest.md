@@ -50,8 +50,9 @@ two need different env vars and devices.
 
 A manifest may have a companion JSON file named `<manifest filename>.i18n.json`:
 `palmimo.toml.i18n.json` or `palmimo.realtime.toml.i18n.json`, for example.
-It contains display text only. The manifest itself remains schema 1 and older
-hosts ignore the companion, retaining the original descriptions.
+It contains display text only and can accompany a schema 1 or schema 2 manifest.
+Asset translations require schema 2 asset declarations. The companion file uses
+its own schema 1; older hosts ignore it, retaining the original descriptions.
 
 ```json
 {

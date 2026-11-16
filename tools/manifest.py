@@ -241,7 +241,9 @@ def load_manifest(path: Path) -> AppManifest:
         devices=tuple(devices),
         env=env,
         params=params,
-        translations=load_translations(path, set(env), set(params)),
+        translations=load_translations(
+            path, set(env), set(params), {name: asset.params for name, asset in assets.items()}
+        ),
         schema=raw["schema"],
         assets=assets,
     )

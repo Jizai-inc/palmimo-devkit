@@ -9,6 +9,8 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 
+ASSET_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}")
+
 EXPRESSION_ASSETS = {
     "happy": "happy",
     "smile": "happy",
@@ -42,7 +44,7 @@ def resolve_asset_name(
     normalized = name.strip().lower()
     if "/" in normalized:
         return normalized
-    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,39}", normalized):
+    if not ASSET_NAME_RE.fullmatch(normalized):
         raise ValueError("Expected a display name or catalog asset id")
     available = asset_ids()
     ids = available if isinstance(available, (set, frozenset)) else set(available)

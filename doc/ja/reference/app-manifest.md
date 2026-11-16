@@ -34,7 +34,7 @@ description = "Disable the head camera video feed."
 
 ## 表示用の翻訳
 
-マニフェストには `<manifest filename>.i18n.json` という名前の補助 JSON ファイル（`palmimo.toml.i18n.json` や `palmimo.realtime.toml.i18n.json`）を添付できます。表示用の文言だけを含みます。マニフェスト自体は schema 1 のまま利用でき、古いホストは補助ファイルを無視して元の説明を使います。
+マニフェストには `<manifest filename>.i18n.json` という名前の補助 JSON ファイル（`palmimo.toml.i18n.json` や `palmimo.realtime.toml.i18n.json`）を添付できます。表示用の文言だけを含み、schema 1 と schema 2 のどちらのマニフェストにも添付できます。アセットの翻訳には schema 2 のアセット宣言が必要です。補助ファイル自身の schema は 1 で、古いホストは補助ファイルを無視して元の説明を使います。
 
 ```json
 {
