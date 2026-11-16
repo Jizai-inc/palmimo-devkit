@@ -237,7 +237,10 @@ async def test_vocabulary_mutation_is_rejected_during_a_tool_call(operation: str
 
 def test_catalog_growth_does_not_multiply_tool_schema_cost() -> None:
     """Without this, every motion tool repeats the entire growing asset catalog."""
-    inventory = json.loads((Path(__file__).parents[3] / "tests/fixtures/display-assets/catalog.json").read_text())
+    entries = [
+        {"id": f"example/face_{index:03}", "description": f"Display reaction {index}.", "tags": ["face"], "params": {}}
+        for index in range(100)
+    ]
     small = json.dumps(make_tools(CatalogDisplay()).to_openai_tools())
-    large = json.dumps(make_tools(CatalogDisplay(inventory["assets"])).to_openai_tools())
+    large = json.dumps(make_tools(CatalogDisplay(entries)).to_openai_tools())
     assert len(large) - len(small) < 8000
