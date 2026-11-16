@@ -262,8 +262,29 @@ def test_subscribers_receive_the_same_chunk_sequence() -> None:
         ms.close()
 
 
+class _HoldWhenDrainedStream(_FakeInputStream):
+    """Holds read() while nothing is pushed, instead of producing filler, until release().
+
+    For a test that must know exactly what reached a subscription: filler
+    arriving after the pushed chunks would displace them from a bounded queue.
+    """
+
+    def __init__(self, *args: Any) -> None:
+        super().__init__(*args)
+        self._released = threading.Event()
+
+    def release(self) -> None:
+        self._released.set()
+
+    def read(self, n: int) -> tuple[np.ndarray, bool]:
+        while self._queue.empty() and not self._released.wait(0.005):
+            pass
+        return super().read(n)
+
+
 def test_full_subscription_queue_drops_oldest_and_keeps_latest() -> None:
-    ms, stream, _factory = _mic_stream(device_key="k-drop")
+    stream = _HoldWhenDrainedStream(16000, 1, "int16", 512, None)
+    ms = MicStream(input_stream_factory=_RecordingFactory(stream), processors=[], device_key="k-drop")
     sub = ms.subscribe(maxsize=2)
     ms.open()
     try:
@@ -271,22 +292,17 @@ def test_full_subscription_queue_drops_oldest_and_keeps_latest() -> None:
             stream.push_chunk([v] * 512)
 
         assert _wait_until(lambda: sub.dropped >= 3)
-        # Drain synchronously (no timeout wait) to minimize the race window
-        # against the background thread's continuing filler production —
-        # whatever real (positive) markers remain must end with the newest.
         remaining = []
         while True:
             try:
                 item = sub._queue.get_nowait()
             except queue.Empty:
                 break
-            if item is not None:
-                remaining.append(int(item[0]))
-        positive = [v for v in remaining if v > 0]
-        assert positive
-        assert positive[-1] == 5
-        assert sub.dropped >= 3
+            remaining.append(int(item[0]))
+        assert remaining == [4, 5]
+        assert sub.dropped == 3
     finally:
+        stream.release()
         ms.close()
 
 
