@@ -48,7 +48,6 @@ from palmimo_sdk.robot import MotionCancelled
 
 from .receiver import PalmimoLike
 from .tools import (
-    _NO_SERVO_NOTE,
     BackwardTool,
     BodyTiltTool,
     BowTool,
@@ -76,6 +75,9 @@ from .tools import (
     WaveBothTool,
     WaveTool,
 )
+
+
+_NO_SERVO_NOTE = "no servo bus connected; nothing moved"
 
 
 # Every built-in tool, keyed by its LLM-facing name. The single source of

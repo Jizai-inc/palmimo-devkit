@@ -277,9 +277,6 @@ def _ran(verb: str, seconds: float) -> ToolResult:
     return ToolResult(text=f"{verb} for {seconds}s")
 
 
-_NO_SERVO_NOTE = "no servo bus connected; nothing moved"
-
-
 # ======================================================================
 # EXPRESSIVE MIXIN (talk / show a face while moving)
 # ======================================================================
