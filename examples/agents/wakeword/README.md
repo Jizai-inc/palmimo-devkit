@@ -168,9 +168,3 @@ and a dropped-chunk count
 is logged when the queue actually lost audio. In practice this means a
 command spoken while the robot is still replying to the previous one will be
 missed — wait for the reply to finish before speaking again.
-
-Display-capable extensions use the SDK toolset's connected catalog: `play_asset`
-and motion `face` choices contain only available asset IDs and localized
-descriptions. This example attaches no display by default, so those choices are
-omitted. Its language setting also selects display-description translations if a
-display is attached by an extension.

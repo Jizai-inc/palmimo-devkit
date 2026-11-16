@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from palmimo_companion_agent.pipeline.history import (
     History,
     KeyboardEvent,
@@ -96,24 +94,30 @@ def test_recent_moves_hint_only_considers_the_last_eight_tool_calls() -> None:
     assert "ancient_tool" not in hint
 
 
-def test_recent_moves_hint_uses_only_current_catalog_ids() -> None:
+def test_recent_moves_hint_reports_recent_faces() -> None:
     history = History()
-    history.add(_tool_event("play_asset", {"id": "zip.test/used"}))
-    history.add(_tool_event("play_asset", {"id": "zip.test/absent"}))
-    catalog = [{"id": id, "description": "Test"} for id in ("zip.test/used", "zip.test/fresh")]
-    hint = recent_moves_hint(history, catalog)
+    history.add(_tool_event("set_face", {"name": "HAPPY"}))
+    hint = recent_moves_hint(history)
     assert hint is not None
-    assert "zip.test/used" in hint and "zip.test/fresh" in hint
-    assert "zip.test/absent" not in hint
+    assert "HAPPY" in hint
+    # HAPPY was just used, so it must not be re-suggested as a fresh pick.
+    assert "Faces to try" not in hint or "HAPPY" not in hint.split("Faces to try:")[1].split(".")[0]
 
 
-@pytest.mark.parametrize("present", [False, True])
-def test_recent_moves_hint_suggests_display_only_when_available(present: bool) -> None:
+def test_recent_moves_hint_reports_recent_emoji() -> None:
+    history = History()
+    history.add(_tool_event("show_emoji", {"name": "SUN", "seconds": 3.0}))
+    hint = recent_moves_hint(history)
+    assert hint is not None
+    assert "SUN" in hint
+
+
+def test_recent_moves_hint_suggests_display_when_none_used_recently() -> None:
     history = History()
     history.add(_tool_event("forward"))
-    hint = recent_moves_hint(history, [{"id": "zip.test/asset", "description": "Test"}] if present else [])
+    hint = recent_moves_hint(history)
     assert hint is not None
-    assert ("play_asset" in hint) == present
+    assert "set_face" in hint or "show_emoji" in hint
 
 
 _NUDGE = "[continued] test nudge"

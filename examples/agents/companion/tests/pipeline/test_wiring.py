@@ -59,8 +59,6 @@ class FakeDriver:
 class FakePeripheral:
     """Generic stand-in for FaceDisplay / Speaker / HeadCamera / MicStream."""
 
-    is_connected = False
-
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.args = args
         self.kwargs = kwargs
@@ -356,7 +354,7 @@ def _lifecycle_runtime(conductor: FakeConductor, palmimo: Palmimo, *, event_log:
     return Runtime(
         conductor=cast(Conductor, conductor),
         palmimo=palmimo,
-        toolset=AgentToolSet(palmimo),
+        toolset=cast(AgentToolSet, None),
         history=cast(History, None),
         event_log=event_log,
     )
