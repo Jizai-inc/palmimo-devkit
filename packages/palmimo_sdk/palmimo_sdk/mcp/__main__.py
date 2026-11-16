@@ -472,7 +472,7 @@ class _ShutdownRequest:
             self.signal = signal.Signals(signum)
 
     def seconds_since(self) -> float | None:
-        """Seconds since the first terminating signal, or ``None`` if none arrived."""
+        """Seconds since the first stop signal, or ``None`` if none arrived."""
         return None if self._at is None else time.monotonic() - self._at
 
 
@@ -494,8 +494,8 @@ def _stop_signals_raise_keyboard_interrupt() -> Iterator[_ShutdownRequest]:
     """Make :data:`_STOP_SIGNALS` raise ``KeyboardInterrupt`` from their handler.
 
     Without this the robot is left torque-enabled whenever the server is asked
-    to stop by signal rather than by Ctrl-C: Python's default disposition for
-    SIGTERM/SIGHUP terminates the interpreter without unwinding, so no
+    to stop by SIGTERM or SIGHUP: Python's default disposition for them
+    terminates the interpreter without unwinding, so no
     ``finally`` runs and nothing ever parks. That is the *common* path, not an
     edge case -- an MCP client shutting down its stdio server sends SIGTERM,
     as does ``systemd`` and a plain ``kill`` -- and a robot whose neck servos
@@ -510,8 +510,8 @@ def _stop_signals_raise_keyboard_interrupt() -> Iterator[_ShutdownRequest]:
     it finds Python's default handler, which is why installing this one opts
     out), and on the stdio transport that cancellation never completes while
     the peer holds stdin open: the transport reads stdin on a worker thread
-    that cannot be cancelled, and the cancellation waits for it. Ctrl-C in a
-    terminal therefore never reached the park. The cost is that an in-flight
+    that cannot be cancelled, and the cancellation waits for it, so the park
+    would never be reached. The cost is that an in-flight
     tool call is no longer drained by :mod:`palmimo_sdk.mcp.server`'s shield
     loop on Ctrl-C, just as it never was on SIGTERM -- a drain would need that
     same cooperative path.
@@ -554,7 +554,7 @@ def _stop_signals_raise_keyboard_interrupt() -> Iterator[_ShutdownRequest]:
     if threading.current_thread() is not threading.main_thread():
         print(
             "WARNING: not running on the main thread -- cannot install shutdown signal handlers. "
-            "A termination signal (SIGTERM/SIGHUP) will kill this process without releasing servo "
+            "A stop signal (SIGTERM/SIGHUP/SIGINT) can end or hang this process without releasing servo "
             "torque; the servos will stay energised and heat up.",
             file=sys.stderr,
         )
@@ -584,6 +584,8 @@ def _shutdown_signals_ignored() -> Iterator[None]:
     closing stdin, waiting ``PROCESS_TERMINATION_TIMEOUT`` (2.0s), then sending
     SIGTERM. The park is a ~2.5s neck ramp plus the leg return, so on an
     ordinary client disconnect the SIGTERM lands *during* the park, every time.
+    SIGINT is covered too: an operator mashing Ctrl-C while the robot eases
+    down is the likeliest source of a repeat signal there.
 
     ``SIG_IGN`` rather than :func:`signal.pthread_sigmask`: a blocked signal
     stays pending and fires the moment it is unblocked, which would just move

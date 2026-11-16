@@ -5,6 +5,7 @@ import base64
 import contextlib
 import json
 import logging
+import select
 import signal
 import subprocess
 import sys
@@ -1197,8 +1198,7 @@ def test_server_process_cuts_servo_torque_and_exits_on_a_stop_signal_while_stdin
     The stdio transport reads stdin on a worker thread that nothing can cancel,
     and a peer that keeps stdin open (a terminal, ``kill``, systemd) leaves it
     blocked there. The signal is sent only after an ``initialize`` round trip,
-    so the reader is back in that read when it lands -- the state that left
-    SIGINT unparked and every signal unable to exit.
+    so the reader is back in that read when it lands.
     """
     sig = signal.Signals[name]
     exit_codes: list[int | None] = []
@@ -1208,6 +1208,8 @@ def test_server_process_cuts_servo_torque_and_exits_on_a_stop_signal_while_stdin
         assert process.stdout is not None
         process.stdin.write(_INITIALIZE_REQUEST + "\n")
         process.stdin.flush()
+        ready, _, _ = select.select([process.stdout], [], [], 30)
+        assert ready, "the server never answered initialize"
         assert '"id":1' in process.stdout.readline().replace(" ", "")
         time.sleep(0.5)  # let the reader get back into its blocking read
         process.send_signal(sig)
