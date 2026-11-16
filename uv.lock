@@ -959,7 +959,7 @@ version = "0.1.5"
 source = { virtual = "." }
 dependencies = [
     { name = "dynamixel-sdk" },
-    { name = "palmimo-sdk", extra = ["face", "hardware"] },
+    { name = "palmimo-sdk", extra = ["hardware"] },
     { name = "tqdm" },
 ]
 
@@ -990,7 +990,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "dynamixel-sdk", specifier = ">=3.7.31" },
-    { name = "palmimo-sdk", extras = ["face", "hardware"], editable = "packages/palmimo_sdk" },
+    { name = "palmimo-sdk", extras = ["hardware"], editable = "packages/palmimo_sdk" },
     { name = "palmimo-sdk", extras = ["mcp"], marker = "extra == 'mcp'", editable = "packages/palmimo_sdk" },
     { name = "palmimo-sdk", extras = ["vision"], marker = "extra == 'vision'", editable = "packages/palmimo_sdk" },
     { name = "palmimo-sdk", extras = ["voice"], marker = "extra == 'voice'", editable = "packages/palmimo_sdk" },
