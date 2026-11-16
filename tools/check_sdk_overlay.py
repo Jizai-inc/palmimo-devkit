@@ -15,7 +15,7 @@ def allows_sdk_overlay(dependencies: Sequence[str], sdk_version: str) -> bool:
     for dependency in dependencies:
         requirement = Requirement(dependency)
         if canonicalize_name(requirement.name) == "palmimo-sdk":
-            return Version(sdk_version) in requirement.specifier
+            return requirement.specifier.contains(Version(sdk_version), prereleases=True)
     return False
 
 
@@ -26,6 +26,13 @@ def main() -> None:
     sdk = tomllib.loads(sdk_path.read_text())["project"]
     enabled = allows_sdk_overlay(example.get("dependencies", []), sdk["version"])
     print(f"enabled={str(enabled).lower()}")
+    if not enabled:
+        print(
+            f"::warning::Skipping workspace SDK overlay: palmimo-sdk {sdk['version']} is not accepted "
+            "by the example's SDK dependency range, or no SDK dependency is declared. "
+            "Locked-SDK mypy and pytest still run.",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":

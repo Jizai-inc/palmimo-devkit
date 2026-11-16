@@ -106,6 +106,8 @@ jobs:
       - run: uv sync --frozen --dev --python 3.12
       - run: uv run --frozen ruff check .
       - run: uv run --frozen ruff format --check .
+      - name: Type-check the locked SDK environment
+        run: uv run --frozen --no-sync python -m mypy
       - name: Check workspace SDK compatibility
         id: sdk-overlay
         run: >-
