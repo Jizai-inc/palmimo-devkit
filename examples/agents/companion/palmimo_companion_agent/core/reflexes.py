@@ -60,6 +60,10 @@ _NAME_CALL_LOOK_SECONDS = 3.0
 _FACE_LOOK_SECONDS = 3.0
 #: How long look_at_face tolerates losing the face before giving up early.
 _FACE_LOST_GRACE_SECONDS = 1.0
+#: The suffix ``AgentToolSet.call()`` puts on a ``drives_servos`` tool's result
+#: when the robot has no servo bus: the tool ran, but nothing moved, so the
+#: reflex reports no wave or turn. The MCP guide documents this exact string.
+_NO_SERVO_BUS_SUFFIX = "(no servo bus connected; nothing moved)"
 
 #: Per-kind cooldown (seconds): a reflex that just fired won't fire again for
 #: this long, even once the robot is free -- a continuously-waving hand (or a
@@ -133,8 +137,9 @@ class ReflexEngine:
             _log.warning("reflex for kind=%s failed", detection.kind, exc_info=True)
 
     async def _on_wave(self, detection: Detection) -> None:
-        await self._toolset.call("wave_both", {"face": _WAVE_FACE, "reason": "reflex: waving back"})
-        self._notify(f"[reflex] waved back at {detection.summary}.")
+        result = await self._toolset.call("wave_both", {"face": _WAVE_FACE, "reason": "reflex: waving back"})
+        if not result.text.endswith(_NO_SERVO_BUS_SUFFIX):
+            self._notify(f"[reflex] waved back at {detection.summary}.")
 
     async def _on_name_call(self, detection: Detection) -> None:
         """Answer a call: show a face at once, then look for whoever called.
@@ -155,7 +160,7 @@ class ReflexEngine:
                 "reason": "reflex: looking for whoever called",
             },
         )
-        if LOOK_AT_FACE_SEEN_MARK in result.text:
+        if LOOK_AT_FACE_SEEN_MARK in result.text and not result.text.endswith(_NO_SERVO_BUS_SUFFIX):
             self._notify("[reflex] found the caller and turned to them.")
 
     async def _on_face(self, detection: Detection) -> None:
@@ -167,7 +172,7 @@ class ReflexEngine:
                 "reason": "reflex: noticed a face",
             },
         )
-        if LOOK_AT_FACE_SEEN_MARK in result.text:
+        if LOOK_AT_FACE_SEEN_MARK in result.text and not result.text.endswith(_NO_SERVO_BUS_SUFFIX):
             self._notify(f"[reflex] noticed and looked at a face ({detection.summary}).")
 
 
