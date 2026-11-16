@@ -112,7 +112,9 @@ command is accepted.
 
 `ASSET READ <id>` reverses the direction: the firmware sends
 `OK XFER SEND <bytes> <crc32>`, then the raw bytes, then the final
-`OK ASSET READ <id>`. The host reads all of it before its next command.
+`OK ASSET READ <id>`. The host reads all of it before its next command:
+the firmware keeps drawing and handling touch while it sends, and discards
+without a reply any line that arrives before the final reply.
 
 A `STREAM` frame is centred on the panel and scaled up by
 `floor(338 / max(w, h))`. The firmware keeps the frame being received in
