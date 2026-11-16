@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import contextlib
+import json
 import logging
 import signal
 import subprocess
@@ -886,13 +887,7 @@ def test_main_parks_the_robot_when_sigterm_arrives_during_http_serving(
 
 
 def test_main_installs_a_raising_sigterm_handler_while_serving(monkeypatch: pytest.MonkeyPatch) -> None:
-    """While serving, SIGTERM must reach a handler that raises, not the terminate-outright default.
-
-    Asserts the disposition only. It is deliberately not asserted that this
-    equals what SIGINT does inside the event loop: asyncio gives SIGINT a
-    cooperative cancellation that can drain an in-flight tool call, which
-    raising from a handler does not reproduce.
-    """
+    """While serving, SIGTERM must reach a handler that raises, not the terminate-outright default."""
     _patch_all_peripheral_builders(monkeypatch)
     observed: list[Any] = []
 
@@ -1114,7 +1109,7 @@ if mode == "self-sigterm":
     # on unfixed code the platform default, which terminates the process.
     mcp_main.anyio.run = lambda func, *args: signal.raise_signal(signal.SIGTERM)
 
-mcp_main.main([])
+mcp_main._exit_as_signalled(mcp_main.main([]))
 '''
 
 
@@ -1182,16 +1177,50 @@ def test_server_process_cuts_servo_torque_on_sigterm_at_the_default_disposition(
     assert marker.exists(), "SIGTERM killed the server without releasing servo torque"
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Windows cannot deliver a real SIGTERM to another process")
-def test_server_process_cuts_servo_torque_on_sigterm_from_another_process(tmp_path: Any) -> None:
-    """The same, delivered the way an MCP client / systemd / kill actually delivers it."""
+_INITIALIZE_REQUEST = json.dumps(
+    {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}},
+    }
+)
 
-    def send_sigterm(process: Any) -> None:
-        process.send_signal(signal.SIGTERM)
 
-    marker = _run_marker_server(tmp_path, send_sigterm)
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows cannot deliver a real POSIX signal to another process")
+@pytest.mark.parametrize("name", ["SIGTERM", "SIGHUP", "SIGINT"])
+def test_server_process_cuts_servo_torque_and_exits_on_a_stop_signal_while_stdin_stays_open(
+    tmp_path: Any, name: str
+) -> None:
+    """A stop signal must park and end the process even though its stdin reader is mid-read.
 
-    assert marker.exists(), "SIGTERM killed the server without releasing servo torque"
+    The stdio transport reads stdin on a worker thread that nothing can cancel,
+    and a peer that keeps stdin open (a terminal, ``kill``, systemd) leaves it
+    blocked there. The signal is sent only after an ``initialize`` round trip,
+    so the reader is back in that read when it lands -- the state that left
+    SIGINT unparked and every signal unable to exit.
+    """
+    sig = signal.Signals[name]
+    exit_codes: list[int | None] = []
+
+    def initialize_then_signal(process: Any) -> None:
+        assert process.stdin is not None
+        assert process.stdout is not None
+        process.stdin.write(_INITIALIZE_REQUEST + "\n")
+        process.stdin.flush()
+        assert '"id":1' in process.stdout.readline().replace(" ", "")
+        time.sleep(0.5)  # let the reader get back into its blocking read
+        process.send_signal(sig)
+        try:
+            exit_codes.append(process.wait(timeout=10))
+        except subprocess.TimeoutExpired:
+            exit_codes.append(None)
+            process.kill()
+
+    marker = _run_marker_server(tmp_path, initialize_then_signal)
+
+    assert marker.exists(), f"{name} left the server without releasing servo torque"
+    assert exit_codes == [-sig], f"{name} did not end the process the way the signal asks"
 
 
 # ----------------------------------------------------------------------
@@ -1345,9 +1374,9 @@ def test_shutdown_request_clock_starts_at_the_first_signal_not_the_last(
     monkeypatch.setattr(mcp_main.time, "monotonic", lambda: now[0])
     shutdown = mcp_main._ShutdownRequest()
 
-    shutdown.record()
+    shutdown.record(signal.SIGTERM)
     now[0] = 105.0
-    shutdown.record()
+    shutdown.record(signal.SIGHUP)
     now[0] = 110.0
 
     assert shutdown.seconds_since() == 10.0, "the repeat signal restarted the shutdown clock"

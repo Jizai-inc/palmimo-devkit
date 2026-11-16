@@ -32,11 +32,13 @@ with nothing left to close it. Peripheral construction through serving then
 runs inside one ``try``/``finally``, so whatever a probe opened is parked and
 closed whether serving ends normally, is interrupted, or an unexpected
 exception propagates -- with
-:func:`_terminating_signals_raise_keyboard_interrupt` making a termination
-signal reach that ``finally`` as an exception at all, and
+:func:`_stop_signals_raise_keyboard_interrupt` making a stop signal reach
+that ``finally`` as an exception at all, and
 :func:`_shutdown_signals_ignored` keeping the park from being cut short by
 the next one. A hard kill (SIGKILL) or power loss runs no code here and still
-leaves the servos energised.
+leaves the servos energised. Run as a script, the process then ends by the
+signal that stopped it (:func:`_exit_as_signalled`) rather than waiting on
+the stdio transport's stdin reader.
 
 Shutdown is on a clock, because the client that started it escalates to that
 hard kill: see :data:`_SHUTDOWN_BUDGET_SECONDS`. Nothing here shortens the
@@ -307,7 +309,7 @@ def _tool_call_logging(detail: str) -> Iterator[None]:
     calling :func:`main` does not quietly turn logging on for everything else
     in the process. The previous level, propagation, and handler set are
     restored on the way out for the same reason
-    :func:`_terminating_signals_raise_keyboard_interrupt` restores signal
+    :func:`_stop_signals_raise_keyboard_interrupt` restores signal
     handlers: ``main()`` is an ordinary callable that the test suite runs
     in-process, and it must not leave process-wide state behind it.
 
@@ -453,7 +455,7 @@ _SHUTDOWN_BUDGET_SECONDS = 4.0
 
 
 class _ShutdownRequest:
-    """Whether a terminating signal has arrived, and how long ago.
+    """Which stop signal arrived first, and how long ago.
 
     The clock started by :meth:`record` is what :func:`_park_and_close`
     measures the shutdown against :data:`_SHUTDOWN_BUDGET_SECONDS` with.
@@ -461,32 +463,35 @@ class _ShutdownRequest:
 
     def __init__(self) -> None:
         self._at: float | None = None
+        self.signal: signal.Signals | None = None
 
-    def record(self) -> None:
-        """Note the first terminating signal; a later one does not move the clock."""
+    def record(self, signum: int) -> None:
+        """Note the first stop signal; a later one moves neither the clock nor :attr:`signal`."""
         if self._at is None:
             self._at = time.monotonic()
+            self.signal = signal.Signals(signum)
 
     def seconds_since(self) -> float | None:
         """Seconds since the first terminating signal, or ``None`` if none arrived."""
         return None if self._at is None else time.monotonic() - self._at
 
 
-# SIGINT is deliberately absent: Python already delivers it as a
-# KeyboardInterrupt, which is the exact behavior the handler below installs for
-# the rest. SIGHUP is included because losing the controlling terminal (closing
-# the window, or an ssh session dropping) is a routine way for this server to
-# end -- the robot is normally driven over ssh -- and its default disposition
-# kills the process just as silently as SIGTERM's. It is looked up by name
-# because Windows has no SIGHUP.
-_TERMINATING_SIGNALS: tuple[signal.Signals, ...] = tuple(
-    getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)
+# SIGHUP is included because losing the controlling terminal (closing the
+# window, or an ssh session dropping) is a routine way for this server to end
+# -- the robot is normally driven over ssh -- and its default disposition kills
+# the process just as silently as SIGTERM's. It is looked up by name because
+# Windows has no SIGHUP. SIGINT is included because asyncio otherwise turns it
+# into a cooperative cancellation, which the stdio transport cannot complete --
+# see _stop_signals_raise_keyboard_interrupt.
+_STOP_SIGNALS: tuple[signal.Signals, ...] = (
+    *(getattr(signal, name) for name in ("SIGTERM", "SIGHUP") if hasattr(signal, name)),
+    signal.SIGINT,
 )
 
 
 @contextlib.contextmanager
-def _terminating_signals_raise_keyboard_interrupt() -> Iterator[_ShutdownRequest]:
-    """Make :data:`_TERMINATING_SIGNALS` raise instead of killing the process outright.
+def _stop_signals_raise_keyboard_interrupt() -> Iterator[_ShutdownRequest]:
+    """Make :data:`_STOP_SIGNALS` raise ``KeyboardInterrupt`` from their handler.
 
     Without this the robot is left torque-enabled whenever the server is asked
     to stop by signal rather than by Ctrl-C: Python's default disposition for
@@ -496,16 +501,20 @@ def _terminating_signals_raise_keyboard_interrupt() -> Iterator[_ShutdownRequest
     as does ``systemd`` and a plain ``kill`` -- and a robot whose neck servos
     stay energised holds the head up against gravity and heats fast.
 
-    Raising ``KeyboardInterrupt`` reuses the unwind Ctrl-C already gets *in
-    this CLI* -- the caller's ``finally`` -- rather than adding a second
-    shutdown route to keep in step with it. It is deliberately NOT equivalent
-    to what SIGINT does inside the stdio event loop: asyncio installs a
-    cooperative cancellation for SIGINT, which lets
-    :mod:`palmimo_sdk.mcp.server`'s shield loop drain an in-flight tool call,
-    whereas an exception raised from a handler unwinds at whatever bytecode
-    happened to be executing. Draining an in-flight call on a termination
-    signal would need that cooperative path (an anyio signal receiver
-    cancelling the serving scope) and is not attempted here.
+    Raising ``KeyboardInterrupt`` reuses the unwind Ctrl-C gets outside an
+    event loop -- the caller's ``finally`` -- rather than adding a second
+    shutdown route to keep in step with it.
+
+    SIGINT takes the same handler rather than asyncio's. ``asyncio.Runner``
+    turns SIGINT into a cooperative cancellation of the main task (only when
+    it finds Python's default handler, which is why installing this one opts
+    out), and on the stdio transport that cancellation never completes while
+    the peer holds stdin open: the transport reads stdin on a worker thread
+    that cannot be cancelled, and the cancellation waits for it. Ctrl-C in a
+    terminal therefore never reached the park. The cost is that an in-flight
+    tool call is no longer drained by :mod:`palmimo_sdk.mcp.server`'s shield
+    loop on Ctrl-C, just as it never was on SIGTERM -- a drain would need that
+    same cooperative path.
 
     The yielded :class:`_ShutdownRequest` timestamps the first such signal, so
     :func:`_park_and_close` can measure the whole shutdown against
@@ -539,7 +548,7 @@ def _terminating_signals_raise_keyboard_interrupt() -> Iterator[_ShutdownRequest
     def raise_keyboard_interrupt(signum: int, frame: FrameType | None) -> NoReturn:
         # Timestamped before raising, so the budget is measured from the signal
         # itself rather than from wherever the unwind happens to land.
-        shutdown.record()
+        shutdown.record(signum)
         raise KeyboardInterrupt
 
     if threading.current_thread() is not threading.main_thread():
@@ -551,7 +560,7 @@ def _terminating_signals_raise_keyboard_interrupt() -> Iterator[_ShutdownRequest
         )
         yield shutdown
         return
-    previous = {sig: signal.signal(sig, raise_keyboard_interrupt) for sig in _TERMINATING_SIGNALS}
+    previous = {sig: signal.signal(sig, raise_keyboard_interrupt) for sig in _STOP_SIGNALS}
     try:
         yield shutdown
     finally:
@@ -559,18 +568,9 @@ def _terminating_signals_raise_keyboard_interrupt() -> Iterator[_ShutdownRequest
             signal.signal(sig, handler)
 
 
-# SIGINT joins the terminating signals here, unlike in the raise-set above:
-# once the park is running, Ctrl-C is one more way to skip the torque-off, and
-# an operator mashing it while the robot eases down is the likeliest source of
-# a repeat signal there. Palmimo.disconnect() now absorbs a KeyboardInterrupt
-# around its whole body -- the leg return, the neck release, every peripheral
-# close, and the driver disconnect that cuts torque -- for exactly that reason.
-_PARK_UNINTERRUPTIBLE_SIGNALS: tuple[signal.Signals, ...] = (*_TERMINATING_SIGNALS, signal.SIGINT)
-
-
 @contextlib.contextmanager
 def _shutdown_signals_ignored() -> Iterator[None]:
-    """Make :data:`_PARK_UNINTERRUPTIBLE_SIGNALS` no-ops for the duration of the block.
+    """Make :data:`_STOP_SIGNALS` no-ops for the duration of the block.
 
     Wraps the park, which is the one stretch of this program that must run to
     completion: it is what actually de-energises the servos, and the call that
@@ -594,7 +594,7 @@ def _shutdown_signals_ignored() -> Iterator[None]:
     A thin wrapper over :func:`~palmimo_sdk._signals.signals_ignored`, which
     also backs :func:`~palmimo_sdk.robot._deferred_interrupts`.
     """
-    with signals_ignored(*_PARK_UNINTERRUPTIBLE_SIGNALS):
+    with signals_ignored(*_STOP_SIGNALS):
         yield
 
 
@@ -604,7 +604,7 @@ def _park_and_close(robot: Palmimo, shutdown: _ShutdownRequest) -> None:
     The start/finish lines are the only evidence a hardware run gets that the
     torque-off actually completed: without them a park cut short by an
     exception is indistinguishable from a clean shutdown, since the caller
-    suppresses the interrupt and exits 0 either way. The completion line is
+    suppresses the interrupt either way. The completion line is
     deliberately after the call, so it cannot report a partial park as success.
 
     A signal-initiated shutdown is then measured against
@@ -764,8 +764,12 @@ def _build_http_app(server: Server[Any], host: str = "127.0.0.1", token: str | N
     return app
 
 
-def main(argv: list[str] | None = None) -> None:
-    """Build the robot, attach an MCP server, and serve until interrupted."""
+def main(argv: list[str] | None = None) -> signal.Signals | None:
+    """Build the robot, attach an MCP server, and serve until interrupted.
+
+    Returns the stop signal that ended serving, or ``None`` if none did, for
+    :func:`_exit_as_signalled`.
+    """
     os.environ.setdefault("PALMIMO_APP_ID", "palmimo-mcp")
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
@@ -788,7 +792,7 @@ def main(argv: list[str] | None = None) -> None:
     #
     # Everything from the first probe through serving is one try/finally, so
     # whatever was built is parked and closed on a clean return, on any signal
-    # _terminating_signals_raise_keyboard_interrupt covers, and on any other
+    # _stop_signals_raise_keyboard_interrupt covers, and on any other
     # exception. SIGKILL and power loss stay outside any such promise: neither
     # runs code here, so both still leave the servos torque-enabled.
     #
@@ -797,7 +801,7 @@ def main(argv: list[str] | None = None) -> None:
     with (
         contextlib.suppress(KeyboardInterrupt),
         _tool_call_logging(args.log_tool_calls),
-        _terminating_signals_raise_keyboard_interrupt() as shutdown,
+        _stop_signals_raise_keyboard_interrupt() as shutdown,
     ):
         driver: ServoDriver | None = None
         display: FaceDisplay | None = None
@@ -849,7 +853,30 @@ def main(argv: list[str] | None = None) -> None:
                 robot = Palmimo(driver=driver, display=display, speaker=speaker, camera=camera)
             if robot.has_connectable_resource:
                 _park_and_close(robot, shutdown)
+    return shutdown.signal
+
+
+def _exit_as_signalled(stopped_by: signal.Signals | None) -> None:
+    """End the process by *stopped_by*, now that the park is done; return if it is ``None``.
+
+    The stdio transport leaves a worker thread blocked reading stdin whenever
+    the peer still holds it open, and that thread is not a daemon, so an
+    ordinary interpreter exit waits on it until the peer closes stdin -- in
+    practice until SIGKILL. Re-raising the signal at its default disposition
+    ends the process without that wait, with the status a supervisor expects
+    from the signal it sent. ``os._exit`` covers a platform where the default
+    disposition does not terminate.
+    """
+    if stopped_by is None:
+        return
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):
+            stream.flush()
+    logging.shutdown()
+    signal.signal(stopped_by, signal.SIG_DFL)
+    signal.raise_signal(stopped_by)
+    os._exit(128 + stopped_by)
 
 
 if __name__ == "__main__":
-    main()
+    _exit_as_signalled(main())
