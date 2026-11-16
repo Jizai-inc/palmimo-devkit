@@ -100,7 +100,7 @@ namespace already carries the organization or vendor, avoid putting one in
 
 | Key | Type | Required | Rule |
 |---|---|---|---|
-| `schema` | int | yes | `1`, or `2` when the manifest declares `[assets]`. A host that predates schema 2 rejects a schema 2 manifest, so the app is listed as needing a newer host instead of running without its assets |
+| `schema` | int | yes | `1` or `2`; schema `2` enables the optional `[assets]` table. A host that predates schema 2 rejects a schema 2 manifest, so the app is listed as needing a newer host instead of running without its assets |
 | `name` | string | yes | Must match `^[a-z][a-z0-9-]{0,39}$` — see [App identity](#app-identity) for what it is used for |
 | `description` | string | yes | 1-200 characters. The catalog's one-line summary |
 | `command` | array of strings | yes | The argv to execute. An array, not a shell string, so no shell ever parses it; an element may contain one or more `{param}` placeholders |

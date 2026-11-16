@@ -1,18 +1,19 @@
-"""Reference validator for `palmimo.toml` app manifests (schema 1).
+"""Reference validator for `palmimo.toml` app manifests (schemas 1 and 2).
 
 Validates the rules in [doc/reference/app-manifest.md](../doc/reference/app-manifest.md).
-Portal (palmimo-portal) owns the one real implementation that runs on-device;
+Portal owns the implementation that runs on-device;
 this module exists so this repository's own tests can assert its example
 manifests and invalid fixtures agree with the published spec.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import tomllib
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from tools.manifest_translations import load_translations
 
@@ -33,7 +34,12 @@ RESERVED_PLACEHOLDERS = frozenset({"host", "app_dir"})
 DESCRIPTION_MAX_LENGTH = 200
 DEFAULT_MAX_LENGTH = 256
 PATTERN_MAX_LENGTH = 256
-TOP_LEVEL_KEYS = frozenset({"schema", "name", "description", "command", "url", "devices", "env", "params"})
+TOP_LEVEL_KEYS = frozenset({"schema", "name", "description", "command", "url", "devices", "env", "params", "assets"})
+ASSET_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,39}$")
+ASSET_TAG_RE = re.compile(r"^[a-z0-9-]{1,32}$")
+ASSET_SLOT_RE = re.compile(r"^[a-z0-9_]{1,32}$")
+ASSET_KEYS = frozenset({"file", "description", "tags", "params"})
+ASSET_SUFFIXES = frozenset({".json", ".gif", ".png", ".jpg", ".jpeg"})
 ENV_TABLE_KEYS = frozenset({"required", "description", "help_url"})
 # Extra keys each param type accepts beyond {type, default, description} (both
 # always allowed: default is optional-required by every type, description is
@@ -157,6 +163,14 @@ class Param:
 
 
 @dataclass(frozen=True)
+class Asset:
+    file: str
+    description: str
+    tags: tuple[str, ...]
+    params: dict[str, str]
+
+
+@dataclass(frozen=True)
 class AppManifest:
     name: str
     description: str
@@ -166,6 +180,8 @@ class AppManifest:
     env: dict[str, EnvVar]
     params: dict[str, Param]
     translations: dict[str, dict[str, str]] = field(default_factory=dict)
+    schema: int = 1
+    assets: dict[str, Asset] = field(default_factory=dict)
 
 
 def is_manifest_filename(name: str) -> bool:
@@ -194,6 +210,7 @@ def load_manifest(path: Path) -> AppManifest:
     errors: list[str] = []
     _check_top_level_keys(raw, errors)
     _check_schema(raw, errors)
+    assets = _check_assets(raw.get("assets", {}), path.parent, errors)
     name = raw.get("name")
     _check_name(name, errors)
     description = raw.get("description")
@@ -225,6 +242,8 @@ def load_manifest(path: Path) -> AppManifest:
         env=env,
         params=params,
         translations=load_translations(path, set(env), set(params)),
+        schema=raw["schema"],
+        assets=assets,
     )
 
 
@@ -235,8 +254,114 @@ def _check_top_level_keys(raw: dict, errors: list[str]) -> None:
 
 
 def _check_schema(raw: dict, errors: list[str]) -> None:
-    if raw.get("schema") != 1:
-        errors.append(f"'schema' must be 1, got {raw.get('schema')!r}")
+    schema = raw.get("schema")
+    if not _is_int(schema) or schema not in (1, 2):
+        errors.append(f"'schema' must be 1 or 2, got {schema!r}")
+    if schema == 1 and "assets" in raw:
+        errors.append("'assets' requires schema 2")
+
+
+def _asset_path(value: object, app_dir: Path) -> Path:
+    """Resolve an existing app file without traversing symlinks or parent paths."""
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise ValueError("asset path must be a non-empty string")
+    relative = PurePosixPath(value)
+    if relative.is_absolute() or ".." in relative.parts or not relative.name:
+        raise ValueError("asset path must stay within the app directory")
+    root = app_dir.resolve()
+    current = root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            raise ValueError("asset paths must not traverse symlinks")
+    resolved = current.resolve(strict=True)
+    if not resolved.is_relative_to(root) or not resolved.is_file():
+        raise ValueError("asset path must name a file within the app directory")
+    return resolved
+
+
+def _check_assets(raw: object, app_dir: Path, errors: list[str]) -> dict[str, Asset]:
+    """Validate and expand schema 2 display assets relative to the app directory."""
+    if not isinstance(raw, dict):
+        errors.append("'assets' must be a table")
+        return {}
+    entries = dict(raw)
+    if "include" in entries:
+        include = entries.pop("include")
+        try:
+            with _asset_path(include, app_dir).open("rb") as stream:
+                included = tomllib.load(stream)
+            if set(included) != {"assets"} or not isinstance(included["assets"], dict):
+                raise ValueError("asset include must contain only an assets table")
+            extra = included["assets"]
+            if "include" in extra:
+                raise ValueError("asset includes must not include another file")
+            if entries.keys() & extra.keys():
+                raise ValueError("asset names must not repeat across the manifest and include")
+            entries.update(extra)
+        except (OSError, ValueError) as error:
+            errors.append(f"invalid asset include: {error}")
+
+    assets: dict[str, Asset] = {}
+    for name, spec in entries.items():
+        if not isinstance(name, str) or not ASSET_NAME_RE.fullmatch(name):
+            errors.append(f"invalid asset name: {name!r}")
+            continue
+        if not isinstance(spec, dict) or set(spec) - ASSET_KEYS:
+            errors.append(f"assets.{name} must be a table with only {sorted(ASSET_KEYS)}")
+            continue
+        try:
+            asset_path = _asset_path(spec.get("file"), app_dir)
+            if asset_path.suffix.lower() not in ASSET_SUFFIXES:
+                raise ValueError("asset file must be Lottie, GIF, PNG, or JPEG")
+        except (OSError, ValueError) as error:
+            errors.append(f"assets.{name}: {error}")
+            continue
+        description = spec.get("description")
+        if not isinstance(description, str) or not 1 <= len(description) <= DESCRIPTION_MAX_LENGTH:
+            errors.append(f"assets.{name}.description must be a string of 1-200 characters")
+            continue
+        tags = spec.get("tags", [])
+        if not isinstance(tags, list) or any(
+            not isinstance(tag, str) or not ASSET_TAG_RE.fullmatch(tag) for tag in tags
+        ):
+            errors.append(f"assets.{name}.tags must be an array of asset tags")
+            continue
+        params_raw = spec.get("params", {})
+        if not isinstance(params_raw, dict):
+            errors.append(f"assets.{name}.params must be a table")
+            continue
+        if "params" in spec and asset_path.suffix.lower() != ".json":
+            errors.append(f"assets.{name}.params require a Lottie file")
+            continue
+        slots: dict = {}
+        if params_raw:
+            try:
+                animation = json.loads(asset_path.read_text(encoding="utf-8"))
+                if not isinstance(animation, dict) or not isinstance(animation.get("slots"), dict):
+                    raise ValueError("Lottie parameters require a slots dictionary")
+                slots = animation["slots"]
+            except (OSError, ValueError) as error:
+                errors.append(f"assets.{name}: {error}")
+                continue
+        params: dict[str, str] = {}
+        for sid, param in params_raw.items():
+            if not isinstance(sid, str) or not ASSET_SLOT_RE.fullmatch(sid):
+                errors.append(f"invalid asset slot: {sid!r}")
+                continue
+            if not isinstance(param, dict) or set(param) != {"description"}:
+                errors.append(f"assets.{name}.params.{sid} requires only a description")
+                continue
+            slot_description = param["description"]
+            if not isinstance(slot_description, str) or not 1 <= len(slot_description) <= DESCRIPTION_MAX_LENGTH:
+                errors.append(f"assets.{name}.params.{sid}.description must be a string of 1-200 characters")
+                continue
+            if not isinstance(slots.get(sid), dict) or "p" not in slots[sid]:
+                errors.append(f"assets.{name}.params.{sid} is not a slot in the Lottie file")
+                continue
+            params[sid] = slot_description
+        assets[name] = Asset(spec["file"], description, tuple(tags), params)
+    return assets
 
 
 def _check_name(name: object, errors: list[str]) -> None:
