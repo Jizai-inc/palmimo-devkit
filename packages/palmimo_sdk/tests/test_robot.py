@@ -2526,6 +2526,19 @@ def test_invalid_overload_threshold_is_rejected() -> None:
         Palmimo(leg_overload_current=-5)
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"leg_overload_current": None, "leg_stall_current": 800},
+        {"arm_overload_current": None, "arm_stall_current": 450},
+        {"arm_overload_current": None, "leg_overload_current": None, "stall_gap_ticks": 0},
+    ],
+)
+def test_stall_stage_is_rejected_when_it_cannot_run(kwargs: dict[str, int | None]) -> None:
+    with pytest.raises(ValueError, match="stall"):
+        Palmimo(**kwargs)  # type: ignore[arg-type]
+
+
 def test_wave_arm_trip_drops_to_idle_and_softens_only_the_arm() -> None:
     """Three strained samples on the waving arm stop the motion and leave just that arm at the soft gain."""
     driver = _OverloadDriver()

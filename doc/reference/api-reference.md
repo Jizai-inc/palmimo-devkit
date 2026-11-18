@@ -1022,8 +1022,8 @@ robot = Palmimo(
 |----------|---------|---------|
 | `arm_overload_current` | `ARM_OVERLOAD_CURRENT` (700) | Threshold for the arm channel; `None` disables it; `<= 0` raises `ValueError` |
 | `leg_overload_current` | `LEG_OVERLOAD_CURRENT` (1200) | Threshold for the leg channel; `None` disables it; `<= 0` raises `ValueError` |
-| `arm_stall_current` | `None` | Stall-stage current for the arm channel; `None` turns the stage off; not strictly between 0 and `arm_overload_current` raises `ValueError` |
-| `leg_stall_current` | `None` | Stall-stage current for the leg channel; `None` turns the stage off; not strictly between 0 and `leg_overload_current` raises `ValueError` |
+| `arm_stall_current` | `None` | Stall-stage current for the arm channel; `None` turns the stage off; not strictly between 0 and `arm_overload_current`, or given with `arm_overload_current=None`, raises `ValueError` |
+| `leg_stall_current` | `None` | Stall-stage current for the leg channel; `None` turns the stage off; not strictly between 0 and `leg_overload_current`, or given with `leg_overload_current=None`, raises `ValueError` |
 | `stall_gap_ticks` | `STALL_GAP_TICKS` (250) | Distance from the goal, in ticks, at which the stall stage counts a sample; `<= 0` raises `ValueError` |
 
 These constants, `OVERLOAD_CONSECUTIVE`, `ARM_STALL_CURRENT` (450) and

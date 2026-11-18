@@ -463,8 +463,8 @@ robot = Palmimo(
 |----------|---------|---------|
 | `arm_overload_current` | `ARM_OVERLOAD_CURRENT` (700) | 腕チャンネルの閾値です。`None` で無効にし、`<= 0` では `ValueError` を送出します。 |
 | `leg_overload_current` | `LEG_OVERLOAD_CURRENT` (1200) | 脚チャンネルの閾値です。`None` で無効にし、`<= 0` では `ValueError` を送出します。 |
-| `arm_stall_current` | `None` | 腕チャンネルの停滞段の電流です。`None` で停滞段を無効にします。0 より大きく `arm_overload_current` 未満でなければ `ValueError` を送出します。 |
-| `leg_stall_current` | `None` | 脚チャンネルの停滞段の電流です。`None` で停滞段を無効にします。0 より大きく `leg_overload_current` 未満でなければ `ValueError` を送出します。 |
+| `arm_stall_current` | `None` | 腕チャンネルの停滞段の電流です。`None` で停滞段を無効にします。0 より大きく `arm_overload_current` 未満でないとき、または `arm_overload_current=None` と一緒に渡したときは `ValueError` を送出します。 |
+| `leg_stall_current` | `None` | 脚チャンネルの停滞段の電流です。`None` で停滞段を無効にします。0 より大きく `leg_overload_current` 未満でないとき、または `leg_overload_current=None` と一緒に渡したときは `ValueError` を送出します。 |
 | `stall_gap_ticks` | `STALL_GAP_TICKS` (250) | 停滞段がサンプルを数える、目標からの距離（tick）です。`<= 0` では `ValueError` を送出します。 |
 
 これらの定数、`OVERLOAD_CONSECUTIVE`、`ARM_STALL_CURRENT`（450）、`LEG_STALL_CURRENT`（800）は `palmimo_sdk` からエクスポートされています。閾値は `Present_Current` レジスターの生の単位で、絶対値で比較します。両チャンネルと[電源レールの低電圧ガード](#電源レールの低電圧ガード)を無効にすると、 `step()` は脚のテレメトリを一切読みません。

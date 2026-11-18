@@ -419,7 +419,8 @@ class Palmimo:
         leg_stall_current (int, optional): The same stall stage for the leg channel;
             ``LEG_STALL_CURRENT`` is a provisional starting point.
         stall_gap_ticks (int): Distance from the goal, in ticks, at which the stall stage counts a
-            sample. Defaults to ``STALL_GAP_TICKS``. Must be positive.
+            sample. Defaults to ``STALL_GAP_TICKS``. Must be positive. A stall current whose
+            channel is disabled raises ``ValueError``.
         rail_undervoltage_v (float, optional): Input voltage, in volts, below which the power rail counts as
             sagging. The lowest reading across the leg axes is one signal; ``RAIL_CONSECUTIVE``
             sweeps in a row below it drop the motion to IDLE without cutting

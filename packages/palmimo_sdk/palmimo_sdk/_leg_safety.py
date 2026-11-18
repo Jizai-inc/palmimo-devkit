@@ -43,6 +43,9 @@ class LegSafety:
         rail_undervoltage_v (float, optional): Rail voltage floor; ``None`` disables the guard.
         clock (Callable[[], float]): Monotonic time source for poll scheduling.
         logger (logging.Logger): Logger that receives the guards' records.
+
+    Raises:
+        ValueError: A stall current is given for a disabled channel, or *stall_gap_ticks* is not positive.
     """
 
     def __init__(
@@ -57,6 +60,12 @@ class LegSafety:
         leg_stall_current: int | None = None,
         stall_gap_ticks: int = STALL_GAP_TICKS,
     ) -> None:
+        if arm_stall_current is not None and arm_overload_current is None:
+            raise ValueError("arm_stall_current needs arm_overload_current: the stall stage is part of that channel.")
+        if leg_stall_current is not None and leg_overload_current is None:
+            raise ValueError("leg_stall_current needs leg_overload_current: the stall stage is part of that channel.")
+        if stall_gap_ticks <= 0:
+            raise ValueError("stall_gap_ticks must be positive (raw tick units).")
         self._arm_overload = (
             None
             if arm_overload_current is None
