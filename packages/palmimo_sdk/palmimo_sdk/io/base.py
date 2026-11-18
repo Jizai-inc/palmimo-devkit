@@ -122,6 +122,8 @@ logger = logging.getLogger(__name__)
 SAFE_MIN_TICK = 200
 SAFE_MAX_TICK = 3900
 
+_MISSING = object()
+
 
 def clamp_goal_tick(motor: str, tick: int) -> int:
     """Clamp a goal tick into the safe range, warning on each out-of-range write.
@@ -356,15 +358,16 @@ def supports(driver: object, name: str) -> bool:
     True when *driver* has the attribute and it is not the default that
     :class:`ServoDriver` declares; an attribute set on the instance itself
     counts as provided. An object that does not subclass :class:`ServoDriver`
-    counts by the attribute alone.
+    counts by the attribute alone. A property is looked up on the class, not
+    read, so asking never runs its getter.
 
     Args:
         driver (object): The driver to ask.
         name (str): A method or property name, e.g. ``"set_iir"``.
     """
-    if not hasattr(driver, name):
-        return False
     if name in getattr(driver, "__dict__", {}):
         return True
-    default = getattr(ServoDriver, name, None)
-    return default is None or getattr(type(driver), name, None) is not default
+    found = getattr(type(driver), name, _MISSING)
+    if found is _MISSING:
+        return hasattr(driver, name)
+    return found is not getattr(ServoDriver, name, _MISSING)
