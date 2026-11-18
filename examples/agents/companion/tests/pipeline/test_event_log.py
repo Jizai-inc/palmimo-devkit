@@ -7,8 +7,10 @@ import json
 
 import pytest
 
-from palmimo_companion_agent.pipeline.event_log import emit_event
+from palmimo_companion_agent.code_version import CodeVersion
+from palmimo_companion_agent.pipeline.event_log import emit_event, emit_run_start
 from palmimo_companion_agent.pipeline.history import KeyboardEvent, ToolExecEvent
+from palmimo_companion_agent.pipeline.settings import PipelineSettings
 
 
 def test_emit_event_writes_exactly_one_line() -> None:
@@ -75,3 +77,17 @@ def test_emit_event_keeps_tool_arguments_as_a_string_when_the_parsed_object_cann
     out = io.TextIOWrapper(raw, encoding="utf-8")
     emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="bad"), out=out)
     assert json.loads(raw.getvalue())["arguments"] == arguments
+
+
+def test_emit_run_start_names_the_code_and_hashes_the_resolved_settings() -> None:
+    version = CodeVersion(commit="abc1234", branch="main", dirty=True, packages={"palmimo-sdk": "0.1.5"})
+    first, second = io.StringIO(), io.StringIO()
+
+    emit_run_start(version, PipelineSettings.with_env_file(None), out=first)
+    emit_run_start(version, PipelineSettings.with_env_file(None).model_copy(update={"language": "en"}), out=second)
+
+    payload = json.loads(first.getvalue())
+    assert payload["kind"] == "run_start"
+    assert (payload["commit"], payload["branch"], payload["dirty"]) == ("abc1234", "main", True)
+    assert payload["packages"] == {"palmimo-sdk": "0.1.5"}
+    assert payload["settings_sha256"] != json.loads(second.getvalue())["settings_sha256"]
