@@ -299,6 +299,35 @@ class DynamixelBus:
                 return model_number if error & ~self._dxl.ERRBIT_ALERT == 0 else None
         return None
 
+    def ping(self, motor: str) -> bool:
+        """Whether *motor* answers a ping with the expected model number.
+
+        Raises:
+            KeyError: *motor* is not on this bus.
+        """
+        return self._ping(self.motors[motor]) == MODEL_NUMBERS[self.model]
+
+    def reboot(self, motor: str, num_retry: int = 0) -> None:
+        """Send the Reboot instruction to *motor*.
+
+        The servo answers, then restarts: its hardware error clears and its RAM
+        registers (torque, goal, gain, profile) return to their power-on
+        defaults, so it comes back limp. It does not answer until it has booted.
+
+        Raises:
+            KeyError: *motor* is not on this bus.
+            ConnectionError: No status packet came back after all retries.
+            RuntimeError: The servo rejected the instruction. A bare Alert bit is
+                not a rejection.
+        """
+        motor_id = self.motors[motor]
+        comm = error = 0
+        for _ in range(1 + num_retry):
+            comm, error = self.packet_handler.reboot(self.port_handler, motor_id)
+            if comm == self._comm_success:
+                break
+        self._check(comm, error, f"reboot id {motor_id}")
+
     def configure_motors(self) -> None:
         """Set every motor's Return_Delay_Time to 0 (minimum response delay)."""
         for motor in self.motors:

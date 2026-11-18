@@ -2664,6 +2664,13 @@ class _RearmDriver(_OverloadDriver):
     def arm(self, motors: Sequence[str]) -> None:
         self.log.append(("arm", tuple(motors)))
 
+    def reboot(self, motors: Sequence[str]) -> None:
+        self.log.append(("reboot", tuple(motors)))
+        for motor in motors:
+            if motor in self.silent:
+                raise ConnectionError(f"{motor} did not answer after the reboot.")
+            self.latched.pop(motor, None)
+
     def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
         super().set_position_p_gain(value, motors)
         self.log.append(("gain", None if motors is None else tuple(motors)))
@@ -2734,6 +2741,73 @@ def test_an_arm_whose_torque_the_overload_guard_cut_is_not_rearmed() -> None:
 
     assert not [c for c in driver.log if c[0] == "arm"]
     assert "cut its torque" in robot.unarmed_motors["leg_6_yaw"]
+
+
+def test_reboot_servos_clears_a_latched_error_then_rearms_with_the_gain_the_robot_last_gave_it() -> None:
+    driver = _RearmDriver()
+    robot, _clock = _overload_robot(driver)
+    robot.set_p_gain(300)
+    driver.latched = {"leg_1_yaw": 0x20}
+    driver.log.clear()
+
+    (record,) = robot.reboot_servos(["leg_1_yaw"])
+
+    one = ("leg_1_yaw",)
+    assert driver.log[:3] == [("reboot", one), ("gain", one), ("arm", one)]
+    assert (300, one) in driver.gains
+    assert (record.motor, record.armed, record.reason) == ("leg_1_yaw", True, "")
+    assert robot.drain_rearms() == [record]
+    assert robot.unarmed_motors == {}
+
+
+def test_reboot_servos_leaves_an_arm_whose_torque_the_overload_guard_cut_alone() -> None:
+    driver = _RearmDriver(gain_raises=True)
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800}
+    _poll_steps(robot, clock, 3)
+    assert ("torque off", _ARM_6) in driver.log
+    driver.log.clear()
+
+    (record,) = robot.reboot_servos(["leg_6_yaw"])
+
+    assert driver.log == []
+    assert not record.armed
+    assert "cut its torque" in robot.unarmed_motors["leg_6_yaw"]
+
+
+def test_reboot_servos_carries_on_past_a_motor_that_does_not_come_back() -> None:
+    driver = _RearmDriver()
+    robot, _clock = _overload_robot(driver)
+    driver.silent = {"leg_1_yaw"}
+
+    first, second = robot.reboot_servos(["leg_1_yaw", "leg_2_yaw"])
+
+    assert not first.armed
+    assert "did not answer" in robot.unarmed_motors["leg_1_yaw"]
+    assert second.armed
+    assert ("arm", ("leg_1_yaw",)) not in driver.log
+
+
+def test_reboot_servos_drops_the_overload_streak_the_motor_built_before_the_reboot() -> None:
+    driver = _RearmDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800}
+    _poll_steps(robot, clock, 2)
+
+    robot.reboot_servos(["leg_6_yaw"])
+    _poll_steps(robot, clock)
+
+    assert robot.drain_overload_trips() == []
+    assert robot.motion == "wave"
+
+
+def test_reboot_servos_rejects_an_unknown_motor() -> None:
+    robot, _clock = _overload_robot(_RearmDriver())
+
+    with pytest.raises(ValueError, match="leg_9_yaw"):
+        robot.reboot_servos(["leg_9_yaw"])
 
 
 def test_blind_guards_names_the_leg_guard_once_the_bus_reads_empty() -> None:

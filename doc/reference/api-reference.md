@@ -1076,13 +1076,26 @@ power-cycle it), when the overload guard cut its torque, or when a failed
 `limp()` exit left it limp. Each attempt is recorded as a `ReArm` (frozen
 dataclass: `motor`, `armed`, `reason`, `at`) and logged.
 
+**Rebooting.** A hardware error stays latched until the servo reboots.
+`robot.reboot_servos(motors)` reboots each named servo, waits for it to answer
+(up to 3 s), and re-arms it the same way, since the reboot leaves it limp with
+its gain, profile and goal at their power-on defaults. Its overload streaks
+restart, as when a silent axis is watched again. An axis whose torque the
+overload guard cut, or that a failed `limp()` exit left limp, is neither
+rebooted nor armed. One servo that does not come back does not stop the rest.
+It returns one `ReArm` per servo, which also goes to `drain_rearms()`; a servo
+not re-armed stays in `unarmed_motors`. The servo is limp while it boots, so a
+loaded joint sags: call it between steps, from the thread that steps the robot,
+once the cause is dealt with, because a fault that persists latches again.
+
 | Member | Returns |
 |--------|---------|
 | `robot.drain_watch_changes()` | `list[WatchChange]` of the leg and neck guards, oldest first; the call empties the queues, which keep the newest 64 each |
 | `robot.unwatched_motors` | Axes currently set aside, as a tuple; empty when all are watched |
 | `robot.blind_guards` | Names of the guards that cannot see the bus (3 axes set aside, or 3 empty reads), as a tuple; empty when every guard can. A blind guard judges nothing |
 | `robot.drain_rearms()` | `list[ReArm]`, oldest first; the call empties the queue, which keeps the newest 64 |
-| `robot.unarmed_motors` | Axes that answered again but were not re-armed, mapped to why, as a `dict[str, str]`; cleared by `connect()` |
+| `robot.unarmed_motors` | Axes that answered again, or were rebooted, but were not re-armed, mapped to why, as a `dict[str, str]`; cleared by `connect()` |
+| `robot.reboot_servos(motors)` | `list[ReArm]`, one per servo in the order given; raises `ValueError` for an empty list or an unknown name, `RuntimeError` without a connected driver |
 
 **Reaction.**
 
@@ -1560,7 +1573,13 @@ hardware error latched, because torque does not take on a servo that has shut do
 `ServoDriver.arm(motors)` puts the named motors back to work as `connect()` leaves
 them: goal at the present position, default profile, torque on (the gain is the
 caller's to write). It is an optional capability too, and what
-[re-arming](#overload-guard) uses.
+[re-arming](#overload-guard) uses. `ServoDriver.reboot(motors)` reboots the named
+motors one at a time, which clears each one's latched hardware error, and waits
+for each to answer a ping before the next; on `DynamixelDriver` it raises
+`ConnectionError` naming the first that has not answered within about 3 s (the
+ones before it have already come back). The motors come
+back limp, at their power-on defaults; `arm()` puts them back to work. It is
+optional as well, and what `robot.reboot_servos()` uses.
 
 `ServoDriver.read_hardware_errors(motors=None)` returns a `HardwareErrorRead`
 (`palmimo_sdk.io.base.HardwareErrorRead`) in one sweep; `None` selects all motors.

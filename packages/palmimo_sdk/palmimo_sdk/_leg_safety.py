@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 
 from ._guard import RestingReport, TripLog
@@ -142,9 +142,7 @@ class LegSafety:
                     stale.reset()
         self._last_sample = now
         if self._poller.rejoined:
-            for guard in (self._arm_overload, self._leg_overload):
-                if guard is not None:
-                    guard.forget(self._poller.rejoined)
+            self.forget(self._poller.rejoined)
         arm = leg_motors(arm_legs)
         if self._soft_return is not None and self._soft_return_monitor.sample(telemetry.position, self._soft_return):
             self.end_soft_return()
@@ -199,6 +197,12 @@ class LegSafety:
         """Consume the latest successful telemetry sweep."""
         sweep, self._sweep = self._sweep, None
         return sweep
+
+    def forget(self, motors: Sequence[str]) -> None:
+        """Drop the overload streaks of *motors*, whose readings before now no longer describe them."""
+        for guard in (self._arm_overload, self._leg_overload):
+            if guard is not None:
+                guard.forget(motors)
 
     def reset(self) -> None:
         """Forget all per-connection guard state (streaks, latch, poll timers, soft return).

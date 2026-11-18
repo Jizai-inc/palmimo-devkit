@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+import palmimo_sdk.io.dynamixel as dynamixel_module
 import palmimo_sdk.robot as robot_module
 from palmimo_sdk import (
     SAFE_MAX_TICK,
@@ -104,6 +105,8 @@ class FakeBus:
         }
         self.span_reads: list[tuple[tuple[str, ...], tuple[str, ...] | None]] = []
         self.span_num_retries: list[int] = []
+        # Unanswered pings each motor still has to sit through after a reboot (it is booting).
+        self.boot_pings: dict[str, int] = {}
 
     def sync_write(self, address: str, data: Any, normalize: bool = False) -> None:
         if address == self.fail_write_address:
@@ -157,6 +160,18 @@ class FakeBus:
             else:
                 silent.append(name)
         return SpanRead(values, tuple(silent), tuple(unreached))
+
+    def reboot(self, motor: str, num_retry: int = 0) -> None:
+        self.events.append(("reboot", motor))
+        if motor in self.telemetry:
+            self.telemetry[motor]["Hardware_Error_Status"] = 0
+
+    def ping(self, motor: str) -> bool:
+        self.events.append(("ping", motor))
+        if self.boot_pings.get(motor, 0) > 0:
+            self.boot_pings[motor] -= 1
+            return False
+        return motor in self.telemetry
 
     def disconnect(self, disable_torque: bool) -> None:
         self.disconnect_calls.append(disable_torque)
@@ -1372,3 +1387,42 @@ def test_arm_holds_and_torques_the_motor_while_another_motor_is_silent() -> None
     tick = bus.telemetry["leg_1_yaw"]["Present_Position"]
     assert ("Goal_Position", "leg_1_yaw", tick) in bus.writes
     assert ("Torque_Enable", "leg_1_yaw", 1) in bus.writes
+
+
+def test_reboot_waits_for_each_motor_before_rebooting_the_next_and_leaves_torque_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dynamixel_module, "_REBOOT_POLL_INTERVAL_S", 0.0)
+    driver, bus, _calls = make_driver()
+    driver.connect()
+    bus.telemetry["leg_1_yaw"]["Hardware_Error_Status"] = 0x20
+    bus.boot_pings = {"leg_1_yaw": 2}
+    bus.events.clear()
+    bus.writes.clear()
+
+    driver.reboot(["leg_1_yaw", "leg_2_yaw"])
+
+    assert bus.events == [
+        ("reboot", "leg_1_yaw"),
+        ("ping", "leg_1_yaw"),
+        ("ping", "leg_1_yaw"),
+        ("ping", "leg_1_yaw"),
+        ("reboot", "leg_2_yaw"),
+        ("ping", "leg_2_yaw"),
+    ]
+    assert bus.telemetry["leg_1_yaw"]["Hardware_Error_Status"] == 0
+    assert bus.writes == []
+
+
+def test_reboot_names_the_motor_that_does_not_answer_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dynamixel_module, "_REBOOT_POLL_INTERVAL_S", 0.0)
+    monkeypatch.setattr(dynamixel_module, "_REBOOT_ANSWER_TIMEOUT_S", 0.0)
+    driver, bus, _calls = make_driver()
+    driver.connect()
+    del bus.telemetry["leg_2_yaw"]
+
+    with pytest.raises(ConnectionError, match="leg_2_yaw") as raised:
+        driver.reboot(["leg_1_yaw", "leg_2_yaw", "leg_3_yaw"])
+
+    assert "leg_1_yaw" not in str(raised.value)
+    assert ("reboot", "leg_3_yaw") not in bus.events
