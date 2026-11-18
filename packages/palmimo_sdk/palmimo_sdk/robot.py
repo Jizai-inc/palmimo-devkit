@@ -2492,14 +2492,18 @@ class Palmimo:
         A servo that answers again after going silent may have rebooted with
         torque off. :meth:`step` writes its hold goal, profile and gain back and
         turns its torque on, unless a hardware error is latched on it, the
-        overload guard cut its torque, or :meth:`limp` left it limp. The queue
-        keeps the most recent 64.
+        overload guard cut its torque, or :meth:`limp` left it limp.
+        :meth:`reboot_servos` records its attempts here too. The queue keeps the
+        most recent 64.
         """
         return self._rearmer.log.drain()
 
     @property
     def unarmed_motors(self) -> dict[str, str]:
-        """Servos that answered again but were not re-armed, mapped to why; cleared by :meth:`connect`."""
+        """Servos that answered again or were rebooted but were not re-armed, mapped to why.
+
+        Cleared by :meth:`connect`.
+        """
         return self._rearmer.unarmed
 
     def reboot_servos(self, motors: Iterable[str]) -> list[ReArm]:
