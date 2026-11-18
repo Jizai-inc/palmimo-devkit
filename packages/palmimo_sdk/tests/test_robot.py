@@ -2562,7 +2562,7 @@ def test_wave_arm_trip_drops_to_idle_and_softens_only_the_arm() -> None:
 def test_leg_stall_stage_stops_a_motion_whose_axis_stays_short_of_its_goal() -> None:
     """Below the leg threshold, an axis held away from its goal still drops the motion to IDLE."""
     driver = _OverloadDriver()  # legs read 2500 while the gait sends them elsewhere
-    robot, clock = _overload_robot(driver, leg_stall_current=800)
+    robot, clock = _overload_robot(driver, leg_stall_current=800, flight_recorder=False)
     robot.forward()
     driver.currents = {"leg_1_yaw": 900}
 

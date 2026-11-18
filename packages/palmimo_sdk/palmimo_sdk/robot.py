@@ -571,6 +571,8 @@ class Palmimo:
         self._recorder: ServoFlightRecorder | None = None
         self._flight_ride: FlightRide | None = None
         self._last_goal: dict[str, int] = {}
+        # Only the flight recorder and the overload guards' stall stage read the last goal.
+        self._records_goal = flight_recorder or arm_stall_current is not None or leg_stall_current is not None
         self._leg_guards_off = all(
             value is None for value in (arm_overload_current, leg_overload_current, rail_undervoltage_v)
         )
@@ -2397,10 +2399,11 @@ class Palmimo:
 
     def _write_goal(self, driver: ServoDriver, positions: dict[str, int]) -> None:
         driver.write_positions(positions)
-        self._last_goal = {
-            name: max(SAFE_MIN_TICK, min(SAFE_MAX_TICK, positions.get(name, MotionEngine.NEUTRAL)))
-            for name in self._engine.get_positions()
-        }
+        if self._records_goal:
+            self._last_goal = {
+                name: max(SAFE_MIN_TICK, min(SAFE_MAX_TICK, positions.get(name, MotionEngine.NEUTRAL)))
+                for name in self._engine.get_positions()
+            }
 
     @property
     def incident_dir(self) -> Path | None:
