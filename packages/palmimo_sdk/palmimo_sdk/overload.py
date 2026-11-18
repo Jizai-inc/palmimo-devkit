@@ -136,7 +136,10 @@ class OverloadGuard:
 
     @property
     def strained(self) -> bool:
-        """Whether any axis was at or above the threshold when last sampled (``False`` right after a trip)."""
+        """Whether any axis counted as strained when last sampled, by the threshold or the stall stage.
+
+        ``False`` right after a trip.
+        """
         return self._streaks.active
 
     def sample(
