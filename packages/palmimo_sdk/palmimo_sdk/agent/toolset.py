@@ -77,6 +77,9 @@ from .tools import (
 )
 
 
+_NO_SERVO_NOTE = "no servo bus connected; nothing moved"
+
+
 # Every built-in tool, keyed by its LLM-facing name. The single source of
 # truth for "what ships with the SDK" -- AgentToolSet.__init__ starts from a
 # copy of this and narrows/extends it per instance via include/exclude/register.
@@ -261,6 +264,13 @@ class AgentToolSet:
             self._cancel_requested = True
             self._robot.cancel()
 
+    def _note_missing_servo_bus(self, cls: type[Tool], result: ToolResult) -> ToolResult:
+        """*result*, with ``(no servo bus connected; nothing moved)`` appended for a
+        :attr:`~palmimo_sdk.agent.tools.Tool.drives_servos` tool run without a servo bus."""
+        if not cls.drives_servos or self._robot.is_connected:
+            return result
+        return ToolResult(text=f"{result.text} ({_NO_SERVO_NOTE})", images=result.images, is_error=result.is_error)
+
     async def call(self, name: str, args: dict[str, Any] | str) -> ToolResult:
         """Validate and execute one tool call, never raising for an LLM-caused failure.
 
@@ -273,8 +283,11 @@ class AgentToolSet:
         rather than propagated, so a driving LLM can read the failure and
         self-correct. A successful ``execute()`` -- including one that itself
         reports a descriptive non-fatal outcome, like "no camera attached" --
-        is returned as-is, with whatever ``is_error`` that :class:`Tool` set
+        is returned with whatever ``is_error`` that :class:`Tool` set
         (normally the default ``False``; see :class:`~palmimo_sdk.agent.tools.ToolResult`).
+        When the tool is marked :attr:`~palmimo_sdk.agent.tools.Tool.drives_servos`
+        and the robot has no servo bus, its result -- completed or interrupted --
+        ends with ``(no servo bus connected; nothing moved)``.
 
         Overlapping callers are serialized by an internal :class:`asyncio.Lock`
         (see :meth:`is_busy`); once validated, ``execute()`` itself -- synchronous
@@ -374,9 +387,9 @@ class AgentToolSet:
                         task.result()
                     raise
                 except MotionCancelled as exc:
-                    return ToolResult(text=f"interrupted: {exc}", is_error=False)
+                    return self._note_missing_servo_bus(cls, ToolResult(text=f"interrupted: {exc}", is_error=False))
                 except Exception as exc:  # a bad tool must not crash the agent loop
                     return ToolResult(text=f"Tool {name!r} raised an error while executing: {exc}", is_error=True)
-                return result
+                return self._note_missing_servo_bus(cls, result)
             finally:
                 self._robot._disarm_cancel_scope()

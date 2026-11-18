@@ -81,7 +81,9 @@ caller may race against a `Palmimo.cancel()`/`MotionCancelled` interruption —
 see `robot.cancel()`); leave it at the `Tool` base's default `False` only for
 a tool with no blocking `run()` underneath at all (`set_face`/`show_emoji`/
 `say`/`capture`-style calls), or one that is deliberately excluded despite
-calling `run()` (see `stop`'s own comment in `tools.py`). Then
+calling `run()` (see `stop`'s own comment in `tools.py`). `Expressive`
+already sets `drives_servos = True`, so `AgentToolSet.call()` notes a
+missing servo bus on the new tool's result without any code in `_act()`. Then
 register the tool in `TOOL_MODELS` in `palmimo_sdk/agent/toolset.py` (the
 single source of truth for what ships with the SDK). Add the matching
 schema/dispatch tests in `packages/palmimo_sdk/tests/test_agent_tools.py`.
