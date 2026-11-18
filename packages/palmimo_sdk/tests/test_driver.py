@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, DynamixelDriver, Palmimo, ServoDriver
+from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, DynamixelDriver, Palmimo, ServoDriver, supports
 from palmimo_sdk.engine import MotionEngine
 
 
@@ -390,3 +390,22 @@ def test_servo_driver_declares_every_public_dynamixel_driver_member() -> None:
     """A capability the bundled driver offers is part of the ServoDriver contract."""
     public = {name for name in dir(DynamixelDriver) if not name.startswith("_")}
     assert sorted(public - set(dir(ServoDriver))) == []
+
+
+def test_supports_counts_only_what_a_driver_overrides() -> None:
+    """The ServoDriver defaults are not a capability; overrides and instance attributes are."""
+
+    class RaisingGetterDriver(RecordingDriver):
+        @property
+        def position_p_gain(self) -> int | None:
+            raise RuntimeError("getter ran")
+
+    plain = RecordingDriver()
+    assert not supports(plain, "set_iir")
+    assert not supports(plain, "profile_velocity")
+    assert supports(TuningRecordingDriver(), "set_iir")
+    assert supports(TuningRecordingDriver(), "profile_velocity")
+    assert supports(RaisingGetterDriver(), "position_p_gain")
+    plain.set_iir = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    assert supports(plain, "set_iir")
+    assert not supports(object(), "set_iir")
