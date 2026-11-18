@@ -10,7 +10,7 @@ robot = Palmimo()
 
 ## Constructor
 
-`Palmimo(gait_speed=0.012, step_length=30.0, step_height=30.0, on_step=None, *, fps=60, driver=None, display=None, speaker=None, camera=None, mic=None, auto_wake=True, thermal_clock=None, arm_overload_current=ARM_OVERLOAD_CURRENT, leg_overload_current=LEG_OVERLOAD_CURRENT, rail_undervoltage_v=RAIL_UNDERVOLTAGE_V, flight_recorder=True, incident_dir=None)`
+`Palmimo(gait_speed=0.012, step_length=30.0, step_height=30.0, on_step=None, *, fps=60, driver=None, display=None, speaker=None, camera=None, mic=None, auto_wake=True, thermal_clock=None, arm_overload_current=ARM_OVERLOAD_CURRENT, leg_overload_current=LEG_OVERLOAD_CURRENT, rail_undervoltage_v=RAIL_UNDERVOLTAGE_V, flight_recorder=True, incident_dir=None, code_version=None)`
 
 The first four arguments are positional-or-keyword; everything after the `*` is keyword-only.
 
@@ -27,7 +27,7 @@ The first four arguments are positional-or-keyword; everything after the `*` is 
 | `thermal_clock` | `None` | Clock injected into the neck thermal and overload guards in place of `time.monotonic`; for tests |
 | `arm_overload_current` / `leg_overload_current` | `ARM_OVERLOAD_CURRENT` / `LEG_OVERLOAD_CURRENT` | See [Overload Guard](#overload-guard) |
 | `rail_undervoltage_v` | `RAIL_UNDERVOLTAGE_V` | See [Rail Undervoltage Guard](#rail-undervoltage-guard) |
-| `flight_recorder` / `incident_dir` | `True` / `None` | See [Servo Flight Recorder](#servo-flight-recorder) |
+| `flight_recorder` / `incident_dir` / `code_version` | `True` / `None` / `None` | See [Servo Flight Recorder](#servo-flight-recorder) |
 
 ## Motion Commands
 
@@ -1161,19 +1161,32 @@ Recording-related constructor parameters (other parameters omitted):
 
 ```text
 Palmimo(*, flight_recorder: bool = True,
-        incident_dir: str | os.PathLike[str] | None = None, ...)
+        incident_dir: str | os.PathLike[str] | None = None,
+        code_version: CodeVersion | None = None, ...)
 ```
 
 | Parameter | Contract |
 |-----------|----------|
 | `flight_recorder` | `True` enables capture with an attached driver. `False` disables recorder telemetry capture and hardware-error polling, ignores `incident_dir`, and leaves the safety guards enabled according to their own settings. No driver means no recorder activity. |
 | `incident_dir` | Explicit destination converted to `Path` at construction; relative paths retain their normal working-directory meaning. `None` resolves the default at the first driver connection and retains it across reconnects. Construction and connection without an open incident do not create the directory. |
+| `code_version` | The code this process started from, copied into every [incident header](#files-and-header). `None` records the git fields as `null`. |
 
 `default_incident_dir() -> pathlib.Path` is exported from `palmimo_sdk`. Each call
 resolves the current environment without creating a directory: an absolute,
 nonempty `XDG_STATE_HOME` gives `$XDG_STATE_HOME/palmimo/incidents`; otherwise the
 result is `Path.home() / ".local/state/palmimo/incidents"`. An empty or relative
 `XDG_STATE_HOME` uses the fallback.
+
+`CodeVersion` is a frozen dataclass exported from `palmimo_sdk`. The SDK never
+runs `git`; the caller resolves the version once at startup and passes it in.
+Every field defaults to unknown:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `commit` | `str \| None` | Short hash of the checkout's `HEAD` |
+| `branch` | `str \| None` | Checked-out branch; `None` when detached |
+| `dirty` | `bool \| None` | Whether a tracked file differs from `HEAD` |
+| `packages` | `Mapping[str, str \| None]` | Installed version of each distribution the caller names |
 
 Read-only properties:
 
@@ -1244,6 +1257,8 @@ Collisions add `-1`, `-2`, and so on before `.jsonl`. A temporary file appends
 | `post_s` | Planned deadline relative to the first trigger, in seconds: normally `2.0`; newly latched axes can extend it up to `4.0` |
 | `post_s_captured` | Maximum sample `t`, clamped to at least zero, across both tiers; seconds, not a guarantee of continuous coverage |
 | `truncated` | Whether `post_s_captured < post_s`; early flushes or insufficient coverage may set it. Automatic flushing waits for a fast sample at or beyond the planned tail, with a 0.25-second grace limit when fast sweeps stop |
+| `commit` / `branch` / `dirty` | The `code_version` fields of the same names; `null` when no `code_version` was passed or the field is unknown |
+| `packages` | Distribution name to installed version (`null` if not installed): the `code_version` packages, with `"palmimo-sdk"` always set by the recorder from its own installed metadata |
 
 Hardware-error bits use the same definitions as
 [`HardwareErrorRead` and `describe_hardware_error()`](#servodriver).

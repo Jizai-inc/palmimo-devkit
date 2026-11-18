@@ -73,3 +73,4 @@ def test_default_incident_dir_is_exported_from_package_root() -> None:
 
     assert default_incident_dir is resolve
     assert "default_incident_dir" in palmimo_sdk.__all__
+    assert "CodeVersion" in palmimo_sdk.__all__

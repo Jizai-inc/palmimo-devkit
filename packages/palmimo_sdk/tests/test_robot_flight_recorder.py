@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 import palmimo_sdk.robot as robot_module
-from palmimo_sdk import HardwareErrorRead, Palmimo
+from palmimo_sdk import CodeVersion, HardwareErrorRead, Palmimo
 from palmimo_sdk.engine import MotionEngine
 from palmimo_sdk.kinematics import LEG_MOTORS
 from palmimo_sdk.thermal import NECK_MOTORS
@@ -249,6 +249,22 @@ def test_robot_connect_resolves_xdg_without_creating_directory(tmp_path: Path, m
 def test_robot_explicit_incident_dir_is_known_before_connect(tmp_path: Path) -> None:
     robot = Palmimo(incident_dir=tmp_path)
     assert robot.incident_dir == tmp_path
+
+
+def test_robot_passes_its_code_version_to_the_incident_header(tmp_path: Path) -> None:
+    clock = Clock()
+    driver = FlightDriver(clock, tmp_path / "incidents")
+    robot = Palmimo(
+        driver=driver,
+        auto_wake=False,
+        thermal_clock=clock,
+        incident_dir=driver.directory,
+        code_version=CodeVersion(commit="abc1234"),
+    )
+    robot.connect()
+    latch(robot, driver, clock)
+    robot.flush_incident()
+    assert rows(robot)[0]["commit"] == "abc1234"
 
 
 def test_robot_flush_returns_path_only_when_written_and_preserves_it_across_reconnect(

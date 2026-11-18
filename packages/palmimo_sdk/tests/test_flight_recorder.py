@@ -1,4 +1,5 @@
 import errno
+import importlib.metadata
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -10,7 +11,7 @@ from typing import Any
 import pytest
 
 from palmimo_sdk import HardwareErrorRead
-from palmimo_sdk._flight_recorder import AxisSample, ServoFlightRecorder, default_incident_dir
+from palmimo_sdk._flight_recorder import AxisSample, CodeVersion, ServoFlightRecorder, default_incident_dir
 
 
 AXES = {"a": AxisSample(1200, 2000, 2100, 40, 7.4)}
@@ -73,8 +74,19 @@ def test_recorder_opens_window_on_new_latch_and_writes_after_post_window(recorde
     assert header["ts"] == "2026-10-13T00:00:00"
     assert header["post_s"] == header["post_s_captured"] == 2
     assert header["truncated"] is False
+    assert (header["commit"], header["branch"], header["dirty"]) == (None, None, None)
+    assert header["packages"] == {"palmimo-sdk": importlib.metadata.version("palmimo-sdk")}
     assert row["t"] == 2
     assert len(list(recorder.incident_dir.glob("*.jsonl"))) == 1
+
+
+def test_recorder_header_names_the_code_version_the_caller_passed(tmp_path: Path) -> None:
+    version = CodeVersion("abc1234", "main", True, {"palmimo-sdk": "0.0.0", "my-agent": "1.2.0"})
+    recorder = ServoFlightRecorder(tmp_path, clock=Clock(), code_version=version)
+    trigger(recorder)
+    header = dump(recorder)[0]
+    assert (header["commit"], header["branch"], header["dirty"]) == ("abc1234", "main", True)
+    assert header["packages"] == {"palmimo-sdk": importlib.metadata.version("palmimo-sdk"), "my-agent": "1.2.0"}
 
 
 def test_recorder_fast_rows_keep_pre_latch_samples_before_t_zero(recorder: ServoFlightRecorder) -> None:
