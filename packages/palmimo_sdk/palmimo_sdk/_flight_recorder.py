@@ -51,12 +51,25 @@ class CodeVersion:
         dirty: Whether a tracked file differs from ``HEAD``.
         packages: Installed version of each distribution the caller names.
             The recorder always sets ``palmimo-sdk`` itself.
+
+    Raises:
+        TypeError: A field holds a value of another type, which the incident
+            header could not be written with.
     """
 
     commit: str | None = None
     branch: str | None = None
     dirty: bool | None = None
-    packages: Mapping[str, str | None] = field(default_factory=dict)
+    packages: Mapping[str, str | None] = field(default_factory=dict, hash=False)
+
+    def __post_init__(self) -> None:
+        if not (
+            isinstance(self.commit, str | None)
+            and isinstance(self.branch, str | None)
+            and isinstance(self.dirty, bool | None)
+            and all(isinstance(name, str) and isinstance(value, str | None) for name, value in self.packages.items())
+        ):
+            raise TypeError(f"CodeVersion fields must be strings, a bool, or None: {self!r}")
 
 
 def _installed_version(distribution: str) -> str | None:

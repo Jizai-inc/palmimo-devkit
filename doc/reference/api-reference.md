@@ -1179,7 +1179,9 @@ result is `Path.home() / ".local/state/palmimo/incidents"`. An empty or relative
 
 `CodeVersion` is a frozen dataclass exported from `palmimo_sdk`. The SDK never
 runs `git`; the caller resolves the version once at startup and passes it in.
-Every field defaults to unknown:
+Every field defaults to unknown. A value of another type raises `TypeError` at
+construction, so a bad version fails before the robot moves rather than when
+an incident is written:
 
 | Field | Type | Meaning |
 |-------|------|---------|

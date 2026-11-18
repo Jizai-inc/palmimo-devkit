@@ -89,6 +89,11 @@ def test_recorder_header_names_the_code_version_the_caller_passed(tmp_path: Path
     assert header["packages"] == {"palmimo-sdk": importlib.metadata.version("palmimo-sdk"), "my-agent": "1.2.0"}
 
 
+def test_code_version_rejects_a_value_the_header_cannot_hold() -> None:
+    with pytest.raises(TypeError):
+        CodeVersion(packages={"my-agent": Path("1.2.0")})  # type: ignore[dict-item]
+
+
 def test_recorder_fast_rows_keep_pre_latch_samples_before_t_zero(recorder: ServoFlightRecorder) -> None:
     observe(recorder, 0, a=0)
     for i in range(301):
