@@ -338,7 +338,11 @@ in and silences whatever the robot was doing (see `services/router.py`'s
 `BargeIn`). That is a deliberate latency trade-off, not an oversight: adding
 a guard here would mean transcribing and classifying before the model is
 even allowed to react, which is exactly the per-stage latency this runtime
-exists to avoid.
+exists to avoid. The trade-off is measurable after the fact: with
+`--log-path` set, every speech onset writes a `speech_started` line and a
+`barge_in` line recording what it cut off (`had_queued` and
+`recently_wrote` for audio, `had_plan` for a running tool plan, and
+whether the robot was `asleep`).
 
 ### `/hear` -- testing the speech path headlessly
 

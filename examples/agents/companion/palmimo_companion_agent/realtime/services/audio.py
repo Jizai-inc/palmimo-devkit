@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 from fractions import Fraction
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 import numpy as np
 from scipy.signal import resample_poly
@@ -40,6 +40,21 @@ API_RATE = 24000
 #: (it still exits once the stream closes), but one that outlives the
 #: service unnecessarily. This is NOT a stop-flag poll -- see services/base.py.
 _MIC_READ_TIMEOUT_S = 0.2
+
+#: How recent the last completed write must be for :meth:`Playback.interrupt`
+#: to report ``recently_wrote``. One ``aplay`` process lives for the whole
+#: session, so its existence alone does not mean audio is playing.
+_RECENT_WRITE_WINDOW_S = 1.0
+
+
+class PlaybackInterruptResult(NamedTuple):
+    """What :meth:`Playback.interrupt` knows about the audio it just cut off."""
+
+    had_queued: bool
+    """At least one chunk was still queued, not yet handed to ``aplay``."""
+
+    recently_wrote: bool
+    """A chunk reached ``aplay`` within :data:`_RECENT_WRITE_WINDOW_S`."""
 
 
 class MicStreamLike(Protocol):
@@ -189,6 +204,9 @@ class Playback:
         self._write_failures = 0
         #: When the writer last warned, on the monotonic clock; writer thread only.
         self._last_warning: float | None = None
+        #: Monotonic time of the last completed write. Set by the writer
+        #: thread, read and cleared by `interrupt`; a single float, so no lock.
+        self._last_write: float | None = None
 
     def _ensure_writer(self) -> None:
         if self._writer is None or not self._writer.is_alive():
@@ -281,6 +299,11 @@ class Playback:
                     self._record_write_failure()
                 # else: interrupt() already reclaimed this chunk's process --
                 # an expected teardown, not a playback failure worth a warning.
+            else:
+                with self._process_lock:
+                    # A write interrupt() already cut must not count as recent audio.
+                    if generation == self._generation:
+                        self._last_write = time.monotonic()
 
     def write(self, pcm: bytes) -> None:
         """Enqueue *pcm* for the writer thread. Never blocks -- safe to call from the event loop.
@@ -308,7 +331,7 @@ class Playback:
                     (thread, proc) for thread, proc in self._pending_kills if thread is not threading.current_thread()
                 ]
 
-    def interrupt(self) -> None:
+    def interrupt(self) -> PlaybackInterruptResult:
         """Drop whatever is queued and kill playback instantly, without blocking the caller.
 
         Called synchronously from the event loop (:class:`~..services.router.BargeIn`),
@@ -323,19 +346,27 @@ class Playback:
         tracked in ``_pending_kills`` so :meth:`close`, if it runs right
         after, can still supervise it instead of treating ``_process is
         None`` as "nothing left to reap."
+
+        Returns what was cut off, for the ``barge_in`` log line. The last-write
+        time is consumed here, so a second interrupt right after this one does
+        not report the same audio again.
         """
+        had_queued = False
         with contextlib.suppress(queue.Empty):
             while True:
                 self._queue.get_nowait()
+                had_queued = True
         with self._process_lock:
             process, self._process = self._process, None
             self._generation += 1
-        if process is None:
-            return
-        thread = threading.Thread(target=self._kill_and_reap_tracked, args=(process,), daemon=True)
-        with self._process_lock:
-            self._pending_kills.append((thread, process))
-        thread.start()
+        last_write, self._last_write = self._last_write, None
+        recently_wrote = last_write is not None and time.monotonic() - last_write < _RECENT_WRITE_WINDOW_S
+        if process is not None:
+            thread = threading.Thread(target=self._kill_and_reap_tracked, args=(process,), daemon=True)
+            with self._process_lock:
+                self._pending_kills.append((thread, process))
+            thread.start()
+        return PlaybackInterruptResult(had_queued=had_queued, recently_wrote=recently_wrote)
 
     def close(self) -> None:
         """Stop the writer thread and reap the current process. Allowed to block: this runs once, at session end.
@@ -408,4 +439,12 @@ class Playback:
                 process.wait(timeout=5)
 
 
-__all__ = ["API_RATE", "CAPTURE_RATE", "MicStreamLike", "MicrophoneFeed", "PitchShifter", "Playback"]
+__all__ = [
+    "API_RATE",
+    "CAPTURE_RATE",
+    "MicStreamLike",
+    "MicrophoneFeed",
+    "PitchShifter",
+    "Playback",
+    "PlaybackInterruptResult",
+]

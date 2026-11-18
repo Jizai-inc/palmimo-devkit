@@ -21,10 +21,16 @@ from .audio import Playback
 from .idle import IdlePacer
 
 
+#: After its first line, an unknown event kind is logged again only on every
+#: this-many-th occurrence, so a kind that keeps streaming stays visible even
+#: if the process dies before the closing summary.
+_UNKNOWN_RELOG_INTERVAL = 100
+
+
 class BridgeLike(Protocol):
     """The subset of :class:`~..bridge.ToolBridge` this router/BargeIn needs."""
 
-    async def interrupt(self) -> None: ...
+    async def interrupt(self) -> bool: ...
 
     async def handle(self, response: Response) -> None: ...
 
@@ -65,17 +71,32 @@ class BargeIn:
     the toolset's in-flight motion is cancelled, and the idle pacer is
     touched so a tick doesn't land on top of the moment someone just started
     talking.
+
+    Each trigger writes one ``barge_in`` line saying what the speech onset
+    cut off, so how often the robot was interrupted -- by a bystander or a
+    VAD false positive included -- can be counted from the log.
     """
 
-    def __init__(self, playback: Playback, bridge: BridgeLike, pacer: IdlePacer) -> None:
+    def __init__(
+        self, playback: Playback, bridge: BridgeLike, pacer: IdlePacer, sleeping: SleepingLike, log: EventLog
+    ) -> None:
         self._playback = playback
         self._bridge = bridge
         self._pacer = pacer
+        self._sleeping = sleeping
+        self._log = log
 
     async def trigger(self) -> None:
-        self._playback.interrupt()
-        await self._bridge.interrupt()
+        cut = self._playback.interrupt()
+        had_plan = await self._bridge.interrupt()
         self._pacer.touch()
+        self._log.write(
+            "barge_in",
+            had_queued=cut.had_queued,
+            recently_wrote=cut.recently_wrote,
+            had_plan=had_plan,
+            asleep=self._sleeping.asleep,
+        )
 
 
 class EventRouter:
@@ -102,15 +123,23 @@ class EventRouter:
         self._sleeping = sleeping
         self._usage = usage
         self._log = log
+        self._unknown_counts: dict[str, int] = {}
 
     async def run(self) -> None:
         """Consume events until the server closes the socket, then raise :class:`_SessionClosed`.
 
         See that exception's docstring for why a bare return would leave the
-        other services running against a dead session.
+        other services running against a dead session. The
+        ``unknown_event_summary`` line is written on every way out: the
+        socket closing, an exception from the stream, or this task being
+        cancelled (session timeout, a stop signal).
         """
-        async for event in self._client.events():
-            await self._dispatch(event)
+        try:
+            async for event in self._client.events():
+                await self._dispatch(event)
+        finally:
+            if self._unknown_counts:
+                self._log.write("unknown_event_summary", counts=dict(self._unknown_counts))
         raise _SessionClosed
 
     async def _dispatch(self, event: protocol.ServerEvent | protocol.Unknown) -> None:
@@ -118,9 +147,11 @@ class EventRouter:
             case protocol.AudioDelta():
                 self._playback.write(base64.b64decode(event.delta))
             case protocol.SpeechStarted():
+                self._log.write("speech_started")
                 await self._barge_in.trigger()
             case protocol.SpeechStopped():
                 self._idle_pacer.touch()
+                self._log.write("speech_stopped")
             case protocol.ResponseCreated():
                 self._idle_pacer.busy = True
             case protocol.ResponseDone():
@@ -139,9 +170,14 @@ class EventRouter:
                 print(f"!! {event.error}", file=sys.stderr, flush=True)
                 self._log.write("server_error", error=event.error)
             case protocol.Unknown():
-                # Never silently swallowed -- an unhandled-but-real event
-                # kind is visible in the log rather than vanishing.
-                self._log.write("unknown_event", event_type=event.type)
+                # Never silently swallowed, but not one line per streamed
+                # delta either: the first of each kind in full, then counted.
+                count = self._unknown_counts.get(event.type, 0) + 1
+                self._unknown_counts[event.type] = count
+                if count == 1:
+                    self._log.write("unknown_event", event_type=event.type)
+                elif count % _UNKNOWN_RELOG_INTERVAL == 0:
+                    self._log.write("unknown_event", event_type=event.type, occurrence=count)
 
 
 __all__ = ["BargeIn", "BridgeLike", "EventRouter", "SleepingLike", "UsageLike", "_SessionClosed"]
