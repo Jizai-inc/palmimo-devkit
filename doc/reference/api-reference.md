@@ -1572,10 +1572,11 @@ hardware error latched, because torque does not take on a servo that has shut do
 `ServoDriver.arm(motors)` puts the named motors back to work as `connect()` leaves
 them: goal at the present position, default profile, torque on (the gain is the
 caller's to write). It is an optional capability too, and what
-[re-arming](#overload-guard) uses. `ServoDriver.reboot(motors)` sends each named
-motor the Reboot instruction, which clears its latched hardware error, then
-waits for each to answer a ping again; on `DynamixelDriver` it raises
-`ConnectionError` naming any that has not answered within 3 s. The motors come
+[re-arming](#overload-guard) uses. `ServoDriver.reboot(motors)` reboots the named
+motors one at a time, which clears each one's latched hardware error, and waits
+for each to answer a ping before the next; on `DynamixelDriver` it raises
+`ConnectionError` naming the first that has not answered within about 3 s (the
+ones before it have already come back). The motors come
 back limp, at their power-on defaults; `arm()` puts them back to work. It is
 optional as well, and what `robot.reboot_servos()` uses.
 

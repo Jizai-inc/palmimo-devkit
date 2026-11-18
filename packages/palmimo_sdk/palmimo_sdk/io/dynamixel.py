@@ -574,10 +574,11 @@ class DynamixelDriver(ServoDriver):
         _arm_motors(self._bus, self._profile_velocity, motors)
 
     def reboot(self, motors: Sequence[str]) -> None:
-        """Reboot each of *motors*, then wait up to :data:`_REBOOT_ANSWER_TIMEOUT_S` for each to answer a ping.
+        """Reboot *motors* one at a time, waiting for each to answer a ping before the next.
 
-        Every motor is sent its reboot before any wait, so they boot together.
-        The motors come back limp; see :meth:`arm`.
+        Each wait lasts about :data:`_REBOOT_ANSWER_TIMEOUT_S`, plus at most one
+        packet timeout for the ping in flight. When a motor fails, the ones before
+        it have already answered again. The motors come back limp; see :meth:`arm`.
 
         Raises:
             RuntimeError: The driver is not connected, or a motor rejected the reboot.
@@ -586,20 +587,15 @@ class DynamixelDriver(ServoDriver):
         """
         if self._bus is None:
             raise RuntimeError("Driver is not connected. Call connect() before reboot().")
-        names = list(motors)
-        for motor in names:
+        for motor in motors:
             self._bus.reboot(motor, num_retry=_REBOOT_RETRY)
-        deadline = time.monotonic() + _REBOOT_ANSWER_TIMEOUT_S
-        waiting = list(names)
-        while waiting:
-            waiting = [motor for motor in waiting if not self._bus.ping(motor)]
-            if not waiting:
-                return
-            if time.monotonic() >= deadline:
-                raise ConnectionError(
-                    f"{', '.join(waiting)} did not answer within {_REBOOT_ANSWER_TIMEOUT_S:.1f}s of the reboot."
-                )
-            time.sleep(_REBOOT_POLL_INTERVAL_S)
+            deadline = time.monotonic() + _REBOOT_ANSWER_TIMEOUT_S
+            while not self._bus.ping(motor):
+                if time.monotonic() >= deadline:
+                    raise ConnectionError(
+                        f"{motor} did not answer within {_REBOOT_ANSWER_TIMEOUT_S:.1f}s of the reboot."
+                    )
+                time.sleep(_REBOOT_POLL_INTERVAL_S)
 
     def read_hardware_errors(self, motors: Sequence[str] | None = None) -> HardwareErrorRead:
         if self._bus is None:

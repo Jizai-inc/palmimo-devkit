@@ -1389,7 +1389,9 @@ def test_arm_holds_and_torques_the_motor_while_another_motor_is_silent() -> None
     assert ("Torque_Enable", "leg_1_yaw", 1) in bus.writes
 
 
-def test_reboot_sends_every_reboot_before_waiting_and_leaves_torque_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reboot_waits_for_each_motor_before_rebooting_the_next_and_leaves_torque_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(dynamixel_module, "_REBOOT_POLL_INTERVAL_S", 0.0)
     driver, bus, _calls = make_driver()
     driver.connect()
@@ -1400,8 +1402,14 @@ def test_reboot_sends_every_reboot_before_waiting_and_leaves_torque_alone(monkey
 
     driver.reboot(["leg_1_yaw", "leg_2_yaw"])
 
-    assert bus.events[:2] == [("reboot", "leg_1_yaw"), ("reboot", "leg_2_yaw")]
-    assert bus.events.count(("ping", "leg_1_yaw")) == 3
+    assert bus.events == [
+        ("reboot", "leg_1_yaw"),
+        ("ping", "leg_1_yaw"),
+        ("ping", "leg_1_yaw"),
+        ("ping", "leg_1_yaw"),
+        ("reboot", "leg_2_yaw"),
+        ("ping", "leg_2_yaw"),
+    ]
     assert bus.telemetry["leg_1_yaw"]["Hardware_Error_Status"] == 0
     assert bus.writes == []
 
@@ -1414,6 +1422,7 @@ def test_reboot_names_the_motor_that_does_not_answer_again(monkeypatch: pytest.M
     del bus.telemetry["leg_2_yaw"]
 
     with pytest.raises(ConnectionError, match="leg_2_yaw") as raised:
-        driver.reboot(["leg_1_yaw", "leg_2_yaw"])
+        driver.reboot(["leg_1_yaw", "leg_2_yaw", "leg_3_yaw"])
 
     assert "leg_1_yaw" not in str(raised.value)
+    assert ("reboot", "leg_3_yaw") not in bus.events
