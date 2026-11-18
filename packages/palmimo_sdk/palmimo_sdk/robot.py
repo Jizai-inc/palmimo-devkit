@@ -3210,12 +3210,15 @@ class Palmimo:
         position; the driver's own profile is restored afterwards.
         """
         motors = list(present)
-        default_pv = driver.profile_velocity if supports(driver, "profile_velocity") else None
         # Set before the write: it goes motor by motor, so a bus error part-way
         # leaves some at 0, and those must get the profile back too.
-        profile_off = default_pv is not None and supports(driver, "set_profile_velocity_units")
+        default_pv = (
+            driver.profile_velocity
+            if supports(driver, "profile_velocity") and supports(driver, "set_profile_velocity_units")
+            else None
+        )
         try:
-            if profile_off:
+            if default_pv is not None:
                 try:
                     driver.set_profile_velocity_units(0, motors)
                 except Exception as exc:
@@ -3225,7 +3228,7 @@ class Palmimo:
             if restore_gain:
                 driver.set_position_p_gain(None, motors)  # raw: limp owns it
         finally:
-            if profile_off and default_pv is not None:
+            if default_pv is not None:
                 try:
                     driver.set_profile_velocity_units(default_pv, motors)
                 except Exception:
