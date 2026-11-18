@@ -2509,8 +2509,9 @@ class Palmimo:
         rebooted. A reboot also resets its gain, profile and goal, so each motor
         that answers again is re-armed as :meth:`step` re-arms a servo that comes
         back: the gain the robot last gave it, goal at where it is, default
-        profile, torque on. A motor whose torque the overload guard cut, or that
-        a failed :meth:`limp` exit left limp, is neither rebooted nor armed.
+        profile, torque on. Its overload streaks restart. A motor whose torque
+        the overload guard cut, or that a failed :meth:`limp` exit left limp, is
+        neither rebooted nor armed.
 
         The servo is limp while it boots, so a joint carrying load sags. Call it
         between steps, from the thread that steps the robot, and only for motors
@@ -2535,6 +2536,7 @@ class Palmimo:
         records = self._rearmer.reboot(
             driver, names, excluded=self._rearm_excluded(), restore_gain=self._gain_restorer(driver)
         )
+        self._leg_safety.forget(names)
         if any(record.armed for record in records):
             self._invalidate_gesture_tuning()
         return records

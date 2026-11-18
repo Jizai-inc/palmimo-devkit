@@ -1079,7 +1079,8 @@ dataclass: `motor`, `armed`, `reason`, `at`) and logged.
 **Rebooting.** A hardware error stays latched until the servo reboots.
 `robot.reboot_servos(motors)` reboots each named servo, waits for it to answer
 (up to 3 s), and re-arms it the same way, since the reboot leaves it limp with
-its gain, profile and goal at their power-on defaults. An axis whose torque the
+its gain, profile and goal at their power-on defaults. Its overload streaks
+restart, as when a silent axis is watched again. An axis whose torque the
 overload guard cut, or that a failed `limp()` exit left limp, is neither
 rebooted nor armed. One servo that does not come back does not stop the rest.
 It returns one `ReArm` per servo, which also goes to `drain_rearms()`; a servo

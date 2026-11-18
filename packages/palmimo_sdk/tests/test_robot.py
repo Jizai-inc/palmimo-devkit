@@ -2789,6 +2789,20 @@ def test_reboot_servos_carries_on_past_a_motor_that_does_not_come_back() -> None
     assert ("arm", ("leg_1_yaw",)) not in driver.log
 
 
+def test_reboot_servos_drops_the_overload_streak_the_motor_built_before_the_reboot() -> None:
+    driver = _RearmDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800}
+    _poll_steps(robot, clock, 2)
+
+    robot.reboot_servos(["leg_6_yaw"])
+    _poll_steps(robot, clock)
+
+    assert robot.drain_overload_trips() == []
+    assert robot.motion == "wave"
+
+
 def test_reboot_servos_rejects_an_unknown_motor() -> None:
     robot, _clock = _overload_robot(_RearmDriver())
 
