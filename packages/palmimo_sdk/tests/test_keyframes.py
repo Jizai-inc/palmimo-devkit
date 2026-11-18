@@ -310,8 +310,11 @@ class _TelemetryDriver(ServoDriver):
         self.temperatures: dict[str, int] = dict.fromkeys(NECK_MOTORS, 40)
         self.writes: list[dict[str, int]] = []
         self.tuning: list[tuple[str, object, object]] = []
-        self.profile_velocity = 300
         self._connected = True
+
+    @property
+    def profile_velocity(self) -> int:
+        return 300
 
     @property
     def is_connected(self) -> bool:
@@ -458,8 +461,11 @@ class _PoseDriver(ServoDriver):
         self.present: dict[str, int] = dict.fromkeys(JOINTS, NEUTRAL)
         self.silent: set[str] = set()
         self.log: list[tuple[str, object]] = []
-        self.profile_velocity = 300
         self._connected = True
+
+    @property
+    def profile_velocity(self) -> int:
+        return 300
 
     @property
     def is_connected(self) -> bool:
@@ -921,7 +927,9 @@ def test_neck_park_holds_a_recovered_limp_axis_with_the_profile_off() -> None:
     assert kinds[1][0] == "write"
 
 
-def test_limp_exit_holds_through_a_user_enabled_iir_without_blending_the_old_pose() -> None:
+def test_limp_exit_holds_through_a_user_enabled_iir_without_blending_the_old_pose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from palmimo_sdk.io.dynamixel import DynamixelDriver
 
     driver = DynamixelDriver.__new__(DynamixelDriver)
@@ -930,12 +938,11 @@ def test_limp_exit_holds_through_a_user_enabled_iir_without_blending_the_old_pos
     filtered = driver._apply_iir
 
     robot, fake = _pose_robot()
-    fake.iir_enabled = True  # type: ignore[attr-defined]
-    fake.iir_alpha = 0.2  # type: ignore[attr-defined]
+    monkeypatch.setattr(type(fake), "iir_enabled", property(lambda _self: driver._iir_enabled))
+    monkeypatch.setattr(type(fake), "iir_alpha", property(lambda _self: driver._iir_alpha))
 
     def set_iir(enabled: bool, alpha: float | None = None, motors: list[str] | None = None) -> None:
         driver.set_iir(enabled, alpha, motors)
-        fake.iir_enabled = enabled  # type: ignore[attr-defined]
 
     fake.set_iir = set_iir  # type: ignore[method-assign]
     real_write = fake._write_positions

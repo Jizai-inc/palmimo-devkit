@@ -272,6 +272,26 @@ class ServoDriver(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} does not support set_profile_velocity().")
 
+    def set_profile_velocity_units(self, value: int, motors: list[str] | None = None) -> None:
+        """Write the backend's own profile register value, with no unit conversion.
+
+        Unlike :meth:`set_profile_velocity`, *value* is not ticks/s: it is what
+        the backend's profile register takes (on a Dynamixel with a time-based
+        profile, milliseconds per move; ``0`` turns the profile off).
+        ``motors`` writes only the named subset; ``None`` writes every motor.
+
+        Optional capability; the default raises :class:`NotImplementedError`.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support set_profile_velocity_units().")
+
+    @property
+    def profile_velocity(self) -> int | None:
+        """The default profile register value :meth:`set_profile_velocity_units` restores to.
+
+        ``None`` when the backend has no profile register.
+        """
+        return None
+
     def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
         """Set Position_P_Gain (servo stiffness).
 
@@ -285,6 +305,39 @@ class ServoDriver(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} does not support set_position_p_gain().")
 
+    @property
+    def position_p_gain(self) -> int | None:
+        """The Position_P_Gain last set for every motor, else the backend default; ``None`` if unknown."""
+        return None
+
+    def read_position_p_gain(self) -> dict[str, int]:
+        """Read the live Position_P_Gain back from every servo (motor name -> gain).
+
+        Optional capability; the default raises :class:`NotImplementedError`.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support read_position_p_gain().")
+
+    def set_iir(self, enabled: bool, alpha: float | None = None, motors: list[str] | None = None) -> None:
+        """Enable or disable a low-pass filter on the goal positions sent to the servos.
+
+        *alpha* in (0, 1]: 1.0 passes goals through unchanged, smaller smooths
+        more and lags more. *motors* limits the filter to those motors; ``None``
+        filters every motor.
+
+        Optional capability; the default raises :class:`NotImplementedError`.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support set_iir().")
+
+    @property
+    def iir_enabled(self) -> bool:
+        """Whether the goal filter of :meth:`set_iir` is on; ``False`` for a backend without one."""
+        return False
+
+    @property
+    def iir_alpha(self) -> float:
+        """The goal filter's alpha; ``1.0`` (no smoothing) for a backend without one."""
+        return 1.0
+
     def set_torque_enabled(self, enabled: bool, motors: Sequence[str] | None = None) -> None:
         """Switch servo torque on or off.
 
@@ -295,3 +348,23 @@ class ServoDriver(ABC):
         Optional capability; the default raises :class:`NotImplementedError`.
         """
         raise NotImplementedError(f"{type(self).__name__} does not support set_torque_enabled().")
+
+
+def supports(driver: object, name: str) -> bool:
+    """Whether *driver* provides the optional capability *name* of :class:`ServoDriver`.
+
+    True when *driver* has the attribute and it is not the default that
+    :class:`ServoDriver` declares; an attribute set on the instance itself
+    counts as provided. An object that does not subclass :class:`ServoDriver`
+    counts by the attribute alone.
+
+    Args:
+        driver (object): The driver to ask.
+        name (str): A method or property name, e.g. ``"set_iir"``.
+    """
+    if not hasattr(driver, name):
+        return False
+    if name in getattr(driver, "__dict__", {}):
+        return True
+    default = getattr(ServoDriver, name, None)
+    return default is None or getattr(type(driver), name, None) is not default

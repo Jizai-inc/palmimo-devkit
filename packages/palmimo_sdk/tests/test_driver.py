@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, Palmimo, ServoDriver
+from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, DynamixelDriver, Palmimo, ServoDriver
 from palmimo_sdk.engine import MotionEngine
 
 
@@ -141,10 +141,15 @@ class TuningRecordingDriver(RecordingDriver):
     def __init__(self) -> None:
         super().__init__()
         self.tuning: list[tuple[Any, ...]] = []
-        # Not part of ServoDriver's contract -- a test-only knob some tests
-        # set directly (mirroring a driver-configured default PV) to verify
-        # release restores that value rather than a hardcoded one.
-        self.profile_velocity: int | None = None
+        self._profile_velocity: int | None = None
+
+    @property
+    def profile_velocity(self) -> int | None:
+        return self._profile_velocity
+
+    @profile_velocity.setter
+    def profile_velocity(self, value: int | None) -> None:
+        self._profile_velocity = value
 
     def set_profile_velocity_units(self, value: int, motors: list[str] | None = None) -> None:
         self.tuning.append(("pv", value, tuple(motors) if motors else None))
@@ -379,3 +384,9 @@ def test_read_hardware_errors_is_optional() -> None:
     driver = RecordingDriver()
     with pytest.raises(NotImplementedError, match="RecordingDriver"):
         driver.read_hardware_errors()
+
+
+def test_servo_driver_declares_every_public_dynamixel_driver_member() -> None:
+    """A capability the bundled driver offers is part of the ServoDriver contract."""
+    public = {name for name in dir(DynamixelDriver) if not name.startswith("_")}
+    assert sorted(public - set(dir(ServoDriver))) == []

@@ -1530,6 +1530,27 @@ comma-separated names in ascending bit order (e.g. `0x21` becomes
 `ElectricalShock` (4), and `Overload` (5). Bit 3 is reserved in the XC330-M288
 e-Manual and is described as `"bit3"`.
 
+`ServoDriver` also declares the servo tuning that `DynamixelDriver` offers and
+the facade uses for gestures, wake, and `limp()`. Each is an optional
+capability:
+
+| Member | What it does | Default |
+|---|---|---|
+| `set_profile_velocity(ticks_per_second)` | Goal-approach speed in ticks/s; a scalar or a per-motor dict, `0` = as fast as the backend allows | raises `NotImplementedError` |
+| `set_profile_velocity_units(value, motors=None)` | Writes the backend's own profile register value unconverted (on a Dynamixel, milliseconds per move; `0` turns the profile off) | raises `NotImplementedError` |
+| `profile_velocity` | The profile register value `set_profile_velocity_units` restores to | `None` |
+| `set_position_p_gain(value, motors=None)` | Position_P_Gain; `None` restores the backend defaults | raises `NotImplementedError` |
+| `position_p_gain` | The gain last set for every motor, else the default | `None` |
+| `read_position_p_gain()` | The live gain read back from every servo | raises `NotImplementedError` |
+| `set_iir(enabled, alpha=None, motors=None)` | Low-pass filter on the goals sent to the servos; `alpha` in (0, 1], 1.0 = no smoothing | raises `NotImplementedError` |
+| `iir_enabled` / `iir_alpha` | The filter's state | `False` / `1.0` |
+
+The defaults are what a backend without the capability reports, so a backend
+overrides only what its hardware can do. `supports(driver, name)` (exported
+from `palmimo_sdk`) tells which: it is true when `driver` has `name` and it is
+not `ServoDriver`'s default. The facade skips the tuning a driver does not
+support.
+
 ### `DynamixelDriver`
 
 The bundled hardware backend (Dynamixel serial bus; needs the `palmimo-sdk[hardware]` extra).
