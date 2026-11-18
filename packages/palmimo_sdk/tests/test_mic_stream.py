@@ -110,7 +110,9 @@ class _RecordingFactory:
         return self.stream
 
 
-def _mic_stream(**kwargs: Any) -> tuple[MicStream, _FakeInputStream, _RecordingFactory]:
+def _mic_stream(
+    stream_cls: type[_FakeInputStream] = _FakeInputStream, **kwargs: Any
+) -> tuple[MicStream, _FakeInputStream, _RecordingFactory]:
     """Build a MicStream wired to a fake InputStream.
 
     Defaults ``processors=[]`` (raw audio) so the many pre-existing tests in
@@ -120,7 +122,7 @@ def _mic_stream(**kwargs: Any) -> tuple[MicStream, _FakeInputStream, _RecordingF
     Tests that exercise the ``processors`` chain itself pass their own fakes
     explicitly, overriding this default via ``**kwargs``.
     """
-    stream = _FakeInputStream(16000, 1, "int16", kwargs.get("blocksize", 512), None)
+    stream = stream_cls(16000, 1, "int16", kwargs.get("blocksize", 512), None)
     factory = _RecordingFactory(stream)
     kwargs.setdefault("processors", [])
     ms = MicStream(input_stream_factory=factory, **kwargs)
@@ -262,31 +264,48 @@ def test_subscribers_receive_the_same_chunk_sequence() -> None:
         ms.close()
 
 
+class _HoldWhenDrainedStream(_FakeInputStream):
+    """Holds read() while nothing is pushed, instead of producing filler, until release().
+
+    For a test that must know exactly what reached a subscription: filler
+    arriving after the pushed chunks would displace them from a bounded queue.
+    """
+
+    def __init__(self, samplerate: int, channels: int, dtype: str, blocksize: int, device: int | None):
+        super().__init__(samplerate, channels, dtype, blocksize, device)
+        self._released = threading.Event()
+
+    def release(self) -> None:
+        self._released.set()
+
+    def read(self, n: int) -> tuple[np.ndarray, bool]:
+        while self._queue.empty() and not self._released.wait(0.005):
+            pass
+        return super().read(n)
+
+
 def test_full_subscription_queue_drops_oldest_and_keeps_latest() -> None:
-    ms, stream, _factory = _mic_stream(device_key="k-drop")
+    ms, stream, _factory = _mic_stream(_HoldWhenDrainedStream, device_key="k-drop")
+    assert isinstance(stream, _HoldWhenDrainedStream)
     sub = ms.subscribe(maxsize=2)
     ms.open()
     try:
         for v in (1, 2, 3, 4, 5):
             stream.push_chunk([v] * 512)
 
-        assert _wait_until(lambda: sub.dropped >= 3)
-        # Drain synchronously (no timeout wait) to minimize the race window
-        # against the background thread's continuing filler production —
-        # whatever real (positive) markers remain must end with the newest.
+        # dropped counts before the new chunk is queued, so wait for both.
+        assert _wait_until(lambda: sub.dropped == 3 and sub._queue.qsize() == 2)
         remaining = []
         while True:
             try:
                 item = sub._queue.get_nowait()
             except queue.Empty:
                 break
-            if item is not None:
-                remaining.append(int(item[0]))
-        positive = [v for v in remaining if v > 0]
-        assert positive
-        assert positive[-1] == 5
-        assert sub.dropped >= 3
+            remaining.append(int(item[0]))
+        assert remaining == [4, 5]
+        assert sub.dropped == 3
     finally:
+        stream.release()
         ms.close()
 
 
