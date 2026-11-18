@@ -2502,22 +2502,69 @@ class Palmimo:
         """Servos that answered again but were not re-armed, mapped to why; cleared by :meth:`connect`."""
         return self._rearmer.unarmed
 
+    def reboot_servos(self, motors: Iterable[str]) -> list[ReArm]:
+        """Reboot *motors* to clear a latched hardware error, then re-arm each one.
+
+        A servo that shut itself down on a hardware error stays limp until it is
+        rebooted. A reboot also resets its gain, profile and goal, so each motor
+        that answers again is re-armed as :meth:`step` re-arms a servo that comes
+        back: the gain the robot last gave it, goal at where it is, default
+        profile, torque on. A motor whose torque the overload guard cut, or that
+        a failed :meth:`limp` exit left limp, is neither rebooted nor armed.
+
+        The servo is limp while it boots, so a joint carrying load sags. Call it
+        between steps, from the thread that steps the robot, and only for motors
+        whose cause has been dealt with: a fault that persists latches again.
+
+        Args:
+            motors (Iterable[str]): Servo names to reboot.
+
+        Returns:
+            list[ReArm]: One record per motor, in the order given, also queued
+                for :meth:`drain_rearms`. A motor not re-armed stays in
+                :attr:`unarmed_motors`.
+
+        Raises:
+            ValueError: *motors* is empty or names an unknown joint.
+            RuntimeError: No connected driver.
+        """
+        names = self._pose_joints_from(motors)
+        if not names:
+            raise ValueError("reboot_servos() needs at least one motor.")
+        driver = self._connected_driver()
+        records = self._rearmer.reboot(
+            driver, names, excluded=self._rearm_excluded(), restore_gain=self._gain_restorer(driver)
+        )
+        if any(record.armed for record in records):
+            self._invalidate_gesture_tuning()
+        return records
+
     def _rearm_rejoined(self, driver: ServoDriver) -> None:
         rejoined = [motor for poller in self._pollers for motor in poller.take_rejoined()]
         if not rejoined:
             return
-        excluded = {
+        if self._rearmer.rearm(
+            driver, rejoined, excluded=self._rearm_excluded(), restore_gain=self._gain_restorer(driver)
+        ):
+            self._invalidate_gesture_tuning()
+
+    def _rearm_excluded(self) -> dict[str, str]:
+        """Motors re-arming must leave as they are, mapped to why."""
+        return {
             **dict.fromkeys(self._limp_left, "limp() left it limp"),
             **dict.fromkeys(self._torque_cut, "the overload guard cut its torque"),
         }
 
+    def _gain_restorer(self, driver: ServoDriver) -> Callable[[str], None]:
         def restore_gain(motor: str) -> None:
             self._write_gain(driver, self._gain.get(motor), [motor])
 
-        if self._rearmer.rearm(driver, rejoined, excluded=excluded, restore_gain=restore_gain):
-            # Gesture tuning (wave gain, soft return, neck profile) is reapplied to every motor on the sync that follows.
-            self._gesture_tuned = None
-            self._neck_gesture_tuned = False
+        return restore_gain
+
+    def _invalidate_gesture_tuning(self) -> None:
+        # Gesture tuning (wave gain, soft return, neck profile) is reapplied to every motor on the sync that follows.
+        self._gesture_tuned = None
+        self._neck_gesture_tuned = False
 
     def _log_thermal_lockout(self) -> None:
         """Re-log every :data:`_THERMAL_IGNORE_LOG_INTERVAL_S` while the guard keeps overriding the neck.

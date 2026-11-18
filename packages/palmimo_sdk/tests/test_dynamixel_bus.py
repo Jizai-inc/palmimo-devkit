@@ -292,6 +292,9 @@ class FakePacketHandler:
             return COMM_RX_FAIL, 0
         return (COMM_RX_FAIL if motor_id in self.silent else COMM_SUCCESS), self.errors.get(motor_id, self.error)
 
+    def reboot(self, port: object, motor_id: int) -> tuple[int, int]:
+        return self.writeTxRx(port, motor_id, 0, 0, [])
+
     def ping(self, port: object, motor_id: int) -> tuple[int, int, int]:
         return 1200, COMM_SUCCESS, self.errors.get(motor_id, self.error)
 
@@ -384,3 +387,28 @@ def test_ping_counts_a_servo_with_only_the_alert_bit_as_present(error: int, foun
     bus = make_write_bus(FakePacketHandler(silent=set(), error=error))
 
     assert (bus._ping(1) == 1200) is found
+
+
+@pytest.mark.parametrize(
+    ("drops", "error"),
+    [
+        pytest.param(1, 0, id="one_drop_recovers"),
+        pytest.param(0, dynamixel_sdk.ERRBIT_ALERT, id="alert_only"),
+    ],
+)
+def test_reboot_retries_a_dropped_reply_and_accepts_the_alert_bit(drops: int, error: int) -> None:
+    handler = FakePacketHandler(silent=set(), error=error, drops={2: drops})
+    bus = make_write_bus(handler)
+
+    bus.reboot("leg_1_pitch1", num_retry=1)
+
+    assert handler.writes == [2] * (drops + 1)
+
+
+def test_reboot_raises_when_the_servo_never_acknowledges() -> None:
+    handler = FakePacketHandler(silent={2})
+    bus = make_write_bus(handler)
+
+    with pytest.raises(ConnectionError, match="reboot id 2"):
+        bus.reboot("leg_1_pitch1", num_retry=1)
+    assert handler.writes == [2, 2]

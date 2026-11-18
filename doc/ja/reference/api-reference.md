@@ -474,13 +474,16 @@ robot = Palmimo(
 
 **再アーム。** 一瞬電源が落ちて無応答になったサーボは、トルクが切れ、ゲインとプロファイルが電源投入時の既定値に戻った状態で再起動します。そこで、無応答だった軸が再び応答すると、次の `step()` でその軸を再アームします（`wake()` / `sleep()` / `return_to_neutral()` のグライド中には行いません）。ハードウェアエラーがラッチされていなければ、ロボットが最後に与えたゲインを書き戻し、目標位置を現在位置に合わせ、プロファイルを戻してから、 `connect()` と同じ手順でトルクを入れます。その後、ジェスチャー用の調整を再適用します。書き込みはすべて冪等なので、再起動していないサーボは何も変わりません。ハードウェアエラーがラッチされている軸（サーボが自分を守って停止した状態です。再起動するか電源を入れ直してください）、過負荷ガードがトルクを切った軸、 `limp()` の終了に失敗して脱力したままの軸は再アームしません。試みはそれぞれ `ReArm`（frozen dataclass で `motor`、`armed`、`reason`、`at`）として残し、ログにも出します。
 
+**再起動。** ハードウェアエラーは、サーボが再起動するまでラッチされたままです。 `robot.reboot_servos(motors)` は、指定したサーボをそれぞれ再起動し、応答が戻るのを待って（最大 3 秒）、同じ手順で再アームします。再起動したサーボはトルクが切れ、ゲイン・プロファイル・目標位置が電源投入時の既定値に戻っているためです。過負荷ガードがトルクを切った軸と、 `limp()` の終了に失敗して脱力したままの軸は、再起動も再アームもしません。1 つのサーボが戻らなくても、残りのサーボは続けて処理します。サーボごとに 1 つの `ReArm` を返し、同じものを `drain_rearms()` にも残します。再アームしなかったサーボは `unarmed_motors` に残ります。起動中のサーボは脱力するので、荷重のかかった関節は沈みます。ステップの合間に、ロボットをステップさせているスレッドから、原因を取り除いてから呼んでください。原因が残っていると、エラーは再びラッチされます。
+
 | メンバー | 戻り値 |
 |--------|---------|
 | `robot.drain_watch_changes()` | 脚と首のガードの `list[WatchChange]` を古い順に返します。呼び出しでキューを空にします。キューは各ガード最新 64 件を保持します。 |
 | `robot.unwatched_motors` | 現在外している軸のタプルです。すべて監視中なら空です。 |
 | `robot.blind_guards` | バスが見えなくなっている（軸を 3 つ外したか、3 回連続で空の読み取り）ガード名のタプルです。すべて見えていれば空です。見えないガードは何も判定しません。 |
 | `robot.drain_rearms()` | `list[ReArm]` を古い順に返します。呼び出しでキューを空にします。キューは最新 64 件を保持します。 |
-| `robot.unarmed_motors` | 再び応答したが再アームしなかった軸と、その理由の `dict[str, str]` です。 `connect()` で空になります。 |
+| `robot.unarmed_motors` | 再び応答した、または再起動したが、再アームしなかった軸と、その理由の `dict[str, str]` です。 `connect()` で空になります。 |
+| `robot.reboot_servos(motors)` | 指定した順にサーボごと 1 つの `list[ReArm]` を返します。空のリストや不明な名前には `ValueError`、接続済みのドライバーがなければ `RuntimeError` を送出します。 |
 
 **反応。**
 
@@ -655,7 +658,7 @@ from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK
 
 `ServoDriver.read_positions()` は現在のサーボ位置を読みますが、読み取り失敗を安全な代替値（バッチ全体の失敗なら `{}`、単一モーターの欠落なら `NEUTRAL`）に置き換えるため、呼び出し元は欠落と実際の `NEUTRAL` 読み取りを区別できません。 `ServoDriver.read_positions_span(motors=None)` は、同じ信号を代替値なしで読みます。返すのは `ServoPositions`（`palmimo_sdk.io.base.ServoPositions`）で、`positions` のマッピングには応答したモーターだけを含めます。併せて `silent`（問い合わせたが無応答）と `unreached`（走査がすでに停止したため、問い合わせていない）を持ちます。後述の `ServoTelemetry` と同じ構造です。読み取りの欠落を実際の関節位置と取り違えてはいけない呼び出し元（固定の制御レートで動くポリシーループなど）は、 `read_positions()` の代わりにこちらを使います。任意の機能で、デフォルトは `NotImplementedError` を送出します。
 
-`ServoDriver.read_telemetry(motors=None)` は、1 回の走査で `current`（符号付きの生の値）、 `voltage`（V）、`temperature`（°C）、`position`（生の tick）を持つ `ServoTelemetry` を返し、同じ `silent` / `unreached` の管理情報を持ちます。[電源レールの低電圧ガード](#電源レールの低電圧ガード)は `voltage` を読みます。 `ServoDriver.set_torque_enabled(enabled, motors=None)` は、指定したモーターのトルクを切り替えます（`None` なら全モーター）。どちらも任意の機能で、デフォルトは `NotImplementedError` を送出します。 `DynamixelDriver` でトルクを入れる操作（`connect()` も行います）は、ハードウェアエラーがラッチされたサーボがあると、そのサーボ名を示して `RuntimeError` を送出します。シャットダウンしたサーボにはトルクが入らないためです。 `ServoDriver.arm(motors)` は、指定したモーターを `connect()` 直後と同じ状態に戻します（目標位置を現在位置に合わせ、プロファイルを既定値に戻し、トルクを入れます。ゲインは呼び出し側が書きます）。これも任意の機能で、再アームが使います。
+`ServoDriver.read_telemetry(motors=None)` は、1 回の走査で `current`（符号付きの生の値）、 `voltage`（V）、`temperature`（°C）、`position`（生の tick）を持つ `ServoTelemetry` を返し、同じ `silent` / `unreached` の管理情報を持ちます。[電源レールの低電圧ガード](#電源レールの低電圧ガード)は `voltage` を読みます。 `ServoDriver.set_torque_enabled(enabled, motors=None)` は、指定したモーターのトルクを切り替えます（`None` なら全モーター）。どちらも任意の機能で、デフォルトは `NotImplementedError` を送出します。 `DynamixelDriver` でトルクを入れる操作（`connect()` も行います）は、ハードウェアエラーがラッチされたサーボがあると、そのサーボ名を示して `RuntimeError` を送出します。シャットダウンしたサーボにはトルクが入らないためです。 `ServoDriver.arm(motors)` は、指定したモーターを `connect()` 直後と同じ状態に戻します（目標位置を現在位置に合わせ、プロファイルを既定値に戻し、トルクを入れます。ゲインは呼び出し側が書きます）。これも任意の機能で、再アームが使います。 `ServoDriver.reboot(motors)` は、指定したモーターそれぞれに Reboot 命令を送ってラッチされたハードウェアエラーを解除し、それぞれが ping に再び応答するまで待ちます。 `DynamixelDriver` では、3 秒以内に応答しなかったモーターを示して `ConnectionError` を送出します。モーターはトルクが切れた電源投入時の既定値の状態で戻るので、 `arm()` で動ける状態に戻します。これも任意の機能で、 `robot.reboot_servos()` が使います。
 
 ### `DynamixelDriver`
 

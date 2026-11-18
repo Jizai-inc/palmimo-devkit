@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Re-arming a servo that answers again after going silent.
+"""Re-arming a servo that answers again after going silent, or that was rebooted.
 
 A servo that loses power for a moment reboots with its RAM settings back at
 their power-on defaults: torque off, default gain and profile. It answers the
@@ -11,7 +11,8 @@ jumping to a stale goal, then the profile, then torque.
 Every write is idempotent, so a servo that never rebooted is left as it was.
 A servo with a hardware error latched is not re-armed: it turned its own torque
 off to protect itself, and clearing that takes a reboot, which is the
-operator's call.
+operator's call. :meth:`Rearmer.reboot` is that reboot: it reboots the servo,
+waits for it to answer, and re-arms it the same way.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ REARM_HISTORY = 64
 
 @dataclass(frozen=True)
 class ReArm:
-    """One attempt to re-arm a servo that answered again after going silent.
+    """One attempt to re-arm a servo that answered again after going silent, or that was rebooted.
 
     Attributes:
         motor (str): The servo's name.
@@ -49,7 +50,7 @@ class ReArm:
 
 
 class Rearmer:
-    """Re-arms servos that answered again, and remembers the ones it could not."""
+    """Re-arms servos that answered again or were rebooted, and remembers the ones it could not."""
 
     def __init__(self, clock: Callable[[], float]) -> None:
         self._clock = clock
@@ -58,7 +59,7 @@ class Rearmer:
 
     @property
     def unarmed(self) -> dict[str, str]:
-        """Servos that answered again but were not re-armed, mapped to why."""
+        """Servos that answered again, or were rebooted, but were not re-armed, mapped to why."""
         return dict(self._unarmed)
 
     def reset(self) -> None:
@@ -86,23 +87,68 @@ class Rearmer:
         """
         armed = False
         for motor in motors:
-            reason = excluded.get(motor)
-            if reason is None:
-                try:
-                    reason = _rearm_motor(driver, motor, restore_gain)
-                except NotImplementedError as exc:
-                    reason = f"the driver cannot re-arm it ({exc})"
-                except Exception as exc:
-                    reason = f"re-arming failed ({exc})"
-            self.log.record(ReArm(motor, reason is None, reason or "", self._clock()))
-            if reason is None:
-                armed = True
-                self._unarmed.pop(motor, None)
-                logger.warning("%s answered again; re-armed it (gain, hold goal, profile, torque on).", motor)
-            else:
-                self._unarmed[motor] = reason
-                logger.error("%s answered again but was not re-armed: %s.", motor, reason)
+            record = self._attempt(
+                motor, excluded, lambda m: _rearm_motor(driver, m, restore_gain), "answered again", "re-arming"
+            )
+            armed = armed or record.armed
         return armed
+
+    def reboot(
+        self,
+        driver: ServoDriver,
+        motors: Iterable[str],
+        *,
+        excluded: Mapping[str, str],
+        restore_gain: Callable[[str], None],
+    ) -> list[ReArm]:
+        """Reboot each of *motors* not in *excluded*, then re-arm it, recording every attempt.
+
+        A reboot clears a latched hardware error and leaves the servo limp, so
+        each one is re-armed as :meth:`rearm` does. A motor in *excluded* is
+        neither rebooted nor armed. One motor's failure does not stop the rest.
+
+        Args:
+            driver (ServoDriver): Connected driver.
+            motors (Iterable[str]): Servos to reboot.
+            excluded (Mapping[str, str]): Servos to leave as they are, mapped to why.
+            restore_gain (Callable[[str], None]): Writes a servo's current gain back.
+
+        Returns:
+            list[ReArm]: One record per motor, in the order given.
+        """
+
+        def reboot_and_arm(motor: str) -> str | None:
+            driver.reboot([motor])
+            return _rearm_motor(driver, motor, restore_gain)
+
+        return [self._attempt(motor, excluded, reboot_and_arm, "was rebooted", "rebooting") for motor in motors]
+
+    def _attempt(
+        self,
+        motor: str,
+        excluded: Mapping[str, str],
+        action: Callable[[str], str | None],
+        event: str,
+        verb: str,
+    ) -> ReArm:
+        """Run *action* on *motor* unless excluded, then record and log the outcome."""
+        reason = excluded.get(motor)
+        if reason is None:
+            try:
+                reason = action(motor)
+            except NotImplementedError as exc:
+                reason = f"the driver cannot do it ({exc})"
+            except Exception as exc:
+                reason = f"{verb} failed ({exc})"
+        record = ReArm(motor, reason is None, reason or "", self._clock())
+        self.log.record(record)
+        if reason is None:
+            self._unarmed.pop(motor, None)
+            logger.warning("%s %s; re-armed it (gain, hold goal, profile, torque on).", motor, event)
+        else:
+            self._unarmed[motor] = reason
+            logger.error("%s %s but was not re-armed: %s.", motor, event, reason)
+        return record
 
 
 def _rearm_motor(driver: ServoDriver, motor: str, restore_gain: Callable[[str], None]) -> str | None:

@@ -163,6 +163,9 @@ in `toolset.py` saying so).
   it, the overload guard cut its torque, or `limp()` left it limp — see
   `robot.drain_rearms()` / `robot.unarmed_motors` in
   [doc/reference/api-reference.md](doc/reference/api-reference.md#overload-guard).
+- **A latched hardware error is cleared only by a reboot**, and a reboot leaves
+  the servo limp: `robot.reboot_servos()` reboots and re-arms it — see
+  [doc/reference/api-reference.md](doc/reference/api-reference.md#overload-guard).
 - Always smooth transitions — abrupt jumps damage gears
 - `stop()` returns to neutral gradually; NEVER skip it
 - Safe servo range: 200-3900 (avoid mechanical limits at 0 and 4095)

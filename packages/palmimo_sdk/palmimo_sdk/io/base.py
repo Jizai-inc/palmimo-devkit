@@ -277,6 +277,26 @@ class ServoDriver(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} does not support arm().")
 
+    def reboot(self, motors: Sequence[str]) -> None:
+        """Reboot *motors* and wait until each answers again.
+
+        Rebooting clears a latched hardware error. It also returns the servo's
+        RAM settings to their power-on defaults, so it comes back limp:
+        :meth:`arm` (and the caller's gain) puts it back to work.
+
+        Optional capability; the default raises :class:`NotImplementedError`.
+
+        Args:
+            motors (Sequence[str]): Motors to reboot.
+
+        Raises:
+            RuntimeError: The driver is not connected, or a motor rejected the reboot.
+            ConnectionError: A motor did not take the reboot, or did not answer
+                again in time.
+            KeyError: An unknown motor name was requested.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support reboot().")
+
     def set_profile_velocity(self, ticks_per_second: int | dict[str, int]) -> None:
         """Set the goal-approach speed, in **ticks per second**.
 
