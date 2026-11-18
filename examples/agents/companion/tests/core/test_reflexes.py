@@ -13,11 +13,18 @@ from palmimo_sdk.agent.toolset import AgentToolSet
 
 
 class FakeToolset:
-    """Records calls; ``busy`` / ``look_at_face_result`` are test-controlled."""
+    """Records calls; ``busy`` / ``look_at_face_result`` / ``servo_bus`` are test-controlled.
 
-    def __init__(self, *, busy: bool = False, look_at_face_result: str = LOOK_AT_FACE_SEEN_MARK) -> None:
+    With ``servo_bus=False`` the servo tools' results end with the note
+    ``AgentToolSet.call()`` adds when the robot has no servo bus.
+    """
+
+    def __init__(
+        self, *, busy: bool = False, look_at_face_result: str = LOOK_AT_FACE_SEEN_MARK, servo_bus: bool = True
+    ) -> None:
         self.busy = busy
         self.look_at_face_result = look_at_face_result
+        self.servo_bus = servo_bus
         self.calls: list[tuple[str, dict]] = []
 
     def is_busy(self) -> bool:
@@ -27,10 +34,11 @@ class FakeToolset:
         from palmimo_sdk.agent.tools import ToolResult
 
         self.calls.append((name, args))
+        servo_note = "" if self.servo_bus else " (no servo bus connected; nothing moved)"
         if name == "wave_both":
-            return ToolResult(text="waved both front legs")
+            return ToolResult(text="waved both front legs" + servo_note)
         if name == "look_at_face":
-            return ToolResult(text=self.look_at_face_result)
+            return ToolResult(text=self.look_at_face_result + servo_note)
         if name == "show_emoji":
             return ToolResult(text="face shown")
         raise AssertionError(f"unexpected tool call: {name}")
@@ -105,6 +113,25 @@ async def test_face_detection_notifies_nothing_when_the_face_was_not_seen() -> N
     await engine.run(_detections([Detection(summary="a face", kind=DetectionKind.FACE)]))
 
     assert notes == []
+
+
+async def test_no_wave_or_turn_is_reported_without_a_servo_bus() -> None:
+    toolset = FakeToolset(look_at_face_result=LOOK_AT_FACE_SEEN_MARK, servo_bus=False)
+    notes, notify = _recorder()
+    engine = ReflexEngine(_toolset(toolset), notify)
+
+    await engine.run(
+        _detections(
+            [
+                Detection(summary="someone is waving", kind=DetectionKind.WAVE),
+                Detection(summary="a face", kind=DetectionKind.FACE),
+                Detection(summary="heard 'palmimo'", kind=DetectionKind.NAME_CALL),
+            ]
+        )
+    )
+
+    assert [name for name, _ in toolset.calls] == ["wave_both", "look_at_face", "show_emoji", "look_at_face"]
+    assert notes == ["[reflex] answered a call (heard 'palmimo')."]
 
 
 async def test_a_busy_toolset_skips_the_reflex_entirely() -> None:

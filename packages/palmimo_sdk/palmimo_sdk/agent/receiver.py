@@ -54,12 +54,15 @@ class PalmimoLike(Protocol):
 
     Movement/gesture setters, ``run``/``stop``/``cancel``, neck
     ``look``/``look_center``, ``set_expression``/``say``/``stop_speech``, the
-    ``display``/``camera`` peripherals, ``cancel_checkpoint``/
-    ``raise_if_cancelled`` (a custom ``Tool.execute()``'s own cooperative
+    ``is_connected`` servo-bus state, the ``display``/``camera`` peripherals,
+    ``cancel_checkpoint``/``raise_if_cancelled`` (a custom ``Tool.execute()``'s own cooperative
     loop -- see e.g. ``examples/agents/companion``'s face-tracking tool), and
     the cancel-scope arm/disarm pair :meth:`~palmimo_sdk.agent.toolset.AgentToolSet.call`
     wraps every dispatch in. Precedent: :class:`palmimo_wakeword_agent.wiring._ServoDriverLike`.
     """
+
+    @property
+    def is_connected(self) -> bool: ...
 
     # ----------------------------------------------------------------
     # Peripheral properties -- only ever compared to ``None`` or (camera)

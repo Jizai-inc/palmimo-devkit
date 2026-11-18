@@ -244,7 +244,9 @@ _SERVER_INSTRUCTIONS = (
     "way to preempt one call from another. Peripherals (servo bus, face "
     "display, speaker, head camera) that were not reachable at startup have "
     "their tools respond with a descriptive not-attached message rather than "
-    "being hidden from the tool list."
+    "being hidden from the tool list. Without a servo bus, movement tools "
+    "still succeed and end their result with "
+    "`(no servo bus connected; nothing moved)`."
 )
 
 

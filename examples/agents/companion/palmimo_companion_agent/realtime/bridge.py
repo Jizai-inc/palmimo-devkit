@@ -95,15 +95,20 @@ class ToolBridge:
         """Every plan-execution task currently in flight."""
         return frozenset(self._tasks)
 
-    async def interrupt(self) -> None:
+    async def interrupt(self) -> bool:
         """Barge-in entry point: bump the epoch and cancel whatever the toolset is running.
 
         Called from :class:`~.services.router.BargeIn`. Bumping the epoch
         happens BEFORE the cancel so a plan loop's next epoch check (which
         may already be waiting on the event loop) sees the new value.
+
+        Returns whether a plan-execution task was in flight, read before the
+        cancel, for the ``barge_in`` log line.
         """
+        had_plan = bool(self._tasks)
         self._epoch += 1
         await self._view.cancel_running()
+        return had_plan
 
     async def handle(self, response: Response) -> None:
         """React to a finished response: F3 for a cancelled one, otherwise detach a plan run.
@@ -116,6 +121,9 @@ class ToolBridge:
         """
         if response.status == "cancelled":
             await self._flush(response.function_calls, _INTERRUPTED_BY_CANCELLED_RESPONSE, reason="cancelled_response")
+            return
+        if not response.function_calls:
+            # Nothing to run; tracking a task here would make interrupt() report a plan.
             return
         is_idle = (response.metadata or {}).get("palmimo_turn") == IDLE_TURN_METADATA["palmimo_turn"]
         epoch = self._epoch

@@ -210,6 +210,8 @@ class TestCapture:
 class _WakeRecorder:
     """Records the order of everything WakeUp does, so the sequence can be asserted."""
 
+    is_connected = True
+
     def __init__(self) -> None:
         self.calls: list[str] = []
 

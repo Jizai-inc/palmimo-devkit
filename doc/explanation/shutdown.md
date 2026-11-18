@@ -29,7 +29,7 @@ per entry point, because it is the part that genuinely must differ.
 |---|---|---|
 | Yes — it sits in an `await` | `loop_stop_on_signals` (`loop.add_signal_handler`) | The handler runs as an ordinary callback *in* the loop, so it can do real work: cancel the task that is waiting, set the event the session watches. |
 | No — it blocks synchronously (a mic queue, a blocking read) | `stop_flag_on_signals` | A cancellation is delivered at an `await` the loop never reaches, so it would sit unread. The handler sets a flag; the loop decides when to look. |
-| There is no loop of ours — control is inside a third-party runner | `interrupt_on_signals` | Textual and uvicorn own the loop. Converting the signal to `KeyboardInterrupt` gets our own `finally` back, which is all we need. |
+| There is no loop of ours — control is inside a third-party runner | `interrupt_on_signals` | uvicorn and Textual own the loop. Converting the signal to `KeyboardInterrupt` gets our own `finally` back, which is all we need. Textual clears ISIG while it owns the terminal, so Ctrl-C reaches it as a key press, not SIGINT; only SIGTERM/SIGHUP take this path. |
 
 The three are **correctly different**. Picking one idiom for all of them breaks
 at least one:
@@ -59,7 +59,8 @@ entry points in this repository have **not** all moved onto it yet:
 |---|---|
 | A user script (`with Palmimo() as robot:`) | Covered. `Palmimo.disconnect()` enforces the rule on its own — see below — without the caller touching this module. |
 | MCP server (`palmimo_sdk/mcp/__main__.py`) | Parks on a terminating signal, using its own equivalent of `interrupt_on_signals` plus `_signals.signals_ignored`. It moves onto this module in a follow-up; the behaviour does not change when it does. |
-| companion TUI / CLI / realtime, wake-word agent | Not yet. Each carries its own stop handling, and the gaps are known — the wake-word agent's is described above. They move onto this module one at a time. |
+| companion pipeline CLI / TUI | Covered. The CLI stops through `loop_stop_on_signals` and ignores every later stop signal, SIGINT included, for the whole of `Runtime.aclose()` — so a second Ctrl+C does not shorten that teardown. The TUI turns SIGTERM/SIGHUP into `KeyboardInterrupt` through `interrupt_on_signals`, nested in `signals_ignored(*TERMINATING_SIGNALS)` so they stay ignored from there into the park; on that path it parks the robot without running the rest of `aclose()`. |
+| companion realtime, wake-word agent | Not yet. Each carries its own stop handling, and the gaps are known — the wake-word agent's is described above. They move onto this module one at a time. |
 
 Adding the module before its callers is deliberate: it is the half that has to
 be identical everywhere, and a guard that only some entry points can reach is

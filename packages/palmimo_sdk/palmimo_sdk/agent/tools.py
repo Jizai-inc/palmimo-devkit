@@ -177,6 +177,13 @@ class Tool(BaseModel):
     #: does the racing.
     long_running: ClassVar[bool] = False
 
+    #: Whether this tool's ``execute()`` commands the servos (legs or neck).
+    #: ``False`` by default. :meth:`~palmimo_sdk.agent.toolset.AgentToolSet.call`
+    #: appends ``(no servo bus connected; nothing moved)`` to the result of a
+    #: tool marked ``True`` when the robot has no servo bus, so ``execute()``
+    #: itself never has to check for one.
+    drives_servos: ClassVar[bool] = False
+
     def execute(self, robot: PalmimoLike) -> ToolResult:
         raise NotImplementedError
 
@@ -325,6 +332,8 @@ class Expressive(Tool):
        ``handle.error`` in the result text. A speech failure never marks the
        whole call ``is_error`` -- only the action's own outcome does.
     """
+
+    drives_servos: ClassVar[bool] = True
 
     face: FaceExpression | None = Field(
         default=None,
@@ -702,6 +711,7 @@ class SleepTool(Tool):
     # barge-in's cancel() as "handled" while the sleep glide finishes on its
     # own, silently swallowing the interrupt instead of surfacing it.
     long_running: ClassVar[bool] = False
+    drives_servos: ClassVar[bool] = True
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
         robot.sleep()
@@ -718,6 +728,7 @@ class WakeTool(Tool):
     # time.sleep() glide, so there is no MotionCancelled for long_running=True
     # to ever race against.
     long_running: ClassVar[bool] = False
+    drives_servos: ClassVar[bool] = True
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
         robot.wake()
@@ -1041,6 +1052,7 @@ class StopTool(Tool):
     # in-flight action, so there is nothing meaningful left to cancel it
     # with.
     long_running: ClassVar[bool] = False
+    drives_servos: ClassVar[bool] = True
 
     def execute(self, robot: PalmimoLike) -> ToolResult:
         robot.stop()

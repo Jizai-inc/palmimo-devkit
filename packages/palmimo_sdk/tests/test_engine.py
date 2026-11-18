@@ -7,6 +7,10 @@ import pytest
 from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, Motion, MotionEngine
 
 
+# Largest plausible single-frame move at 60fps (~44°). Anything above this is an
+# angle wrap, not motion — a full turn is 4096 ticks.
+MAX_FRAME_STEP = 500
+
 ALL_MOTIONS = [
     Motion.FORWARD,
     Motion.BACKWARD,
@@ -1269,6 +1273,7 @@ def test_clap_height_floor_keeps_the_sweep_off_the_ground(height: float) -> None
     "knob,motion",
     [
         ("wave_both_intro_speed", Motion.WAVE_BOTH),
+        ("wave_raise_speed", Motion.WAVE_BOTH),
         ("wave_both_speed", Motion.WAVE_BOTH),
         ("clap_intro_speed", Motion.CLAP),
     ],
@@ -1279,9 +1284,10 @@ def test_rate_knob_zero_or_negative_cannot_freeze_the_gesture(knob: str, motion:
     engine = MotionEngine()
     setattr(engine, knob, value)
     engine.motion = motion
-    for _ in range(200):
+    for _ in range(400):
+        before = engine._wave_phase
         engine.step()
-    assert engine._wave_phase > 0.3
+        assert engine._wave_phase > before, f"clock stalled at {before:.3f}s"
 
 
 def test_wave_both_phase_half_alternates_the_arms() -> None:
@@ -1453,3 +1459,23 @@ def test_clap_knob_extremes_stay_in_safe_range(
         pos = engine.step()
         for name, tick in pos.items():
             assert SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK, f"{name}={tick} out of range"
+
+
+@pytest.mark.parametrize("roll_deg", [5.0, 20.0, 30.0, 45.0])
+def test_dance_roll_extremes_stay_continuous_and_in_safe_range(roll_deg: float) -> None:
+    """However far the body rolls, no axis teleports between frames and every tick stays safe.
+
+    dance is the only motion that drives every leg through a whole-body rotation,
+    so it is where an unnormalized yaw would wrap: past ~28° of roll the rear legs
+    sit next to atan2's branch cut and would jump ~4077 ticks in a single frame.
+    """
+    engine = MotionEngine()
+    engine.dance_roll_deg = roll_deg
+    engine.motion = Motion.DANCE
+    previous = dict(engine.step())
+    for _ in range(400):
+        pos = dict(engine.step())
+        for name, tick in pos.items():
+            assert SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK, f"{name}={tick} out of range"
+            assert abs(tick - previous[name]) < MAX_FRAME_STEP, f"{name} jumped {tick - previous[name]} ticks"
+        previous = pos

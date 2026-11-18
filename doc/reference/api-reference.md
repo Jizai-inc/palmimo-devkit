@@ -8,6 +8,27 @@ from palmimo_sdk import Palmimo
 robot = Palmimo()
 ```
 
+## Constructor
+
+`Palmimo(gait_speed=0.012, step_length=30.0, step_height=30.0, on_step=None, *, fps=60, driver=None, display=None, speaker=None, camera=None, mic=None, auto_wake=True, thermal_clock=None, arm_overload_current=ARM_OVERLOAD_CURRENT, leg_overload_current=LEG_OVERLOAD_CURRENT, rail_undervoltage_v=RAIL_UNDERVOLTAGE_V, flight_recorder=True, incident_dir=None)`
+
+The first four arguments are positional-or-keyword; everything after the `*` is keyword-only.
+
+| Argument | Default | Description |
+|---|---|---|
+| `gait_speed` | `0.012` | Gait phase increment per `step()` call |
+| `step_length` | `30.0` | Walking stride length in mm |
+| `step_height` | `30.0` | Swing-leg lift height in mm for the walk and rotate gaits |
+| `on_step` | `None` | Callback invoked with the position dict after every `step()`, after any driver write |
+| `fps` | `60` | Control rate in cycles per second; must be positive (`ValueError` otherwise). Converts between seconds and steps in `run()` and `play()` |
+| `driver` | `None` | `ServoDriver`; `None` makes the facade compute-only |
+| `display` / `speaker` / `camera` / `mic` | `None` | Peripherals — see [Peripherals & Connection](#peripherals--connection) |
+| `auto_wake` | `True` | Whether `connect()` runs the `wake()` glide once a driver is attached |
+| `thermal_clock` | `None` | Clock injected into the neck thermal and overload guards in place of `time.monotonic`; for tests |
+| `arm_overload_current` / `leg_overload_current` | `ARM_OVERLOAD_CURRENT` / `LEG_OVERLOAD_CURRENT` | See [Overload Guard](#overload-guard) |
+| `rail_undervoltage_v` | `RAIL_UNDERVOLTAGE_V` | See [Rail Undervoltage Guard](#rail-undervoltage-guard) |
+| `flight_recorder` / `incident_dir` | `True` / `None` | See [Servo Flight Recorder](#servo-flight-recorder) |
+
 ## Motion Commands
 
 | Method | Motion Enum | String Aliases |
@@ -240,6 +261,12 @@ Wake from limp: glide to neutral while ramping leg Position_P_Gain from
 of snapping. The neck is held at full gain the whole time so the head can't drop.
 Falls back to a plain glide if the driver can't ramp gain.
 
+Reads the starting pose per motor, re-asking each motor the
+first sweep missed up to three times. If some still do not answer, `wake()` raises `RuntimeError`
+naming them and writes nothing to the driver, not even a gain: gliding from a
+guessed pose would snap those joints. A driver that cannot sense position at all
+still gets a single neutral command.
+
 `connect()` already runs this automatically once every resource is open
 (`auto_wake=True`, the `Palmimo(...)` default) — call `wake()` directly only for
 a custom *duration* / *start_gain*, or to re-wake without a full reconnect.
@@ -260,6 +287,8 @@ held where it is during the glide, and once the head has settled onto the top
 plate its goal is rewritten to the pose it actually reached — leaving no stored
 error for the next gain write to release as a jolt. The leg ramp starts from the
 gain the legs are actually at, so a second `sleep()` does not raise them first.
+If some motor cannot be read after retrying, the glide is skipped (the motors are
+named in a warning log) while the gain ramp, neck release and park still run.
 
 Degrades rather than skipping the point: a driver that can't sense position
 still gets the gain ramp and the neck release (only the glide needs feedback),
@@ -276,7 +305,10 @@ Ease all servos back to neutral. With *duration* (seconds), a single timed glide
 without it, advances control cycles (up to *max_steps*, a safety cap) until every
 joint has settled within *settle_ticks* of its target. Releases any active wave
 tuning first (see below). The timed glide needs a connected driver and raises
-`RuntimeError` without one; the default path also works compute-only.
+`RuntimeError` without one; the default path also works compute-only. The timed
+glide reads the starting pose per motor, re-asking each motor the first sweep
+missed up to three times; if some still do not answer it raises `RuntimeError` naming them
+and writes nothing.
 
 ### `robot.set_p_gain(value: int | None) -> None`
 Set Position_P_Gain on all motors (`None` restores per-motor defaults captured at
@@ -411,7 +443,10 @@ restored, so nothing springs back, and the engine is seeded with that pose so
 the next `play_keyframes()` starts from it. If a joint cannot be read, sits
 outside the safe tick range, or its profile cannot be switched off on exit, its
 gain stays at 0, `RuntimeError` is raised, and later gain writes (`wake()`,
-`set_p_gain()`, gestures) skip it until the next `connect()`.
+`set_p_gain()`, gestures) skip it until the next `connect()`. Entry and exit
+also read every other joint, because the hold commands all of them; if one that
+still has gain does not answer, nothing is written and `RuntimeError` names it.
+On entry the joints then never go limp; on exit they stay limp.
 
 > ⚠️ Use `limp()` only on a lifted robot, with every foot in the air. A limp
 > joint carries no load, and entry and exit re-command every other joint to
@@ -1272,8 +1307,10 @@ or modify existing dumps or temporary files.
 `palmimo_sdk.kinematics` is the shared source of truth for leg geometry. Public
 helpers include `leg_ik()` and `leg_servo_ticks()` for inverse kinematics, plus
 `leg_forward_kinematics(leg_id, ticks)` for converting one leg's three raw servo
-positions into an absolute `(x, y, z)` foot position in the body frame. All
-distances are millimetres; tick dictionaries use the standard `leg_<id>_*` keys.
+positions into an absolute `(x, y, z)` foot position in the body frame.
+`wrap_deg(deg)` normalizes an angle into the `(-180, 180]` range used by the
+yaw computation. All distances are millimetres; tick dictionaries use the
+standard `leg_<id>_*` keys.
 Those keys have one home here too: `LEG_MOTORS` is all 18 leg axis names in bus
 order, and `leg_motors(legs)` returns the three axes of each leg given.
 
@@ -1464,7 +1501,9 @@ tick) in one sweep, with the same `silent` / `unreached` bookkeeping. The
 [Rail Undervoltage Guard](#rail-undervoltage-guard) reads `voltage`.
 `ServoDriver.set_torque_enabled(enabled, motors=None)` switches torque on the
 named motors (every motor when `None`). Both are optional capabilities; the
-defaults raise `NotImplementedError`.
+defaults raise `NotImplementedError`. On `DynamixelDriver`, switching torque on
+(which `connect()` also does) raises `RuntimeError` naming any servo that has a
+hardware error latched, because torque does not take on a servo that has shut down.
 
 `ServoDriver.read_hardware_errors(motors=None)` returns a `HardwareErrorRead`
 (`palmimo_sdk.io.base.HardwareErrorRead`) in one sweep; `None` selects all motors.
@@ -1491,6 +1530,31 @@ comma-separated names in ascending bit order (e.g. `0x21` becomes
 `ElectricalShock` (4), and `Overload` (5). Bit 3 is reserved in the XC330-M288
 e-Manual and is described as `"bit3"`.
 
+### `DynamixelDriver`
+
+The bundled hardware backend (Dynamixel serial bus; needs the `palmimo-sdk[hardware]` extra).
+
+`DynamixelDriver(port=None, *, baudrate=1_000_000, motor_model="xc330-m288", profile_velocity=300, keep_torque_on_disconnect=False, calibration=None, bus_factory=..., connect_timeout=10.0)`
+
+- `port=None` auto-detects the bus at `connect()` (see [Port Auto-Detection](#port-auto-detection)).
+- `motor_model` must be one of `SUPPORTED_MOTOR_MODELS`; any other value raises `ValueError`. `"xc330-m288"` is the real hardware; `"xl330-m288"` fails the connect handshake on actual units.
+- `profile_velocity` is the time-based Profile_Velocity applied to every motor at connect, in milliseconds per move (lower is faster).
+- `keep_torque_on_disconnect=False` cuts torque on `disconnect()`.
+- `calibration` is accepted for API parity but not applied: the bus exchanges raw ticks.
+- `bus_factory` opens the serial bus; replace it to run the driver against a fake bus in tests.
+- `connect_timeout` bounds the whole connect sequence (see `DynamixelConnectTimeoutError` below).
+
+`connect()` seeds each motor's Goal_Position from its present position before enabling torque. If any motor's position cannot be read after four attempts, `connect()` raises `ConnectionError` naming the motors and torque stays off.
+
+```python
+from palmimo_sdk import SUPPORTED_MOTOR_MODELS, palmimo_motor_ids
+
+SUPPORTED_MOTOR_MODELS   # ("xl330-m288", "xc330-m288")
+palmimo_motor_ids()      # {"leg_1_yaw": 1, ..., "neck_pitch1": 19, "neck_pitch2": 20, "neck_yaw": 21}
+```
+
+`palmimo_motor_ids() -> dict[str, int]` returns the 21-motor name to Dynamixel ID map: IDs 1-18 are the six legs (`leg_{1-6}_{yaw,pitch1,pitch2}`, body to tip), IDs 19-21 the neck. The names match the keys `step()` emits.
+
 ## Port Auto-Detection
 
 ### `find_servo_port() -> str`
@@ -1515,6 +1579,11 @@ Raises `PortDetectionError` when zero or multiple candidates are found.
 Calling it yourself is only needed to print or log the resolved path —
 `DynamixelDriver(port=None)` (the default) runs the same detection at
 `connect()` time, mirroring `FaceDisplay(port=None)`.
+
+### `find_face_port() -> str | None`
+Return the serial device path of the attached face display, or `None` when none is found. It matches the face display's USB vendor ID (`0x2E8A`), so on a Pi, where the face and the servo bus both appear as `/dev/ttyACM*`, it picks the face and not the bus. With several face displays attached it logs a warning and returns the first.
+
+Unlike `find_servo_port()`, it does not raise on a miss. `FaceDisplay(port=None)` (the default) calls it at `connect()` and raises `FaceDisplayError` when it returns `None`.
 
 ### `PortDetectionError`
 Raised by `find_servo_port()` when detection fails. The message always
@@ -1543,6 +1612,60 @@ try:
 except DynamixelConnectTimeoutError as e:
     print(e)  # "Timed out connecting to the Dynamixel servo bus on ... "
 ```
+
+## palmimo_sdk.agent.Tool
+
+A custom tool subclasses `Tool`, sets the `name` and `description`
+ClassVars, declares its LLM-visible arguments as pydantic fields, and
+implements `execute(robot) -> ToolResult`. Register it on a toolset with
+`AgentToolSet.register(MyTool)`; MCP clients see it too, because the MCP
+server calls tools through `AgentToolSet.call()`.
+
+Two ClassVars describe how the tool behaves. Both default to `False`.
+
+| ClassVar | Set it to `True` when | Effect |
+|----------|----------------------|--------|
+| `long_running` | `execute()` runs a timed motion (`robot.run(seconds=...)`) that a caller may cancel mid-way | Marks the tool as safe to race against `AgentToolSet.cancel_running()` |
+| `drives_servos` | `execute()` commands the legs or neck | `AgentToolSet.call()` appends `(no servo bus connected; nothing moved)` to the result when the robot has no servo bus |
+
+A tool that moves the robot sets `drives_servos = True` and leaves the
+missing-bus case to `AgentToolSet.call()`; `execute()` does not check
+`robot.is_connected` itself. Leave it `False` for a tool that only uses a
+peripheral (display, speaker, camera): that tool reports a missing
+peripheral in its own result text.
+
+```python
+from typing import ClassVar
+
+from pydantic import Field
+
+from palmimo_sdk.agent import AgentToolSet, PalmimoLike, Tool, ToolResult
+
+
+class GlanceLeftTool(Tool):
+    name: ClassVar[str] = "glance_left"
+    description: ClassVar[str] = "Turn the head left for a moment, then back to center."
+    long_running: ClassVar[bool] = True
+    drives_servos: ClassVar[bool] = True
+
+    seconds: float = Field(default=1.0, gt=0, le=5, description="How long to hold the glance.")
+
+    def execute(self, robot: PalmimoLike) -> ToolResult:
+        robot.look(yaw=0.6)
+        try:
+            robot.run(seconds=self.seconds)
+        finally:
+            robot.look_center()
+            robot.run(seconds=0.5)
+        return ToolResult(text=f"glanced left for {self.seconds}s")
+
+
+tools = AgentToolSet(robot)
+tools.register(GlanceLeftTool)
+```
+
+Called without a servo bus, `glance_left` returns
+`glanced left for 1.0s (no servo bus connected; nothing moved)`.
 
 ## palmimo_sdk.agent typing
 

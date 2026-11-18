@@ -114,6 +114,8 @@ t.join()                 # the worker thread's run() raised MotionCancelled
 ### `robot.wake(duration=1.5, start_gain=300) -> None`
 脱力状態から起こします。脚の Position_P_Gain を *start_gain* からデフォルトへ徐々に上げながらニュートラル姿勢へ滑らかに移動します。急に動かず、柔らかく力を入れて立ち上がります。頭が落ちないよう、首は全期間にわたりフルゲインで保持します。ドライバーがゲインを徐々に変えられない場合は、通常の滑らかな移動にフォールバックします。
 
+開始姿勢はモーターごとに読み取り、最初の一括読み取りで応答しなかったモーターには最大 3 回まで問い直します。それでも応答しないモーターがあれば、`wake()` はそのモーター名を示して `RuntimeError` を送出し、ドライバーへは何も書き込みません（ゲインも書きません）。推測した姿勢から滑らかに移動すると、それらの関節が急に動くためです。位置をまったく検知できないドライバーには、従来どおりニュートラルへの指令を 1 回だけ送ります。
+
 `connect()` は、すべてのリソースが開いた後、これを自動実行します（`Palmimo(...)` のデフォルトは `auto_wake=True`）。`wake()` を直接呼ぶのは、独自の *duration* / *start_gain* を使う場合や、完全に再接続せずに起こし直す場合だけです。
 
 ### `robot.sleep(duration=1.5, end_gain=300) -> None`
@@ -121,14 +123,14 @@ t.join()                 # the worker thread's run() raised MotionCancelled
 
 終了後のロボットは**柔軟に動ける状態で、完全停止ではありません**。トルクは *end_gain* で有効なまま、マイクとカメラも開いたままなので、眠っているロボットにも話しかけられます。パーク（安全姿勢に戻して脱力）してすべてを閉じる `disconnect()` とは、この点が異なります。
 
-最初に、適用中の手振り / 首ジェスチャーの調整を解除します（後述）。移動中は首をその場で保持します。頭が天板に落ち着くと、目標値を実際に到達した姿勢へ書き換えます。これにより、次のゲイン書き込みで急な動きを生む誤差を残しません。脚のゲインは、実際の現在値から徐々に変えます。したがって、2 回目の `sleep()` でいったんゲインが上がることはありません。
+最初に、適用中の手振り / 首ジェスチャーの調整を解除します（後述）。移動中は首をその場で保持します。頭が天板に落ち着くと、目標値を実際に到達した姿勢へ書き換えます。これにより、次のゲイン書き込みで急な動きを生む誤差を残しません。脚のゲインは、実際の現在値から徐々に変えます。したがって、2 回目の `sleep()` でいったんゲインが上がることはありません。問い直しても読み取れないモーターがある場合は、滑らかな移動を省略します（そのモーター名を警告ログに出します）。ゲインの漸変、首の解放、パークはそのまま実行します。
 
 機能が不足しても、目的を省略せずに機能を縮小します。位置を検知できないドライバーでも、ゲインの漸変と首の解放は行います（フィードバックが必要なのは滑らかな移動だけです）。ゲインを徐々に変えられないドライバーでも、滑らかな移動は行います。
 
 睡眠中もモーション API は呼べます。眠っているロボットへ `forward()` を指示すると、頭を脱力させたまま *end_gain* で歩きます。`wake()` 以外にもゲインを上げる操作があります。手振りの調整は**すべて**のモーターへ `Position_P_Gain` を書き込み、 `set_p_gain()` も同じことをします。首の目標値が現在位置と一致しているので、どちらも頭を急に動かしませんが、ロボットは黙って硬くなります。先に起こしてください。
 
 ### `robot.return_to_neutral(max_steps: int = 120, settle_ticks: int = 2, *, duration: float | None = None) -> None`
-すべてのサーボを滑らかにニュートラルへ戻します。*duration*（秒）を指定すると、その時間で一度の滑らかな移動を行います。指定しない場合は、すべての関節が目標から *settle_ticks* 以内に収まるまで制御サイクルを進めます（安全上限は *max_steps*）。最初に、適用中の手振りの調整を解除します（後述）。時間指定の移動には接続済みのドライバーが必要で、ない場合は `RuntimeError` を送出します。デフォルトの経路は計算のみでも動作します。
+すべてのサーボを滑らかにニュートラルへ戻します。*duration*（秒）を指定すると、その時間で一度の滑らかな移動を行います。指定しない場合は、すべての関節が目標から *settle_ticks* 以内に収まるまで制御サイクルを進めます（安全上限は *max_steps*）。最初に、適用中の手振りの調整を解除します（後述）。時間指定の移動には接続済みのドライバーが必要で、ない場合は `RuntimeError` を送出します。デフォルトの経路は計算のみでも動作します。時間指定の移動は開始姿勢をモーターごとに読み取り、最初の一括読み取りで応答しなかったモーターには最大 3 回まで問い直します。それでも応答しないモーターがあれば、そのモーター名を示して `RuntimeError` を送出し、何も書き込みません。
 
 ### `robot.set_p_gain(value: int | None) -> None`
 すべてのモーターの Position_P_Gain を設定します（`None` は接続時に取得したモーターごとのデフォルトへ戻します）。計算のみの場合やゲイン制御非対応のドライバーでは何もしません。
@@ -155,6 +157,18 @@ t.join()                 # the worker thread's run() raised MotionCancelled
 実時間のタイミングを守る、ブロッキング版の `play()` です。ドライバーを接続している場合はこちらを使ってください。`run()` と `perform_dance()` と共通のペース制御ループで、絶対的な締め切り時刻に基づいて各フレームを予定するため、振り付けにかかる実時間は各ステップで指定した時間になります。
 - fps: `play()` と同様、ファサード自身の `fps` へフォールバックします。
 - callback: `Optional[Callable[[dict[str, int]], None]]` — フレームごとに位置を渡して呼びます。
+
+### `robot.limp(joints)`（コンテキストマネージャー）
+`with` ブロックの中では、*joints* の `Position_P_Gain` が 0 になり、手で自由に動かせます。入るときにモーションを止め、関節には現在位置を指令します。出るときには、ゲインを戻す前に、手が置いた位置を関節へ指令するため、元の位置へ跳ね戻ることはありません。また、エンジンにはその姿勢をシードするので、次の `play_keyframes()` はその姿勢から始まります。関節の位置を読み取れない場合、安全な tick 範囲の外にある場合、または出るときにプロファイルをオフにできない場合は、その関節のゲインは 0 のままとなり、`RuntimeError` を送出します。以後のゲイン書き込み（`wake()`、`set_p_gain()`、ジェスチャー）は、次の `connect()` までその関節を飛ばします。入るときと出るときには、ほかのすべての関節も読み取ります。保持の指令がすべての関節を対象にするためです。ゲインが残っている関節のうち 1 つでも応答しない場合は、何も書き込まず、`RuntimeError` がその関節名を示します。入るときにこれが起きた関節は脱力せず、出るときに起きた関節は脱力したままになります。
+
+> ⚠️ `limp()` は、本体を持ち上げ、すべての足を浮かせた状態でだけ使ってください。脱力した関節は荷重を支えません。さらに、入るときと出るときにはほかのすべての関節へ現在位置を再指令するため、荷重のかかった脚や頭が沈み込むことがあります。ブロックの中で `step()` を呼ばないでください。
+
+```python
+with robot.limp(["leg_6_yaw", "leg_6_pitch1", "leg_6_pitch2"]):
+    input("Pose the front-right leg, then press Enter")
+    pose = robot.read_pose(["leg_6_yaw", "leg_6_pitch1", "leg_6_pitch2"])
+robot.play_keyframes([Keyframe(1.5, pose)])
+```
 
 ## 周辺機器と接続
 
@@ -629,7 +643,32 @@ from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK
 
 `ServoDriver.read_positions()` は現在のサーボ位置を読みますが、読み取り失敗を安全な代替値（バッチ全体の失敗なら `{}`、単一モーターの欠落なら `NEUTRAL`）に置き換えるため、呼び出し元は欠落と実際の `NEUTRAL` 読み取りを区別できません。 `ServoDriver.read_positions_span(motors=None)` は、同じ信号を代替値なしで読みます。返すのは `ServoPositions`（`palmimo_sdk.io.base.ServoPositions`）で、`positions` のマッピングには応答したモーターだけを含めます。併せて `silent`（問い合わせたが無応答）と `unreached`（走査がすでに停止したため、問い合わせていない）を持ちます。後述の `ServoTelemetry` と同じ構造です。読み取りの欠落を実際の関節位置と取り違えてはいけない呼び出し元（固定の制御レートで動くポリシーループなど）は、 `read_positions()` の代わりにこちらを使います。任意の機能で、デフォルトは `NotImplementedError` を送出します。
 
-`ServoDriver.read_telemetry(motors=None)` は、1 回の走査で `current`（符号付きの生の値）、 `voltage`（V）、`temperature`（°C）、`position`（生の tick）を持つ `ServoTelemetry` を返し、同じ `silent` / `unreached` の管理情報を持ちます。[電源レールの低電圧ガード](#電源レールの低電圧ガード)は `voltage` を読みます。 `ServoDriver.set_torque_enabled(enabled, motors=None)` は、指定したモーターのトルクを切り替えます（`None` なら全モーター）。どちらも任意の機能で、デフォルトは `NotImplementedError` を送出します。
+`ServoDriver.read_telemetry(motors=None)` は、1 回の走査で `current`（符号付きの生の値）、 `voltage`（V）、`temperature`（°C）、`position`（生の tick）を持つ `ServoTelemetry` を返し、同じ `silent` / `unreached` の管理情報を持ちます。[電源レールの低電圧ガード](#電源レールの低電圧ガード)は `voltage` を読みます。 `ServoDriver.set_torque_enabled(enabled, motors=None)` は、指定したモーターのトルクを切り替えます（`None` なら全モーター）。どちらも任意の機能で、デフォルトは `NotImplementedError` を送出します。 `DynamixelDriver` でトルクを入れる操作（`connect()` も行います）は、ハードウェアエラーがラッチされたサーボがあると、そのサーボ名を示して `RuntimeError` を送出します。シャットダウンしたサーボにはトルクが入らないためです。
+
+### `DynamixelDriver`
+
+同梱のハードウェアバックエンドです（Dynamixel シリアルバス。`palmimo-sdk[hardware]` extra が必要です）。
+
+`DynamixelDriver(port=None, *, baudrate=1_000_000, motor_model="xc330-m288", profile_velocity=300, keep_torque_on_disconnect=False, calibration=None, bus_factory=..., connect_timeout=10.0)`
+
+- `port=None` の場合、`connect()` 時にバスを自動検出します（[ポートの自動検出](#ポートの自動検出)を参照）。
+- `motor_model` は `SUPPORTED_MOTOR_MODELS` のいずれかでなければならず、それ以外の値は `ValueError` を送出します。`"xc330-m288"` が実機のモーターで、`"xl330-m288"` は実機では接続時のハンドシェイクに失敗します。
+- `profile_velocity` は、接続時にすべてのモーターへ適用する時間ベースの Profile_Velocity で、1 回の移動あたりのミリ秒です（小さいほど速くなります）。
+- `keep_torque_on_disconnect=False` の場合、`disconnect()` でトルクを切ります。
+- `calibration` は API の互換性のために受け付けますが、適用されません。バスでやり取りするのは生の tick です。
+- `bus_factory` はシリアルバスを開きます。テストで偽のバスに対してドライバーを動かすときは、これを差し替えます。
+- `connect_timeout` は接続処理全体の上限です（後述の `DynamixelConnectTimeoutError` を参照）。
+
+`connect()` は、トルクを有効にする前に、各モーターの現在位置を Goal_Position に書き込みます。4 回試しても位置を読み取れないモーターがあれば、`connect()` はそのモーター名を示す `ConnectionError` を送出し、トルクは OFF のままです。
+
+```python
+from palmimo_sdk import SUPPORTED_MOTOR_MODELS, palmimo_motor_ids
+
+SUPPORTED_MOTOR_MODELS   # ("xl330-m288", "xc330-m288")
+palmimo_motor_ids()      # {"leg_1_yaw": 1, ..., "neck_pitch1": 19, "neck_pitch2": 20, "neck_yaw": 21}
+```
+
+`palmimo_motor_ids() -> dict[str, int]` は、21 個のモーターについて、名前から Dynamixel ID への対応表を返します。ID 1〜18 は 6 本の脚（`leg_{1-6}_{yaw,pitch1,pitch2}`、胴体側から先端側の順）、ID 19〜21 は首です。名前は `step()` が出力するキーと一致します。
 
 ## ポートの自動検出
 
@@ -653,6 +692,11 @@ except PortDetectionError as e:
 
 自分で呼ぶ必要があるのは、解決したパスを表示したりログに記録したりする場合だけです。 `DynamixelDriver(port=None)`（デフォルト）は、`FaceDisplay(port=None)` と同様、 `connect()` 時に同じ検出を実行します。
 
+### `find_face_port() -> str | None`
+接続されているフェイスディスプレイのシリアルデバイスパスを返します。見つからない場合は `None` を返します。フェイスディスプレイの USB ベンダー ID（`0x2E8A`）で照合するため、Pi のようにフェイスとサーボバスがどちらも `/dev/ttyACM*` として現れる環境でも、バスではなくフェイスを選びます。複数のフェイスディスプレイが接続されている場合は、警告を記録して最初の 1 つを返します。
+
+`find_servo_port()` と異なり、見つからなくても例外は送出しません。`FaceDisplay(port=None)`（デフォルト）は `connect()` 時にこれを呼び、`None` が返ると `FaceDisplayError` を送出します。
+
 ### `PortDetectionError`
 検出に失敗すると `find_servo_port()` が送出します。メッセージには必ず対処方法（`--port` を明示的に指定）が含まれます。
 
@@ -671,6 +715,51 @@ try:
 except DynamixelConnectTimeoutError as e:
     print(e)  # "Timed out connecting to the Dynamixel servo bus on ... "
 ```
+
+## palmimo_sdk.agent.Tool
+
+独自ツールは `Tool` を継承し、ClassVar の `name` と `description` を設定し、 LLM に見せる引数を pydantic のフィールドとして宣言し、 `execute(robot) -> ToolResult` を実装します。ツールセットへは `AgentToolSet.register(MyTool)` で登録します。 MCP サーバーもツールを `AgentToolSet.call()` 経由で呼ぶので、 MCP クライアントからも同じように使えます。
+
+ツールの振る舞いは 2 つの ClassVar で示します。どちらも既定値は `False` です。
+
+| ClassVar | `True` にする条件 | 効果 |
+|----------|------------------|------|
+| `long_running` | `execute()` が途中で中断されうる時間付きの動作（`robot.run(seconds=...)`）を実行する | `AgentToolSet.cancel_running()` で中断してよいツールであることを示す |
+| `drives_servos` | `execute()` が脚または首を動かす | ロボットにサーボバスがないとき、 `AgentToolSet.call()` が結果の末尾に `(no servo bus connected; nothing moved)` を付ける |
+
+ロボットを動かすツールは `drives_servos = True` を設定し、サーボバスがない場合の扱いは `AgentToolSet.call()` に任せます。 `execute()` の中で `robot.is_connected` を確かめる必要はありません。周辺機器（ディスプレイ、スピーカー、カメラ）だけを使うツールは `False` のままにします。そうしたツールは、周辺機器がないことを自分の結果テキストで伝えます。
+
+```python
+from typing import ClassVar
+
+from pydantic import Field
+
+from palmimo_sdk.agent import AgentToolSet, PalmimoLike, Tool, ToolResult
+
+
+class GlanceLeftTool(Tool):
+    name: ClassVar[str] = "glance_left"
+    description: ClassVar[str] = "Turn the head left for a moment, then back to center."
+    long_running: ClassVar[bool] = True
+    drives_servos: ClassVar[bool] = True
+
+    seconds: float = Field(default=1.0, gt=0, le=5, description="How long to hold the glance.")
+
+    def execute(self, robot: PalmimoLike) -> ToolResult:
+        robot.look(yaw=0.6)
+        try:
+            robot.run(seconds=self.seconds)
+        finally:
+            robot.look_center()
+            robot.run(seconds=0.5)
+        return ToolResult(text=f"glanced left for {self.seconds}s")
+
+
+tools = AgentToolSet(robot)
+tools.register(GlanceLeftTool)
+```
+
+サーボバスがない状態で `glance_left` を呼ぶと、 `glanced left for 1.0s (no servo bus connected; nothing moved)` が返ります。
 
 ## palmimo_sdk.agent の型付け
 

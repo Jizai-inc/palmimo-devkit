@@ -299,6 +299,7 @@ class Dance(Tool):
     name: ClassVar[str] = "dance"
     description: ClassVar[str] = DanceTool.description
     long_running: ClassVar[bool] = True
+    drives_servos: ClassVar[bool] = True
 
     seconds: float = Field(gt=0, le=15, description="Dance duration. 4-6s typical; vary it each time.")
     say: str | None = Field(
@@ -397,6 +398,7 @@ class Capture(SdkCaptureTool):
         "curiosity, not a reply to a photo request."
     )
     long_running: ClassVar[bool] = True
+    drives_servos: ClassVar[bool] = True
 
     direction: Literal["center", "left", "right", "up", "down"] = Field(
         default="center",
@@ -723,6 +725,7 @@ class LookAtFaceTool(Tool):
         "Track a detected face with the neck for a while. Use to hold attention on someone who was just noticed."
     )
     long_running: ClassVar[bool] = True
+    drives_servos: ClassVar[bool] = True
 
     seconds: float = Field(gt=0, le=15, description="How long to track for, at most. 3-5s typical.")
     lost_grace: float = Field(

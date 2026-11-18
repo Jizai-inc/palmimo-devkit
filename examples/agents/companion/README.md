@@ -225,11 +225,11 @@ also documented in [`.env.sample`](.env.sample).
 
 | Flag | Env var | Default | Purpose |
 |---|---|---|---|
-| `--ui` | (none) | `tui` | Front end: `tui` (Textual) or `cli` (headless, JSONL stdout over stdin/stdout) |
+| `--ui` | (none) | `tui` | Front end: `tui` (Textual) or `cli` (headless, JSONL stdout over stdin/stdout). On SIGTERM/SIGHUP the `tui` parks the robot and exits without the rest of the teardown (task cancellation, vision watch, event log); `/exit` and Ctrl+C run the full one |
 | `--hardware` / `--no-hardware` | `COMPANION_AGENT_HARDWARE` (`false` to disable) | on | Attach real hardware peripherals; `--no-hardware` runs fully compute-only (a bare `Palmimo`, no speech, no vision) |
 | `--port` | `COMPANION_AGENT_PORT` | none (auto-detected) | Servo bus serial port, e.g. `/dev/ttyACM0` |
-| `--log-path` | `COMPANION_AGENT_LOG_PATH` | none (disabled) | JSONL event log file path (every `History` event, same shape as the `cli` front end's stdout) |
-| `--stdin` / `--no-stdin` | (none) | on | `cli` only: `--no-stdin` keeps a headless session running with no stdin attached (a service manager) instead of exiting at once on EOF -- the session then ends on SIGTERM/SIGINT. Rejected with `--ui tui` |
+| `--log-path` | `COMPANION_AGENT_LOG_PATH` | none (disabled) | JSONL event log file path (every `History` event, same shape as the `cli` front end's stdout). Each start appends a `run_start` line first, naming the code it started from (`commit`, `branch`, `dirty`, installed `packages`) and a `settings_sha256` of the resolved settings; a field that cannot be determined is `null` |
+| `--stdin` / `--no-stdin` | (none) | on | `cli` only: `--no-stdin` keeps a headless session running with no stdin attached (a service manager) instead of exiting at once on EOF -- the session then ends on SIGTERM/SIGINT/SIGHUP, and further stop signals (SIGINT included) are discarded until the teardown, park included, has finished. Rejected with `--ui tui` |
 | `--chat-model` | `COMPANION_AGENT_CHAT_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for both the idle and respond turns' tool-calling chat |
 | (none) | `COMPANION_AGENT_GUARD_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for the speech-classification guard |
 | (none) | `COMPANION_AGENT_VLM_MODEL` | `gemini/gemini-3.5-flash-lite` | LiteLLM model for image-to-text description (the `capture` tool) |
@@ -338,7 +338,11 @@ in and silences whatever the robot was doing (see `services/router.py`'s
 `BargeIn`). That is a deliberate latency trade-off, not an oversight: adding
 a guard here would mean transcribing and classifying before the model is
 even allowed to react, which is exactly the per-stage latency this runtime
-exists to avoid.
+exists to avoid. The trade-off is measurable after the fact: with
+`--log-path` set, every speech onset writes a `speech_started` line and a
+`barge_in` line recording what it cut off (`had_queued` and
+`recently_wrote` for audio, `had_plan` for a running tool plan, and
+whether the robot was `asleep`).
 
 ### `/hear` -- testing the speech path headlessly
 

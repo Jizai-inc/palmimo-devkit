@@ -22,13 +22,10 @@ Issues = "https://github.com/Jizai-inc/palmimo-devkit/issues"
 dev = [
     "mypy>=1.8,<3",
     "pytest>=9.0.3,<10",
-    "pytest-asyncio>=0.23",
     "ruff>=0.3,<1",
-    "types-PyYAML",
 ]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
 # lerobot_teleoperator_palmimo uses the self-nested <pkg>/<pkg>/ layout, where the
 # outer directory and the package share a name. --import-mode=importlib ignores

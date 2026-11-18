@@ -312,6 +312,10 @@ stops or an SSH session drops.
   so every backend gets it, not just the Dynamixel one)
 - **Neutral stance at startup** — connection and script startup always begin smoothly
   from the neutral stance; abrupt jumps are prohibited
+- **Continuous leg yaw** — `kinematics.leg_ik` normalizes each yaw into (-180°, 180°],
+  moving `atan2`'s ±180° branch cut to each leg's antipode (a folded-backwards pose
+  outside the reachable envelope), so no reachable foot position commands a
+  near-full-turn jump
 - **Servo telemetry** — `ServoDriver.read_telemetry()` reads present current, input
   voltage and temperature in a single bus sweep (`io/base.py`, implemented over a span
   read in `io/_dynamixel_bus.py`). One sweep rather than one read per signal is what

@@ -66,6 +66,33 @@ def _sent_outputs(client: Any) -> list[tuple[str, str]]:
 
 
 # ----------------------------------------------------------------------
+# interrupt() reports whether a plan was in flight, for the barge_in log line
+# ----------------------------------------------------------------------
+
+
+async def test_interrupt_reports_a_plan_in_flight(fake_client: type) -> None:
+    client = fake_client()
+    toolset = ScriptedToolset()
+    toolset.gated = True
+    bridge = _bridge(toolset, client)
+    await bridge.handle(_plan(("nod", "c1")))
+    await toolset.started.wait()
+
+    assert await bridge.interrupt() is True
+
+    toolset.release.set()
+    await asyncio.wait(list(bridge.tasks))
+
+
+async def test_interrupt_reports_no_plan_after_a_response_without_calls(fake_client: type) -> None:
+    bridge = _bridge(ScriptedToolset(), fake_client())
+    await bridge.handle(Response(id="r1", output=[{"type": "message", "role": "assistant"}]))
+
+    assert bridge.tasks == frozenset()
+    assert await bridge.interrupt() is False
+
+
+# ----------------------------------------------------------------------
 # F1 -- epoch bump abandons the rest of a mid-flight plan
 # ----------------------------------------------------------------------
 

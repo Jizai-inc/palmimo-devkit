@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, Palmimo, ServoDriver
+from palmimo_sdk.engine import MotionEngine
 
 
 class RecordingDriver(ServoDriver):
@@ -155,7 +156,7 @@ class TuningRecordingDriver(RecordingDriver):
         self.tuning.append(("iir", enabled, alpha, tuple(motors) if motors else None))
 
     def read_positions(self) -> dict[str, int]:
-        return {}  # no position sense — timed glides degrade to a single write
+        return dict.fromkeys(MotionEngine().get_positions(), 2048)  # every servo at neutral
 
 
 class DanceRecordingDriver(TuningRecordingDriver):

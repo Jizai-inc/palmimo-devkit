@@ -130,6 +130,7 @@ class FakeRobot:
         neck_temperature_c: float | None = None,
     ) -> None:
         self.calls: list[tuple[Any, ...]] = []
+        self.is_connected = True
         self.display = display
         self.speaker = speaker
         self.camera = camera

@@ -5,8 +5,12 @@ from __future__ import annotations
 import io
 import json
 
-from palmimo_companion_agent.pipeline.event_log import emit_event
+import pytest
+
+from palmimo_companion_agent.code_version import CodeVersion
+from palmimo_companion_agent.pipeline.event_log import emit_event, emit_run_start
 from palmimo_companion_agent.pipeline.history import KeyboardEvent, ToolExecEvent
+from palmimo_companion_agent.pipeline.settings import PipelineSettings
 
 
 def test_emit_event_writes_exactly_one_line() -> None:
@@ -50,3 +54,40 @@ def test_emit_event_keeps_non_ascii_text_readable() -> None:
     out = io.StringIO()
     emit_event(KeyboardEvent("こんにちは"), out=out)
     assert "こんにちは" in out.getvalue()
+
+
+def test_emit_event_writes_tool_arguments_as_json_when_they_parse() -> None:
+    out = io.StringIO()
+    arguments = json.dumps({"name": "BLOSSOM", "reason": "壁の花柄"})
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="ok"), out=out)
+    assert json.loads(out.getvalue())["arguments"] == {"name": "BLOSSOM", "reason": "壁の花柄"}
+    assert "壁の花柄" in out.getvalue()
+
+
+@pytest.mark.parametrize("arguments", ['{"name": ', '"BLOSSOM"', "[1]", '{"x": NaN}'])
+def test_emit_event_keeps_tool_arguments_as_a_string_when_they_are_not_a_json_object(arguments: str) -> None:
+    out = io.StringIO()
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="bad"), out=out)
+    assert json.loads(out.getvalue(), parse_constant=pytest.fail)["arguments"] == arguments
+
+
+@pytest.mark.parametrize("arguments", ["[" * 100_000, '{"a": "\\ud800"}'])
+def test_emit_event_keeps_tool_arguments_as_a_string_when_the_parsed_object_cannot_be_written(arguments: str) -> None:
+    raw = io.BytesIO()
+    out = io.TextIOWrapper(raw, encoding="utf-8")
+    emit_event(ToolExecEvent(tool_call_id="call-1", name="show_emoji", arguments=arguments, result="bad"), out=out)
+    assert json.loads(raw.getvalue())["arguments"] == arguments
+
+
+def test_emit_run_start_names_the_code_and_hashes_the_resolved_settings() -> None:
+    version = CodeVersion(commit="abc1234", branch="main", dirty=True, packages={"palmimo-sdk": "0.1.5"})
+    first, second = io.StringIO(), io.StringIO()
+
+    emit_run_start(version, PipelineSettings.with_env_file(None), out=first)
+    emit_run_start(version, PipelineSettings.with_env_file(None).model_copy(update={"language": "en"}), out=second)
+
+    payload = json.loads(first.getvalue())
+    assert payload["kind"] == "run_start"
+    assert (payload["commit"], payload["branch"], payload["dirty"]) == ("abc1234", "main", True)
+    assert payload["packages"] == {"palmimo-sdk": "0.1.5"}
+    assert payload["settings_sha256"] != json.loads(second.getvalue())["settings_sha256"]

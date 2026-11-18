@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TextIO, cast
 
 import pytest
@@ -171,6 +173,16 @@ def test_build_runtime_uses_a_compute_only_palmimo_when_hardware_is_disabled(mon
     assert rt.speech is None
     assert rt.vision_watch is None
     assert rt.reflexes is None
+
+
+def test_build_runtime_opens_the_event_log_with_a_run_start_line(tmp_path: Path) -> None:
+    log_path = tmp_path / "events.jsonl"
+
+    rt = build_runtime(_settings(hardware=False, log_path=log_path))
+    assert rt.event_log is not None
+    rt.event_log.close()
+
+    assert json.loads(log_path.read_text().splitlines()[0])["kind"] == "run_start"
 
 
 def test_build_runtime_registers_the_companion_toolset_even_without_hardware() -> None:

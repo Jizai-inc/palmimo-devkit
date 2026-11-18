@@ -197,7 +197,8 @@ to different readers.
   are fine.
 - **Edit a diagram in draw.io, never by hand.** A `.drawio.svg` carries the
   draw.io model and the drawing exported from it; a contract test fails when
-  their labels disagree or the model is missing. Re-export with
+  their labels disagree or the model is missing. Keep one page per file; the
+  test rejects a second page, since the drawing shows only one. Re-export with
   `drawio -x -f svg -e --theme light --border 10 -o <file> <file>`.
 - **When you change the SDK core**, update the pages co-located with it in the
   same commit: `doc/reference/api-reference.md`,

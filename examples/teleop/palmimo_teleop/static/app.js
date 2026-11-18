@@ -52,10 +52,25 @@
     };
     addCell(status.pilot_present ? "pilot: connected" : "pilot: none");
     addCell("motion: " + (status.motion || "idle"));
+    addCell(speedLabel(status));
     addCell("fps: " + status.loop_fps.toFixed(1));
     addCell("bus: " + (status.servo_attached ? "attached" : "compute-only"), okOrBad(status.servo_attached));
     addCell("camera: " + (status.camera_ok ? "ok" : "unavailable"), okOrBad(status.camera_ok));
     addCell("servo: " + (status.robot_ok === false ? "fault" : "ok"), okOrBad(status.robot_ok !== false));
+  }
+
+  function formatSpeed(value) {
+    return Number(value.toFixed(2)) + "x";
+  }
+
+  // `applied_speed` may be absent from an older server; treat that as uncapped.
+  function isSpeedCapped(status) {
+    return typeof status.applied_speed === "number" && status.applied_speed < status.speed - 0.005;
+  }
+
+  function speedLabel(status) {
+    const label = "speed: " + formatSpeed(status.speed);
+    return isSpeedCapped(status) ? label + " (capped, runs " + formatSpeed(status.applied_speed) + ")" : label;
   }
 
   // The pilot page dropped its own #status-bar, so a compute-only or
@@ -84,6 +99,24 @@
         ? "Someone is piloting right now -- you can start once they leave."
         : "You are spectating. Press Start piloting to take control.";
     }
+  }
+
+  // Highlights the speed the server reports as applied, not the one last
+  // tapped: a tap the server dropped (or one still in flight) must not look
+  // selected.
+  // The selected button is also marked `capped` when the gait cannot run that
+  // fast (`applied_speed` below `speed`: the startup --gait-speed times the
+  // multiplier hit the gait speed ceiling), so a no-op selection never reads
+  // as applied.
+  function renderSpeedButtons(status) {
+    const capped = isSpeedCapped(status);
+    const buttons = document.querySelectorAll("#speed-buttons button");
+    buttons.forEach(function (button) {
+      const selected = Number(button.dataset.speed) === status.speed;
+      button.classList.toggle("selected", selected);
+      button.classList.toggle("capped", selected && capped);
+      button.title = selected && capped ? "capped: runs at " + formatSpeed(status.applied_speed) : "";
+    });
   }
 
   function preventDefault(event) {
@@ -130,6 +163,7 @@
       renderStatusBar(payload);
       renderPilotLinkAvailability(payload);
       renderServoBanners(payload);
+      renderSpeedButtons(payload);
     }
     if (payload.granted === false) {
       denyPilotControl();
@@ -313,6 +347,16 @@
 
   bindPlayButton("gesture-wave", "wave");
   bindPlayButton("gesture-dance", "dance");
+
+  // A speed is a one-off `{"speed": ...}` message, like a gesture; the
+  // server keeps it until the pilot picks another one or leaves.
+  document.querySelectorAll("#speed-buttons button").forEach(function (button) {
+    button.addEventListener("click", function (event) {
+      event.preventDefault();
+      if (socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ speed: Number(button.dataset.speed) }));
+    });
+  });
 
   // Keyboard: WASD move, Q/E rotate, cursor keys increment the neck, c
   // centers it, 1/2 play a gesture. `event.repeat` guards the gesture keys

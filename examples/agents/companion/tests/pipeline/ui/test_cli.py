@@ -8,6 +8,7 @@ no hardware); stdin is a plain in-memory stream.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import json
 import os
@@ -15,6 +16,7 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from typing import ClassVar, TextIO, cast
 
 import pytest
@@ -29,6 +31,7 @@ from palmimo_companion_agent.pipeline.settings import PipelineSettings
 from palmimo_companion_agent.pipeline.wiring import Runtime
 from palmimo_sdk import Palmimo
 from palmimo_sdk.agent.toolset import AgentToolSet
+from palmimo_sdk.shutdown import signals_ignored
 
 
 class _FakeMessage:
@@ -183,6 +186,35 @@ async def test_run_cli_without_stdin_ignores_eof_and_closes_on_signal(monkeypatc
     await asyncio.wait_for(task, timeout=5.0)
 
     assert log.closed is True  # the runtime was closed via the same shutdown path
+
+
+async def test_run_cli_finishes_closing_when_a_signal_was_queued_before_the_ignore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A signal delivered just before the ignore reaches the loop during ``aclose`` and must not cancel it."""
+    rt = _build_test_runtime()
+    closed: list[bool] = []
+
+    async def _slow_aclose() -> None:
+        await asyncio.sleep(0.05)
+        closed.append(True)
+
+    @contextlib.contextmanager
+    def _ignored_after_a_late_signal() -> Iterator[None]:
+        os.kill(os.getpid(), signal.SIGTERM)
+        with signals_ignored():
+            yield
+
+    monkeypatch.setattr(rt, "aclose", _slow_aclose)
+    monkeypatch.setattr(cli_module, "build_runtime", lambda settings: rt)
+    monkeypatch.setattr(cli_module, "signals_ignored", _ignored_after_a_late_signal)
+
+    task = asyncio.ensure_future(cli_module.run_cli(_settings(), read_stdin=False))
+    await asyncio.sleep(0.05)
+    os.kill(os.getpid(), signal.SIGTERM)
+    await asyncio.wait_for(task, timeout=5.0)
+
+    assert closed == [True]
 
 
 async def test_run_cli_closes_runtime_on_signal_during_start(monkeypatch: pytest.MonkeyPatch) -> None:
