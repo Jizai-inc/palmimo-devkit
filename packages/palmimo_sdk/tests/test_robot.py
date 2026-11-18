@@ -24,7 +24,7 @@ from palmimo_sdk import (
 from palmimo_sdk.engine import MotionEngine
 from palmimo_sdk.io.base import HardwareErrorRead, ServoPositions, ServoTelemetry
 from palmimo_sdk.kinematics import LEG_MOTORS, leg_motors
-from palmimo_sdk.overload import OVERLOAD_POLL_INTERVAL_S, SOFT_RETURN_GAIN
+from palmimo_sdk.overload import OVERLOAD_POLL_INTERVAL_S, SOFT_RETURN_GAIN, STALL_GAP_TICKS
 from palmimo_sdk.rail import RAIL_CONSECUTIVE
 from palmimo_sdk.robot import NeckPitchDegrees, NeckPitchNormalized, NeckYawDegrees, NeckYawNormalized
 from palmimo_sdk.telemetry import RECHECK_INTERVAL_S
@@ -2526,6 +2526,19 @@ def test_invalid_overload_threshold_is_rejected() -> None:
         Palmimo(leg_overload_current=-5)
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"leg_overload_current": None, "leg_stall_current": 800},
+        {"arm_overload_current": None, "arm_stall_current": 450},
+        {"arm_overload_current": None, "leg_overload_current": None, "stall_gap_ticks": 0},
+    ],
+)
+def test_stall_stage_is_rejected_when_it_cannot_run(kwargs: dict[str, int | None]) -> None:
+    with pytest.raises(ValueError, match="stall"):
+        Palmimo(**kwargs)  # type: ignore[arg-type]
+
+
 def test_wave_arm_trip_drops_to_idle_and_softens_only_the_arm() -> None:
     """Three strained samples on the waving arm stop the motion and leave just that arm at the soft gain."""
     driver = _OverloadDriver()
@@ -2544,6 +2557,43 @@ def test_wave_arm_trip_drops_to_idle_and_softens_only_the_arm() -> None:
     assert (trip.channel, trip.motion) == ("arm", "wave")
     assert robot.drain_overload_trips() == []
     assert robot.last_overload_trip == trip
+
+
+def test_leg_stall_stage_stops_a_motion_whose_axis_stays_short_of_its_goal() -> None:
+    """Below the leg threshold, an axis held away from its goal still drops the motion to IDLE."""
+    driver = _OverloadDriver()  # legs read 2500 while the gait sends them elsewhere
+    robot, clock = _overload_robot(driver, leg_stall_current=800, flight_recorder=False)
+    robot.forward()
+    driver.currents = {"leg_1_yaw": 900}
+
+    _poll_steps(robot, clock, 4)
+
+    assert robot.motion == "idle"
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.threshold, trip.channel, trip.motion) == ("leg_1_yaw", 800, "leg", "forward")
+    assert trip.gap is not None and trip.gap >= STALL_GAP_TICKS
+
+
+@pytest.mark.parametrize("on_goal", [True, False])
+def test_leg_stall_stage_lets_a_motion_run(on_goal: bool) -> None:
+    """The same current keeps the motion running on an axis that follows its goal, or with the stage off."""
+    driver = _OverloadDriver()
+    if on_goal:
+
+        def follow() -> None:
+            driver.positions.update(driver.writes[-1])
+
+        driver.on_write = follow
+        robot, clock = _overload_robot(driver, leg_stall_current=800)
+    else:
+        robot, clock = _overload_robot(driver)
+    robot.forward()
+    driver.currents = {"leg_1_yaw": 900}
+
+    _poll_steps(robot, clock, 6)
+
+    assert robot.motion == "forward"
+    assert robot.drain_overload_trips() == []
 
 
 def test_arm_trips_when_a_motor_ahead_of_it_on_the_bus_stays_silent() -> None:

@@ -92,8 +92,11 @@ from .keyframes import MAX_JOINT_SPEED_DEG_S, Keyframe, load_keyframes, save_key
 from .name_match import PALMIMO_NAMES, NameMatch, NameMatcher, name_skeleton
 from .overload import (
     ARM_OVERLOAD_CURRENT,
+    ARM_STALL_CURRENT,
     LEG_OVERLOAD_CURRENT,
+    LEG_STALL_CURRENT,
     OVERLOAD_CONSECUTIVE,
+    STALL_GAP_TICKS,
     OverloadTrip,
 )
 from .rail import RAIL_CONSECUTIVE, RAIL_UNDERVOLTAGE_V, RailTrip
@@ -114,8 +117,10 @@ from .thermal import NeckThermalState
 
 __all__ = [
     "ARM_OVERLOAD_CURRENT",
+    "ARM_STALL_CURRENT",
     "HARDWARE_ERROR_BITS",
     "LEG_OVERLOAD_CURRENT",
+    "LEG_STALL_CURRENT",
     "MAX_JOINT_SPEED_DEG_S",
     "OVERLOAD_CONSECUTIVE",
     "PALMIMO_NAMES",
@@ -123,6 +128,7 @@ __all__ = [
     "RAIL_UNDERVOLTAGE_V",
     "SAFE_MAX_TICK",
     "SAFE_MIN_TICK",
+    "STALL_GAP_TICKS",
     "SUPPORTED_MOTOR_MODELS",
     "AudioProcessor",
     "ClipDenoiser",

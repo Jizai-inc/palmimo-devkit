@@ -338,6 +338,9 @@ stops or an SSH session drops.
   servo latches its own Overload error and goes limp, which drops the body
   unpredictably; stopping first lets the robot choose where it ends up. Three
   consecutive samples at or above a per-channel threshold drop the motion to `IDLE`.
+  An optional stall stage also counts a lower current on an axis that stays well
+  short of its goal, since current alone cannot tell a heavy pose from a caught
+  axis; it is off by default until its thresholds are measured.
   Samples 0.2 s or more apart do not count as consecutive, so a streak left over
   from before a pause in stepping cannot combine with a fresh one; the rail guard
   below follows the same rule. `LegSafety` reads and judges, including which arm axes
