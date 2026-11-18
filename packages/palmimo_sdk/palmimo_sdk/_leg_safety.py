@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 
 from ._guard import RestingReport, TripLog
@@ -14,6 +14,7 @@ from .io import ServoDriver, ServoTelemetry
 from .kinematics import LEG_MOTORS, leg_motors
 from .overload import (
     OVERLOAD_POLL_INTERVAL_S,
+    STALL_GAP_TICKS,
     STREAK_MAX_GAP_S,
     OverloadGuard,
     OverloadTrip,
@@ -36,6 +37,9 @@ class LegSafety:
     Args:
         arm_overload_current (int, optional): Threshold for a waving arm axis; ``None`` disables that guard.
         leg_overload_current (int, optional): Threshold for every other leg axis; ``None`` disables it.
+        arm_stall_current (int, optional): Stall-stage current for the arm channel; ``None`` turns the stage off.
+        leg_stall_current (int, optional): Stall-stage current for the leg channel; ``None`` turns the stage off.
+        stall_gap_ticks (int): Distance from the goal at which the stall stage counts a sample.
         rail_undervoltage_v (float, optional): Rail voltage floor; ``None`` disables the guard.
         clock (Callable[[], float]): Monotonic time source for poll scheduling.
         logger (logging.Logger): Logger that receives the guards' records.
@@ -49,12 +53,23 @@ class LegSafety:
         rail_undervoltage_v: float | None,
         clock: Callable[[], float],
         logger: logging.Logger,
+        arm_stall_current: int | None = None,
+        leg_stall_current: int | None = None,
+        stall_gap_ticks: int = STALL_GAP_TICKS,
     ) -> None:
         self._arm_overload = (
-            None if arm_overload_current is None else OverloadGuard(arm_overload_current, channel="arm")
+            None
+            if arm_overload_current is None
+            else OverloadGuard(
+                arm_overload_current, channel="arm", stall_current=arm_stall_current, stall_gap=stall_gap_ticks
+            )
         )
         self._leg_overload = (
-            None if leg_overload_current is None else OverloadGuard(leg_overload_current, channel="leg")
+            None
+            if leg_overload_current is None
+            else OverloadGuard(
+                leg_overload_current, channel="leg", stall_current=leg_stall_current, stall_gap=stall_gap_ticks
+            )
         )
         self._rail = None if rail_undervoltage_v is None else RailGuard(rail_undervoltage_v)
         self._clock = clock
@@ -102,6 +117,7 @@ class LegSafety:
         arm_legs: tuple[int, ...],
         *,
         glide: str | None = None,
+        goals: Mapping[str, int] | None = None,
     ) -> bool:
         """Sample leg telemetry at most every ``OVERLOAD_POLL_INTERVAL_S`` and judge it.
 
@@ -111,6 +127,8 @@ class LegSafety:
             arm_legs (tuple[int, ...]): Legs acting as the raised arm under *motion*.
             glide (str, optional): Name of a glide that writes the driver directly (``"wake"``).
                 Trips are recorded under it and never stop the glide.
+            goals (Mapping[str, int], optional): Goal positions last written to the driver,
+                for the overload guards' stall stage.
 
         Returns:
             bool: ``True`` if a guard tripped and the motion must stop; always ``False`` with *glide*.
@@ -152,9 +170,14 @@ class LegSafety:
         resting = motion in _SOFT_RETURN_MOTIONS
         trips: list[OverloadTrip | None] = []
         if self._arm_overload is not None and arm:
-            trips.append(self._arm_overload.sample(telemetry.current, arm))
+            trips.append(self._arm_overload.sample(telemetry.current, arm, positions=telemetry.position, goals=goals))
         if self._leg_overload is not None:
-            leg_trip = self._leg_overload.sample(telemetry.current, [m for m in LEG_MOTORS if m not in arm])
+            leg_trip = self._leg_overload.sample(
+                telemetry.current,
+                [m for m in LEG_MOTORS if m not in arm],
+                positions=telemetry.position,
+                goals=goals,
+            )
             leg_trip = self._resting_strain.filter(leg_trip, resting=resting, breached=self._leg_overload.strained)
             trips.append(leg_trip)
         rail_trip = None
@@ -168,11 +191,12 @@ class LegSafety:
         for trip in found:
             self.overload_trips.record(trip)
             self._logger.warning(
-                "overload guard (%s): %s at %d (threshold %d) for %d samples during %s; %s.",
+                "overload guard (%s): %s at %d (threshold %d%s) for %d samples during %s; %s.",
                 trip.channel,
                 trip.motor,
                 trip.current,
                 trip.threshold,
+                "" if trip.gap is None else f", {trip.gap} ticks short of its goal",
                 trip.samples,
                 trip.motion,
                 outcome,

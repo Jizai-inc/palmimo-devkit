@@ -463,10 +463,15 @@ robot = Palmimo(
 |----------|---------|---------|
 | `arm_overload_current` | `ARM_OVERLOAD_CURRENT` (700) | 腕チャンネルの閾値です。`None` で無効にし、`<= 0` では `ValueError` を送出します。 |
 | `leg_overload_current` | `LEG_OVERLOAD_CURRENT` (1200) | 脚チャンネルの閾値です。`None` で無効にし、`<= 0` では `ValueError` を送出します。 |
+| `arm_stall_current` | `None` | 腕チャンネルの停滞段の電流です。`None` で停滞段を無効にします。0 より大きく `arm_overload_current` 未満でなければ `ValueError` を送出します。 |
+| `leg_stall_current` | `None` | 脚チャンネルの停滞段の電流です。`None` で停滞段を無効にします。0 より大きく `leg_overload_current` 未満でなければ `ValueError` を送出します。 |
+| `stall_gap_ticks` | `STALL_GAP_TICKS` (250) | 停滞段がサンプルを数える、目標からの距離（tick）です。`<= 0` では `ValueError` を送出します。 |
 
-両定数と `OVERLOAD_CONSECUTIVE` は `palmimo_sdk` からエクスポートされています。閾値は `Present_Current` レジスターの生の単位で、絶対値で比較します。両チャンネルと[電源レールの低電圧ガード](#電源レールの低電圧ガード)を無効にすると、 `step()` は脚のテレメトリを一切読みません。
+これらの定数、`OVERLOAD_CONSECUTIVE`、`ARM_STALL_CURRENT`（450）、`LEG_STALL_CURRENT`（800）は `palmimo_sdk` からエクスポートされています。閾値は `Present_Current` レジスターの生の単位で、絶対値で比較します。両チャンネルと[電源レールの低電圧ガード](#電源レールの低電圧ガード)を無効にすると、 `step()` は脚のテレメトリを一切読みません。
 
 **判定。** ある軸で `abs(current) >= threshold` のサンプルが `OVERLOAD_CONSECUTIVE`（3）回続くと作動します。閾値未満のサンプルが 1 回あれば、その軸のカウントを 0 に戻します。走査で欠けた軸（無応答または未到達）は、カウントを進めもリセットもしません。0.2 秒以上離れたサンプルは連続と見なしません。ステップの一時停止や読み取り失敗の連続後は、すべてのカウントをやり直します。作動すると全カウントをクリアします。複数軸が同時に規定回数へ達した場合は、バス順で最初の軸を報告します。腕チャンネルは、上げた脚の 3 軸を対象にします（`wave` では `wave_leg`、`wave_both` と `clap` では脚 3 と 6）。脚チャンネルは残りの軸を対象にします。モーションまたは腕として使う脚が変わったとき、および `connect()` 時に、カウントをやり直します。
+
+**停滞段。** 電流だけでは、重い姿勢と、引っ掛かって動けない軸を区別できません。そこで、停滞段の電流を与えたチャンネルでは、その低い電流以上のサンプルでも、同じ走査で読んだ現在位置が最後に書き込んだ目標から `stall_gap_ticks` 以上離れていれば数えます。このサンプルは、チャンネルの閾値以上のサンプルと同じカウントを進めます。目標がまだ分からない軸（`connect()` 後の最初の書き込み前）と、停滞段の電流を与えていないチャンネルの軸は、閾値だけで判定します。停滞段は既定で無効です。`ARM_STALL_CURRENT`、`LEG_STALL_CURRENT`、`STALL_GAP_TICKS` は暫定の出発点で、正常なモーションの電流と追従遅れを実機でまだ照合していません。サーボは `Profile_Velocity` のもとで目標から遅れて追従するため、停滞段の電流を超える電流でギャップ以上に遅れる速いモーションは止まります。有効にする前に測定してください。
 
 **ポーリング。** 時計は `thermal_clock` として注入されたものです。最大で 1/30 秒ごとに、`step()` が脚の全 18 軸へ `read_telemetry()` を一度呼びます。
 
@@ -498,7 +503,7 @@ robot = Palmimo(
 | `robot.drain_overload_trips()` | 古い順の `list[OverloadTrip]` です。最新 64 件を保持するキューを、呼び出しで空にします。 |
 | `robot.last_overload_trip` | 最新の `OverloadTrip` または `None` です。`connect()` 後も残ります。 |
 
-`OverloadTrip` は frozen dataclass で、`motor`、`current`（符号付きの生の値）、 `threshold`、`samples`、`motion`（小文字の名前）、`channel`（`"arm"` または `"leg"`）を持ちます。各作動は、警告ログにも 1 件記録します。
+`OverloadTrip` は frozen dataclass で、`motor`、`current`（符号付きの生の値）、 `threshold`、`samples`、`motion`（小文字の名前）、`channel`（`"arm"` または `"leg"`）、`gap` を持ちます。`gap` は、作動したサンプルを停滞段だけが数えたときの目標からの距離（tick）で、このとき `threshold` は停滞段の電流です。電流だけで閾値に達したときは `None` です。各作動は、警告ログにも 1 件記録します。
 
 ドライバーの `read_telemetry()` が `NotImplementedError` を送出する場合や、脚の全 18 モーターを持たず `KeyError` を送出する場合は、警告を一度記録し、次の `connect()` までこのガードと電源レールのガードを無効にします。ほかの読み取り失敗は最大で 5 秒に 1 回ログに記録し、カウントを保持して、モーションは停止しません。
 

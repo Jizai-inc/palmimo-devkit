@@ -87,6 +87,7 @@ def test_overload_guard_verdict_carries_the_channel_label() -> None:
     assert trip is not None
     assert trip.channel == "arm"
     assert trip.motion == ""  # the facade fills it in
+    assert trip.gap is None
 
 
 @pytest.mark.parametrize("threshold", [0, -1])
@@ -98,6 +99,46 @@ def test_overload_guard_rejects_a_non_positive_threshold(threshold: int) -> None
 def test_overload_guard_rejects_a_zero_streak_length() -> None:
     with pytest.raises(ValueError, match="consecutive"):
         OverloadGuard(700, consecutive=0)
+
+
+def _feed_stall(
+    guard: OverloadGuard, current: int, position: int, goals: dict[str, int] | None, n: int = 3
+) -> OverloadTrip | None:
+    verdict = None
+    for _ in range(n):
+        verdict = guard.sample({"leg_1_yaw": current}, MOTORS, positions={"leg_1_yaw": position}, goals=goals)
+    return verdict
+
+
+def test_overload_guard_stall_stage_trips_below_threshold_when_short_of_the_goal() -> None:
+    guard = OverloadGuard(1200, stall_current=800, stall_gap=250)
+    assert _feed_stall(guard, 900, 2048, {"leg_1_yaw": 2400}, n=2) is None
+    trip = _feed_stall(guard, -900, 2048, {"leg_1_yaw": 2400}, n=1)
+    assert trip is not None
+    assert (trip.current, trip.threshold, trip.samples, trip.gap) == (-900, 800, 3, 352)
+
+
+@pytest.mark.parametrize(
+    ("stall_current", "current", "goals"),
+    [
+        (800, 900, {"leg_1_yaw": 2100}),  # heavy but on its goal
+        (800, 900, None),  # goal unknown
+        (800, 700, {"leg_1_yaw": 2400}),  # far from the goal on little current, as a soft arm sags
+        (None, 900, {"leg_1_yaw": 2400}),  # stage off
+    ],
+)
+def test_overload_guard_stall_stage_does_not_trip(
+    stall_current: int | None, current: int, goals: dict[str, int] | None
+) -> None:
+    guard = OverloadGuard(1200, stall_current=stall_current, stall_gap=250)
+    assert _feed_stall(guard, current, 2048, goals, n=5) is None
+    assert not guard.strained
+
+
+@pytest.mark.parametrize(("stall_current", "stall_gap"), [(1200, 250), (0, 250), (800, 0)])
+def test_overload_guard_rejects_an_invalid_stall_stage(stall_current: int, stall_gap: int) -> None:
+    with pytest.raises(ValueError, match="stall"):
+        OverloadGuard(1200, stall_current=stall_current, stall_gap=stall_gap)
 
 
 def test_leg_motors_expand_in_bus_order() -> None:

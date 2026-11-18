@@ -10,7 +10,7 @@ robot = Palmimo()
 
 ## Constructor
 
-`Palmimo(gait_speed=0.012, step_length=30.0, step_height=30.0, on_step=None, *, fps=60, driver=None, display=None, speaker=None, camera=None, mic=None, auto_wake=True, thermal_clock=None, arm_overload_current=ARM_OVERLOAD_CURRENT, leg_overload_current=LEG_OVERLOAD_CURRENT, rail_undervoltage_v=RAIL_UNDERVOLTAGE_V, flight_recorder=True, incident_dir=None)`
+`Palmimo(gait_speed=0.012, step_length=30.0, step_height=30.0, on_step=None, *, fps=60, driver=None, display=None, speaker=None, camera=None, mic=None, auto_wake=True, thermal_clock=None, arm_overload_current=ARM_OVERLOAD_CURRENT, leg_overload_current=LEG_OVERLOAD_CURRENT, arm_stall_current=None, leg_stall_current=None, stall_gap_ticks=STALL_GAP_TICKS, rail_undervoltage_v=RAIL_UNDERVOLTAGE_V, flight_recorder=True, incident_dir=None)`
 
 The first four arguments are positional-or-keyword; everything after the `*` is keyword-only.
 
@@ -26,6 +26,7 @@ The first four arguments are positional-or-keyword; everything after the `*` is 
 | `auto_wake` | `True` | Whether `connect()` runs the `wake()` glide once a driver is attached |
 | `thermal_clock` | `None` | Clock injected into the neck thermal and overload guards in place of `time.monotonic`; for tests |
 | `arm_overload_current` / `leg_overload_current` | `ARM_OVERLOAD_CURRENT` / `LEG_OVERLOAD_CURRENT` | See [Overload Guard](#overload-guard) |
+| `arm_stall_current` / `leg_stall_current` / `stall_gap_ticks` | `None` / `None` / `STALL_GAP_TICKS` | Stall stage of the overload guard, off by default; see [Overload Guard](#overload-guard) |
 | `rail_undervoltage_v` | `RAIL_UNDERVOLTAGE_V` | See [Rail Undervoltage Guard](#rail-undervoltage-guard) |
 | `flight_recorder` / `incident_dir` | `True` / `None` | See [Servo Flight Recorder](#servo-flight-recorder) |
 
@@ -1021,8 +1022,12 @@ robot = Palmimo(
 |----------|---------|---------|
 | `arm_overload_current` | `ARM_OVERLOAD_CURRENT` (700) | Threshold for the arm channel; `None` disables it; `<= 0` raises `ValueError` |
 | `leg_overload_current` | `LEG_OVERLOAD_CURRENT` (1200) | Threshold for the leg channel; `None` disables it; `<= 0` raises `ValueError` |
+| `arm_stall_current` | `None` | Stall-stage current for the arm channel; `None` turns the stage off; not strictly between 0 and `arm_overload_current` raises `ValueError` |
+| `leg_stall_current` | `None` | Stall-stage current for the leg channel; `None` turns the stage off; not strictly between 0 and `leg_overload_current` raises `ValueError` |
+| `stall_gap_ticks` | `STALL_GAP_TICKS` (250) | Distance from the goal, in ticks, at which the stall stage counts a sample; `<= 0` raises `ValueError` |
 
-Both constants and `OVERLOAD_CONSECUTIVE` are exported from `palmimo_sdk`.
+These constants, `OVERLOAD_CONSECUTIVE`, `ARM_STALL_CURRENT` (450) and
+`LEG_STALL_CURRENT` (800) are exported from `palmimo_sdk`.
 Thresholds are raw `Present_Current` register units compared by magnitude. With
 both channels and the [Rail Undervoltage Guard](#rail-undervoltage-guard)
 disabled, `step()` never reads the leg telemetry.
@@ -1038,6 +1043,20 @@ arm channel covers the three axes of the raised leg (`wave_leg` for `wave`, legs
 3 and 6 for `wave_both` and `clap`); the leg channel covers the remaining
 axes. The counts restart whenever the motion or its arm leg changes, and on
 `connect()`.
+
+**Stall stage.** Current alone cannot tell a heavy pose from an axis that is
+caught and cannot move, so a channel given a stall current also counts a sample
+at or above that lower magnitude when the axis's present position (from the same
+sweep) is at least `stall_gap_ticks` from the goal last written to it. Such a
+sample advances the same count as one at or above the channel's threshold. An
+axis whose goal is not known yet (before the first write after `connect()`) is
+judged on the threshold alone, as is every axis on a channel without a stall
+current. The stage is off by default. `ARM_STALL_CURRENT`, `LEG_STALL_CURRENT`
+and `STALL_GAP_TICKS` are provisional starting points, not yet checked against
+the currents and following lag of healthy motions on the robot: a servo trails
+its goal under `Profile_Velocity`, and a fast motion that trails by more than the
+gap at a current above the stall current would be stopped. Measure before
+enabling it.
 
 **Polling.** The clock is the one injected as `thermal_clock`. At most every
 1/30 s, `step()` makes one `read_telemetry()` call for all 18 leg axes.
@@ -1117,8 +1136,10 @@ records the trip.
 | `robot.last_overload_trip` | The latest `OverloadTrip` or `None`; survives `connect()` |
 
 `OverloadTrip` is a frozen dataclass: `motor`, `current` (signed raw value),
-`threshold`, `samples`, `motion` (lowercase name) and `channel` (`"arm"` or
-`"leg"`). Each trip is also logged as one warning.
+`threshold`, `samples`, `motion` (lowercase name), `channel` (`"arm"` or
+`"leg"`) and `gap`. `gap` is the distance from the goal, in ticks, when only the
+stall stage counted the tripping sample, and `threshold` is then the stall
+current; it is `None` when the current alone reached the threshold. Each trip is also logged as one warning.
 
 A driver whose `read_telemetry()` raises `NotImplementedError`, or `KeyError`
 because it does not carry all 18 leg motors, disables this guard and the rail

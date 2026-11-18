@@ -83,6 +83,7 @@ from .overload import (
     ARM_OVERLOAD_CURRENT,
     LEG_OVERLOAD_CURRENT,
     SOFT_RETURN_GAIN,
+    STALL_GAP_TICKS,
     OverloadTrip,
 )
 from .rail import RAIL_UNDERVOLTAGE_V, RailTrip
@@ -411,6 +412,14 @@ class Palmimo:
             ``None`` disables the arm channel. Must be positive.
         leg_overload_current (int, optional): The same threshold for every other leg axis; a trip drops the
             motion to IDLE. ``None`` disables the leg channel. Must be positive.
+        arm_stall_current (int, optional): Stall stage of the arm channel: a raw |current| at or above
+            this, on an axis at least *stall_gap_ticks* from its goal, also counts as strain.
+            ``None`` (the default) turns the stage off. Must be positive and below
+            *arm_overload_current*; ``ARM_STALL_CURRENT`` is a provisional starting point.
+        leg_stall_current (int, optional): The same stall stage for the leg channel;
+            ``LEG_STALL_CURRENT`` is a provisional starting point.
+        stall_gap_ticks (int): Distance from the goal, in ticks, at which the stall stage counts a
+            sample. Defaults to ``STALL_GAP_TICKS``. Must be positive.
         rail_undervoltage_v (float, optional): Input voltage, in volts, below which the power rail counts as
             sagging. The lowest reading across the leg axes is one signal; ``RAIL_CONSECUTIVE``
             sweeps in a row below it drop the motion to IDLE without cutting
@@ -522,6 +531,9 @@ class Palmimo:
         thermal_clock: Callable[[], float] | None = None,
         arm_overload_current: int | None = ARM_OVERLOAD_CURRENT,
         leg_overload_current: int | None = LEG_OVERLOAD_CURRENT,
+        arm_stall_current: int | None = None,
+        leg_stall_current: int | None = None,
+        stall_gap_ticks: int = STALL_GAP_TICKS,
         rail_undervoltage_v: float | None = RAIL_UNDERVOLTAGE_V,
         flight_recorder: bool = True,
         incident_dir: str | os.PathLike[str] | None = None,
@@ -534,6 +546,9 @@ class Palmimo:
             rail_undervoltage_v=rail_undervoltage_v,
             clock=thermal_clock or time.monotonic,
             logger=logger,
+            arm_stall_current=arm_stall_current,
+            leg_stall_current=leg_stall_current,
+            stall_gap_ticks=stall_gap_ticks,
         )
         self._engine = MotionEngine(
             gait_speed=gait_speed,
@@ -1124,7 +1139,7 @@ class Palmimo:
         from an earlier trip is still let go once it is home. The sweep also
         goes to the flight recorder, under *name*.
         """
-        self._leg_safety.poll(driver, Motion.IDLE, (), glide=name)
+        self._leg_safety.poll(driver, Motion.IDLE, (), glide=name, goals=self._last_goal)
         sweep = self._leg_safety.take_sweep()
         ride = self._flight_ride
         if ride is not None and ride.poll(driver, name, sweep, None, self._last_goal) and not self._disconnecting:
@@ -2355,7 +2370,7 @@ class Palmimo:
         self._thermal.poll(connected_driver)
         self._engine.neck_hold_center = self._thermal.neck_lock_active
         motion = self._engine.motion
-        overloaded = self._leg_safety.poll(connected_driver, motion, self._wave_arm_legs(motion))
+        overloaded = self._leg_safety.poll(connected_driver, motion, self._wave_arm_legs(motion), goals=self._last_goal)
         if overloaded:
             self._engine.motion = Motion.IDLE
         leg_sweep = self._leg_safety.take_sweep()
@@ -2381,11 +2396,10 @@ class Palmimo:
 
     def _write_goal(self, driver: ServoDriver, positions: dict[str, int]) -> None:
         driver.write_positions(positions)
-        if self._flight_enabled:
-            self._last_goal = {
-                name: max(SAFE_MIN_TICK, min(SAFE_MAX_TICK, positions.get(name, MotionEngine.NEUTRAL)))
-                for name in self._engine.get_positions()
-            }
+        self._last_goal = {
+            name: max(SAFE_MIN_TICK, min(SAFE_MAX_TICK, positions.get(name, MotionEngine.NEUTRAL)))
+            for name in self._engine.get_positions()
+        }
 
     @property
     def incident_dir(self) -> Path | None:

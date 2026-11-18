@@ -33,6 +33,14 @@ OVERLOAD_POLL_INTERVAL_S = 1.0 / 30.0
 # Samples further apart than this are not consecutive: the streaks restart.
 STREAK_MAX_GAP_S = 6 * OVERLOAD_POLL_INTERVAL_S
 
+# Stall stage: a lower current counts as strain only while the axis is also this
+# far from its goal. Provisional values, not yet checked against measured peaks
+# and following lag on the robot; the stage is off unless a stall current is passed.
+ARM_STALL_CURRENT = 450
+LEG_STALL_CURRENT = 800
+# About 22 degrees (4096 ticks per turn).
+STALL_GAP_TICKS = 250
+
 # Position_P_Gain an arm is held at while it eases back to neutral.
 SOFT_RETURN_GAIN = 100
 # Band around neutral (about 5 degrees) that counts as "home", wide enough for
@@ -55,6 +63,10 @@ class OverloadTrip:
         motion (str): Motion that was running; filled in by the facade, ``""``
             straight out of :meth:`OverloadGuard.sample`.
         channel (str): ``"arm"`` for the waving arm's guard, ``"leg"`` otherwise.
+        gap (int, optional): Ticks between the axis's position and its goal on the
+            tripping sample when only the stall stage counted that sample, in which
+            case *threshold* is the stall current; ``None`` when the current alone
+            reached the threshold.
     """
 
     motor: str
@@ -63,6 +75,7 @@ class OverloadTrip:
     samples: int
     motion: str
     channel: OverloadChannel
+    gap: int | None = None
 
 
 class OverloadGuard:
@@ -72,13 +85,24 @@ class OverloadGuard:
     *threshold* for *consecutive* samples in a row, so one noisy read cannot
     stop a healthy motion. A sample below the threshold zeroes that axis's streak.
 
+    With *stall_current* set, a sample at or above that lower magnitude also
+    counts when the axis is at least *stall_gap* ticks from its goal: current
+    alone cannot tell a heavy pose from an axis that is caught and cannot move,
+    but an axis that is not reaching its goal can. Both kinds of sample advance
+    the same streak.
+
     Args:
         threshold (int): Current magnitude, in raw register units, that counts as strain.
         consecutive (int): Samples in a row needed to trip.
         channel (str): Label carried on the verdicts (``"arm"`` or ``"leg"``).
+        stall_current (int, optional): Lower magnitude that counts while the axis is
+            short of its goal; ``None`` turns the stall stage off.
+        stall_gap (int): Distance from the goal, in ticks, that counts as short of it.
 
     Raises:
-        ValueError: *threshold* is not positive or *consecutive* is below 1.
+        ValueError: *threshold* is not positive, *consecutive* is below 1,
+            *stall_current* is not between 0 and *threshold* (exclusive), or
+            *stall_gap* is not positive.
     """
 
     def __init__(
@@ -87,14 +111,22 @@ class OverloadGuard:
         *,
         consecutive: int = OVERLOAD_CONSECUTIVE,
         channel: OverloadChannel = "leg",
+        stall_current: int | None = None,
+        stall_gap: int = STALL_GAP_TICKS,
     ) -> None:
         if threshold <= 0:
             raise ValueError("threshold must be positive (raw current units).")
         if consecutive < 1:
             raise ValueError("consecutive must be at least 1.")
+        if stall_current is not None and not 0 < stall_current < threshold:
+            raise ValueError("stall_current must be positive and below threshold (raw current units).")
+        if stall_gap <= 0:
+            raise ValueError("stall_gap must be positive (raw tick units).")
         self._threshold = threshold
         self._consecutive = consecutive
         self._channel: OverloadChannel = channel
+        self._stall_current = stall_current
+        self._stall_gap = stall_gap
         self._streaks = Streak()
 
     @property
@@ -107,7 +139,14 @@ class OverloadGuard:
         """Whether any axis was at or above the threshold when last sampled (``False`` right after a trip)."""
         return self._streaks.active
 
-    def sample(self, currents: Mapping[str, int], motors: Sequence[str]) -> OverloadTrip | None:
+    def sample(
+        self,
+        currents: Mapping[str, int],
+        motors: Sequence[str],
+        *,
+        positions: Mapping[str, int] | None = None,
+        goals: Mapping[str, int] | None = None,
+    ) -> OverloadTrip | None:
         """Fold one sweep into the streaks and return a verdict if an axis trips.
 
         Only *motors* are judged. One missing from *currents* was not read this
@@ -115,24 +154,49 @@ class OverloadGuard:
         streak, so the next trip needs a fresh run. When several axes reach the
         streak on the same sweep, the first in *motors* order is reported.
 
+        The stall stage judges an axis only when both its position and its goal
+        are known; without them, only *threshold* applies.
+
         Args:
             currents (Mapping[str, int]): Axis name -> raw signed current.
             motors (Sequence[str]): Axes to judge, in tie-break order.
+            positions (Mapping[str, int], optional): Axis name -> present position, from the same sweep.
+            goals (Mapping[str, int], optional): Axis name -> goal position the axis was last sent.
         """
         tripped: OverloadTrip | None = None
         for motor in motors:
             if motor not in currents:
                 continue
             current = int(currents[motor])
-            if abs(current) < self._threshold:
-                self._streaks.drop(motor)
-                continue
+            threshold = self._threshold
+            gap = None
+            if abs(current) < threshold:
+                gap = self._stall_gap_of(motor, current, positions, goals)
+                if gap is None:
+                    self._streaks.drop(motor)
+                    continue
+                threshold = self._stall_current or threshold
             streak = self._streaks.advance(motor)
             if tripped is None and streak >= self._consecutive:
-                tripped = OverloadTrip(motor, current, self._threshold, streak, "", self._channel)
+                tripped = OverloadTrip(motor, current, threshold, streak, "", self._channel, gap)
         if tripped is not None:
             self._streaks.clear()
         return tripped
+
+    def _stall_gap_of(
+        self,
+        motor: str,
+        current: int,
+        positions: Mapping[str, int] | None,
+        goals: Mapping[str, int] | None,
+    ) -> int | None:
+        """Distance from the goal when the stall stage counts this sample, else ``None``."""
+        if self._stall_current is None or abs(current) < self._stall_current:
+            return None
+        if positions is None or goals is None or motor not in positions or motor not in goals:
+            return None
+        gap = abs(int(positions[motor]) - int(goals[motor]))
+        return gap if gap >= self._stall_gap else None
 
     def forget(self, motors: Sequence[str]) -> None:
         """Drop the streaks of *motors*, which were unobserved for a while and may have changed since."""
