@@ -931,6 +931,14 @@ def test_oscillate_servo_reports_a_write_the_servo_rejects(monkeypatch: Any, cap
     assert bus.writes(diagnose_servos.ADDR_TORQUE_ENABLE) == []
 
 
+def test_oscillate_servo_releases_torque_when_the_enable_is_rejected(monkeypatch: Any) -> None:
+    bus = _install_fake_bus(monkeypatch, write_error={diagnose_servos.ADDR_TORQUE_ENABLE: 1})
+
+    assert diagnose_servos.oscillate_servo(2, "test-port", 1_000_000, 2.0) is False
+
+    assert bus.writes(diagnose_servos.ADDR_TORQUE_ENABLE) == [1, 0]
+
+
 def test_oscillate_servo_reports_failure_when_the_swing_breaks_off_early(monkeypatch: Any, capsys: Any) -> None:
     # Goal_Position write 1 is the seed, write 2 is the first swing target.
     bus = _install_fake_bus(monkeypatch, write_error={diagnose_servos.ADDR_GOAL_POSITION: 2})
