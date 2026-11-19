@@ -86,14 +86,14 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 > **通常、ポートを指定する必要はありません。** サーボバスの USB アダプターは Linux では `/dev/ttyACM*` として現れます。ただし、デバイスを抜き差ししたり、複数のシリアルデバイスが共存したりすると番号が変わることがあります（フェイスディスプレイも `ttyACM` です）。 `find_servo_port()` は文字列と VID の照合でデバイスを識別するため、番号が変わっても影響を受けません。特定の理由で固定する必要がある場合にだけ、 `--port` を明示的に渡してください。
 
-### マイクとカメラのシステム依存関係
+### マイク・カメラ・スピーカーのシステム依存関係
 
-実際のマイクとカメラのバックエンドには、Python の依存関係の同期ではインストールされない OS ライブラリが必要です。必要なものはアプリによって異なります。
+実際のマイク・カメラ・スピーカーのバックエンドには、Python の依存関係の同期ではインストールされない OS ライブラリが必要です。必要なものはアプリによって異なります。
 
-| アプリと依存関係 | 録音 / 撮影に使うもの | OS の依存関係 |
+| アプリと依存関係 | 録音 / 撮影 / 再生に使うもの | OS の依存関係 |
 |---|---|---|
 | SDK の `HeadCamera` | `opencv-python` | `v4l-utils` |
-| SDK の TTS（`palmimo_sdk.io.speaker`） | `piper` バイナリ | 音声モデル以外は不要 |
+| SDK の TTS（`palmimo_sdk.io.speaker`） | `piper-plus`（`speech` extra）で合成し、`aplay` で再生 | `alsa-utils`（Raspberry Pi OS に標準で入っています） |
 | SDK の `MicStream` / ウェイクワードエージェントのサンプル | `sounddevice` | `libportaudio2` |
 
 カメラを使うすべてのアプリは、同じカメラ処理を共有します。`opencv-python` には V4L2 ドライバー、`/dev/video<id>` の読み取り権限、そして Lite イメージでは wheel がリンクする OpenGL ランタイムが必要です。`libgl1` がないとインポート自体が `ImportError: libGL.so.1: cannot open shared object file` で失敗します。その結果、 MCP サーバーの `capture` ツールが無効になり、コンパニオンエージェントは起動できなくなります。
@@ -108,6 +108,13 @@ SDK の `sounddevice` ベースのマイク収音（`MicStream`、ウェイク�
 
 ```bash
 sudo apt-get install -y libportaudio2
+```
+
+TTS はプロセス内で合成し、発話ごとに `aplay` で再生します。`device_name_hint` を指定しないと、再生先は ALSA の `default` になります。デスクトップ用の音声スタックがない Pi では、これがスピーカーのつながっていない HDMI 出力になることがあります（上の「音声デバイスを名前で指定してください」を参照）。再生に失敗すると警告がログに出て、返されたハンドルの `error` に記録されます。別の出力で再生に成功した場合は、エラーにならず無音になります。発話を試す前に、出力を確認してください。
+
+```bash
+aplay -l                                # 再生デバイスとカード ID を一覧表示
+speaker-test -D plughw:CARD=<card id> -t sine -l 1 -c 2   # 終了コード 0 ではなく、実際に音が聞こえること
 ```
 
 TTS 用の音声モデルのダウンロードは、[インストールガイド](installation.md#音声出力の初回セットアップ)で説明しています。
