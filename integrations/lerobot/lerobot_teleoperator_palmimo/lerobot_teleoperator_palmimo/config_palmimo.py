@@ -26,5 +26,6 @@ class PalmimoTeleopConfig(TeleoperatorConfig):
             "neck_pitch_down": "l",
             "neck_yaw_left": "n",
             "neck_yaw_right": "m",
+            "neck_center": "c",
         }
     )

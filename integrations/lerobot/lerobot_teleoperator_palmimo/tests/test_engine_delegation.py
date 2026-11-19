@@ -120,6 +120,36 @@ def test_neck_char_keys_move_neck() -> None:
     assert t._neck_positions["neck_yaw"] < center
 
 
+def test_neck_holds_its_pose_when_the_keys_are_released() -> None:
+    """A gaze recorded off-center must stay there once the operator lets go."""
+    t = _teleop()
+    keys = t.config.teleop_keys
+    for _ in range(5):
+        t._update_neck_from_keys({keys["neck_pitch_up"], keys["neck_yaw_left"]})
+    held = dict(t._neck_positions)
+    assert held["neck_pitch1"] != t._neutral
+    assert held["neck_yaw"] != t._neutral
+
+    for _ in range(50):
+        t._update_neck_from_keys(set())
+    assert t._neck_positions == held
+
+
+def test_neck_center_key_walks_the_neck_back_to_center_one_step_per_frame() -> None:
+    t = _teleop()
+    keys = t.config.teleop_keys
+    for _ in range(5):
+        t._update_neck_from_keys({keys["neck_pitch_up"], keys["neck_yaw_left"]})
+    yaw_before = t._neck_positions["neck_yaw"]
+
+    t._update_neck_from_keys({keys["neck_center"]})
+    assert t._neck_positions["neck_yaw"] == yaw_before - t._neck_step
+
+    for _ in range(10):
+        t._update_neck_from_keys({keys["neck_center"]})
+    assert t._neck_positions == dict.fromkeys(("neck_pitch1", "neck_pitch2", "neck_yaw"), t._neutral)
+
+
 def test_neck_pitch2_follows_the_pitch_split_instead_of_staying_at_neutral() -> None:
     """neck_pitch2 takes its share of the head pitch (oriented by the engine's sign)
     as the pitch keys move it off center.
