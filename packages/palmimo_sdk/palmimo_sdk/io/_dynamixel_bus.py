@@ -31,9 +31,6 @@ logger = logging.getLogger(__name__)
 PROTOCOL_VERSION = 2.0
 """Dynamixel Protocol 2.0."""
 
-_DEFAULT_TIMEOUT_MS = 1000
-"""Packet timeout applied after connect."""
-
 OPERATING_MODE_POSITION = 3
 """Operating_Mode register value for position control."""
 
@@ -227,7 +224,7 @@ class DynamixelBus:
             raise RuntimeError(f"Failed to set bus baud rate to {baudrate}.")
 
     def connect(self) -> None:
-        """Open the port, ping every expected motor, and set the packet timeout.
+        """Open the port and ping every expected motor.
 
         Raises:
             ConnectionError: The port could not be opened.
@@ -247,7 +244,6 @@ class DynamixelBus:
             if self._pending_baudrate is not None:
                 self.set_baudrate(self._pending_baudrate)
             self._handshake()
-            self.port_handler.setPacketTimeoutMillis(_DEFAULT_TIMEOUT_MS)
         except BaseException:
             self._close_port()
             raise

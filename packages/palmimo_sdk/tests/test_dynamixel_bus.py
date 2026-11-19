@@ -5,6 +5,8 @@ The bus itself needs a serial port, but the two decisions a span read makes
 functions here, so they are pinned without one.
 """
 
+import time
+
 import dynamixel_sdk
 import pytest
 
@@ -16,6 +18,7 @@ from palmimo_sdk.io._dynamixel_bus import (
     slice_field,
     span_of,
 )
+from palmimo_sdk.io.dynamixel import _TORQUE_OFF_RETRY
 
 
 # Comm results, matching the vendored SDK's robotis_def constants.
@@ -341,6 +344,42 @@ def test_disable_torque_retries_a_dropped_reply_a_bounded_number_of_times(
         bus.disable_torque(num_retry=1)
 
     assert handler.writes == writes
+
+
+class SilentSerial:
+    """A serial port that takes every packet and never answers, like an unplugged servo."""
+
+    def __init__(self) -> None:
+        self.packets_sent = 0
+
+    def write(self, packet: bytes) -> int:
+        self.packets_sent += 1
+        return len(packet)
+
+    def read(self, length: int) -> bytes:
+        return b""
+
+    def reset_input_buffer(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize("num_retry", [_TORQUE_OFF_RETRY, 5], ids=["guard_cut", "disconnect"])
+def test_disable_torque_on_a_silent_servo_stalls_for_tens_of_milliseconds_per_try(num_retry: int) -> None:
+    """The SDK's own per-packet timeout (about 34 ms at 1 Mbaud) bounds the stall, through the real handlers."""
+    bus = DynamixelBus(port="/dev/null", motors={"leg_1_yaw": 1}, model="xc330-m288")
+    serial = SilentSerial()
+    bus.port_handler.ser = serial
+    bus.port_handler.is_open = True
+    bus.port_handler.baudrate = 1_000_000
+    bus.port_handler.tx_time_per_byte = 1000.0 / bus.port_handler.baudrate * 10.0
+
+    start = time.monotonic()
+    with pytest.raises(ConnectionError, match=r"1 motor\(s\): leg_1_yaw"):
+        bus.disable_torque(num_retry=num_retry)
+    elapsed = time.monotonic() - start
+
+    assert serial.packets_sent == 1 + num_retry
+    assert elapsed < (1 + num_retry) * 0.1
 
 
 @pytest.mark.parametrize(
