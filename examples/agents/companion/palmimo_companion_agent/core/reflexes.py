@@ -151,7 +151,9 @@ class ReflexEngine:
         calls with no visible answer at all.
         """
         shown = await self._toolset.call("set_face", {"name": _NAME_CALL_FACE, "reason": "reflex: heard my name"})
-        if not shown.is_error:
+        if shown.is_error:
+            _log.warning("name-call reflex could not show its face: %s", shown.text)
+        else:
             self._notify(f"[reflex] answered a call ({detection.summary}).")
         result = await self._toolset.call(
             "look_at_face",
