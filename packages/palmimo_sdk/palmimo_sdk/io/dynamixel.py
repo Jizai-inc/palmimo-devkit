@@ -489,7 +489,7 @@ class DynamixelDriver(ServoDriver):
         gains: dict[str, int] = {}
         remaining: Sequence[str] | None = None
         while True:
-            sweep = self._bus.sync_read_span(["Position_P_Gain"], motors=remaining)
+            sweep = self._bus.sync_read_span(["Position_P_Gain"], motors=remaining, num_retry=1)
             gains.update({n: int(v["Position_P_Gain"]) for n, v in sweep.values.items()})
             # A sweep stops at the first silent servo; ask the ones behind it again.
             # No silent servo means the sweep finished or never went out.
