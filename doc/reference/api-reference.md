@@ -1518,9 +1518,7 @@ tick) in one sweep, with the same `silent` / `unreached` bookkeeping. The
 [Rail Undervoltage Guard](#rail-undervoltage-guard) reads `voltage`.
 `ServoDriver.set_torque_enabled(enabled, motors=None)` switches torque on the
 named motors (every motor when `None`). Both are optional capabilities; the
-defaults raise `NotImplementedError`. On `DynamixelDriver`, switching torque on
-(which `connect()` also does) raises `RuntimeError` naming any servo that has a
-hardware error latched, because torque does not take on a servo that has shut down.
+defaults raise `NotImplementedError`.
 
 `ServoDriver.read_hardware_errors(motors=None)` returns a `HardwareErrorRead`
 (`palmimo_sdk.io.base.HardwareErrorRead`) in one sweep; `None` selects all motors.
@@ -1562,6 +1560,8 @@ The bundled hardware backend (Dynamixel serial bus; needs the `palmimo-sdk[hardw
 - `connect_timeout` bounds the whole connect sequence (see `DynamixelConnectTimeoutError` below).
 
 `connect()` seeds each motor's Goal_Position from its present position before enabling torque. If any motor's position cannot be read after four attempts, `connect()` raises `ConnectionError` naming the motors and torque stays off.
+
+Switching torque on (which `connect()` also does) raises `RuntimeError` naming any servo that has a hardware error latched, because torque does not take on a servo that has shut down.
 
 ```python
 from palmimo_sdk import SUPPORTED_MOTOR_MODELS, palmimo_motor_ids
