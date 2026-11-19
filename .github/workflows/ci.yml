@@ -92,6 +92,7 @@ jobs:
       matrix:
         example:
           - dir: examples/teleop
+          - dir: examples/controller
           - dir: examples/agents/wakeword
           - dir: examples/agents/companion
     defaults:

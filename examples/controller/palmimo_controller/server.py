@@ -1,0 +1,717 @@
+"""FastAPI app assembly: routes, static files, and the lifespan that starts/stops the
+robot loop and camera capture alongside the server.
+
+`create_app` is the sole entry point: it wires together an already-built
+`Palmimo`, `PilotSession`, `RobotLoop`, and `VideoStream` (assembled in
+`main.py`) into the routes the frontend talks to. Kept separate from
+`main.py` so the FastAPI/HTTP layer never has to know about `typer` or CLI
+option parsing.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import logging
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from palmimo_sdk import Palmimo
+
+from .ai.controller import NOTICE_ROBOT_OFFLINE, AiController
+from .audio_levels import (
+    DEFAULT_MIC_GAIN,
+    DEFAULT_SPEAKER_VOLUME,
+    MIC_GAIN_MAX,
+    MIC_GAIN_MIN,
+    SPEAKER_VOLUME_MAX,
+    SPEAKER_VOLUME_MIN,
+    AudioLevels,
+    MicLevel,
+    default_audio_levels_path,
+)
+from .control import ALLOWED_GESTURES, ALLOWED_MOVES, ALLOWED_ROTATES, clamp_neck
+from .modes import EditablePrompts, ModeSetting, default_mode_path
+from .robot_loop import RobotLoop
+from .session import PilotSession
+from .telemetry import Telemetry
+from .video import MJPEG_BOUNDARY, VideoStream, mjpeg_generator
+from .voices import DEFAULT_VOICE, VOICES, VoicePreview, VoiceSetting, default_voice_path
+
+
+_LOG = logging.getLogger(__name__)
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+#: How often the `@2Hz` status broadcast fires.
+STATUS_BROADCAST_INTERVAL_S: float = 0.5
+
+#: How often the homepage's mic meter is updated while an AI mode has the mic open.
+MIC_LEVEL_INTERVAL_S: float = 0.1
+
+#: Cap on one client's `send_json` during a status broadcast -- a stalled
+#: peer (a dead TCP path that has not yet surfaced as a close) must not hold
+#: up delivery to every other connected client.
+BROADCAST_SEND_TIMEOUT_S: float = 1.0
+
+
+class _ConnectionRegistry:
+    """Every open `/api/control` WebSocket, for the periodic status broadcast.
+
+    A plain dict keyed by the socket object rather than by role -- both
+    pilot and viewers receive the same broadcast, so there is nothing role
+    differentiates here.
+    """
+
+    def __init__(self, *, send_timeout_s: float = BROADCAST_SEND_TIMEOUT_S) -> None:
+        self._sockets: set[WebSocket] = set()
+        self._lock = asyncio.Lock()
+        self._send_timeout_s = send_timeout_s
+
+    async def add(self, websocket: WebSocket) -> None:
+        async with self._lock:
+            self._sockets.add(websocket)
+
+    async def remove(self, websocket: WebSocket) -> None:
+        async with self._lock:
+            self._sockets.discard(websocket)
+
+    async def broadcast(self, payload: dict[str, Any]) -> None:
+        """Send *payload* to every registered socket, independently of one another.
+
+        Each send is wrapped in its own timeout and exception guard
+        (`_send_one`, which never raises) and the whole batch runs
+        concurrently via `asyncio.gather` -- one client that raises, or
+        whose `send_json` never completes (a stalled peer), must not delay
+        or block delivery to the rest.
+        """
+        async with self._lock:
+            targets = list(self._sockets)
+        if not targets:
+            return
+        await asyncio.gather(*(self._send_one(websocket, payload) for websocket in targets))
+
+    async def _send_one(self, websocket: WebSocket, payload: dict[str, Any]) -> None:
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(websocket.send_json(payload), timeout=self._send_timeout_s)
+
+
+def _neck_axis(value: object) -> float | None:
+    """Validate and clamp one `neck.pitch`/`neck.yaw` value from an untrusted pilot frame.
+
+    Returns:
+        float, optional: the clamped axis value, or `None` (frame dropped)
+            if *value* is not a plain `int`/`float` -- `bool` is excluded
+            despite being an `int` subclass, matching `rotate`'s treatment --
+            or is numeric but too large for `float()` to represent
+            (`OverflowError`, distinct from the `ValueError`/`TypeError` a
+            non-numeric value would raise). Both must be rejected before
+            `clamp_neck`'s `math.isfinite` guard ever runs.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return clamp_neck(float(value))
+    except OverflowError:
+        return None
+
+
+def _validate_pilot_message(message: object) -> tuple[str | None, int, float, float] | None:
+    """Validate one pilot control frame.
+
+    *message* is untyped `object`, not `dict[str, Any]`: it is whatever
+    `json.loads` produced from an untrusted client, which for a bare JSON
+    array or string is not a dict at all -- calling `.get` on it would raise
+    `AttributeError` and kill the WebSocket handler, so every shape
+    (including a `move`/`rotate` sent as a list, or a `neck` value large
+    enough to overflow `float()`) is checked before use rather than assumed.
+
+    Returns:
+        tuple, optional: `(move, rotate, neck_pitch, neck_yaw)` if the frame
+            is well-formed, else `None` -- the caller drops the frame
+            entirely (unknown `move`, or out-of-set `rotate`, is rejected
+            outright, since those select a gait; neck is clamped rather than
+            rejected, since no finite neck value is unsafe).
+    """
+    if not isinstance(message, dict):
+        return None
+    move = message.get("move")
+    if move is not None and (not isinstance(move, str) or move not in ALLOWED_MOVES):
+        return None
+    rotate = message.get("rotate", 0)
+    # `bool` is a subclass of `int` in Python, so `True in {-1, 0, 1}` is
+    # `True` (`True == 1`) -- rejected explicitly rather than silently
+    # accepted as rotate=1. `isinstance` is checked before the `in` test:
+    # an unhashable `rotate` (e.g. a list) would otherwise raise `TypeError`
+    # from the frozenset membership check.
+    if isinstance(rotate, bool) or not isinstance(rotate, int) or rotate not in ALLOWED_ROTATES:
+        return None
+    neck = message.get("neck")
+    if neck is None:
+        neck = {}
+    if not isinstance(neck, dict):
+        return None
+    pitch = _neck_axis(neck.get("pitch", 0.0))
+    yaw = _neck_axis(neck.get("yaw", 0.0))
+    if pitch is None or yaw is None:
+        return None
+    return move, rotate, pitch, yaw
+
+
+def _validate_play_message(message: dict[str, Any]) -> str | None:
+    """Validate a `{"play": ...}` gesture-playback message.
+
+    Returns:
+        str, optional: the gesture name if it is in `ALLOWED_GESTURES`, else
+            `None` -- the caller drops the message entirely, same as an
+            unrecognized `move`. `isinstance` is checked before the `in`
+            test: an unhashable `play` value (e.g. a list) would otherwise
+            raise `TypeError` from the frozenset membership check.
+    """
+    name = message.get("play")
+    if not isinstance(name, str) or name not in ALLOWED_GESTURES:
+        return None
+    return name
+
+
+def _resolve_role(session: PilotSession, client_id: int, first_message: object) -> tuple[str | None, dict[str, Any]]:
+    """Decide the role for a WebSocket's first message, without performing any I/O.
+
+    Split out from the connection handler so the pilot slot is claimed (via
+    `session.acquire_pilot`) and the resulting role is known to the caller
+    *before* anything is awaited -- if the caller's subsequent
+    `send_json(payload)` then fails (a closed peer surfacing as something
+    other than `WebSocketDisconnect`, e.g. `RuntimeError`), the role is
+    already committed and the caller's `finally` still releases the slot.
+    Resolving the role by awaiting `send_json` itself, as a previous version
+    did, left the slot permanently held whenever that send failed.
+
+    Returns:
+        tuple: `(role, payload)`. `role` is `"pilot"` or `"viewer"` when the
+            caller should proceed to the read loop, or `None` when the
+            first message was not a dict or requested an unrecognized role
+            -- the caller must close the connection with 1008 and never
+            send *payload* (which is `{}` in that case).
+    """
+    if not isinstance(first_message, dict):
+        return None, {}
+    requested = first_message.get("role")
+    if requested == "pilot":
+        if session.acquire_pilot(client_id):
+            return "pilot", {"granted": True}
+        return "viewer", {"granted": False, "reason": "busy"}
+    if requested == "viewer":
+        return "viewer", {"granted": True}
+    return None, {}
+
+
+def _origin_is_allowed(websocket: WebSocket) -> bool:
+    """Whether this WebSocket's `Origin` header, if present, matches the request's own `Host`.
+
+    WebSocket connections are not subject to CORS, so without this check any
+    page reachable on the LAN could open `ws://<robot>/api/control` and
+    drive the robot. A missing `Origin` header -- any non-browser client,
+    including this project's own tests -- is let through unchecked; only a
+    mismatched `Origin`, which only a browser navigating from a different
+    site can send, is rejected.
+    """
+    origin = websocket.headers.get("origin")
+    if origin is None:
+        return True
+    return urlsplit(origin).netloc == websocket.headers.get("host", "")
+
+
+async def _handle_ai_message(
+    message: dict[str, Any],
+    ai: AiController,
+    client_id: int,
+    mode_setting: ModeSetting | None = None,
+    preview: VoicePreview | None = None,
+) -> None:
+    """Act on a pilot's `{"ai": "start"}` or `{"ai": "stop"}` message; drop anything else.
+
+    Start runs the mode chosen on the homepage (*mode_setting*), and cuts off
+    any voice preview first, since the AI mode needs the speaker.
+    """
+    action = message.get("ai")
+    if action == "stop":
+        await ai.stop(reason="user")
+    elif action == "start" and mode_setting is not None:
+        if preview is not None:
+            await preview.stop()
+        await ai.start(client_id, mode_setting.get())
+
+
+async def _control_connection(
+    websocket: WebSocket,
+    session: PilotSession,
+    registry: _ConnectionRegistry,
+    client_id: int,
+    ai: AiController | None = None,
+    mode_setting: ModeSetting | None = None,
+    preview: VoicePreview | None = None,
+) -> None:
+    """Run one accepted `/api/control` WebSocket's role handshake and read loop.
+
+    Extracted from the route so it can be exercised directly against a fake
+    `WebSocket` in tests, without going through a real ASGI handshake.
+    The pilot leaving ends any AI mode it started: with nobody holding the
+    controls, nobody could tap back to teleop.
+    """
+    role: str | None = None
+    try:
+        try:
+            first = await websocket.receive_json()
+        except (json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError):
+            # Same malformed-frame set the read loop below tolerates, but the
+            # first frame has no established role yet to fall back on -- treat
+            # it like any other unrecognized first message and close 1008
+            # instead of letting the decode error escape this function.
+            await websocket.close(code=1008)
+            return
+        role, payload = _resolve_role(session, client_id, first)
+        if role is None:
+            await websocket.close(code=1008)
+            return
+        await websocket.send_json(payload)
+        await registry.add(websocket)
+        while True:
+            try:
+                message = await websocket.receive_json()
+            except WebSocketDisconnect:
+                raise
+            except (json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError):
+                # A malformed frame (non-JSON text, an undecodable byte
+                # sequence) from a stale or buggy client is dropped, not
+                # fatal -- only an actual disconnect ends the connection.
+                continue
+            if role != "pilot":
+                continue
+            if isinstance(message, dict) and "ai" in message:
+                if ai is not None:
+                    await _handle_ai_message(message, ai, client_id, mode_setting, preview)
+                continue
+            if isinstance(message, dict) and "play" in message:
+                # `{"play": ...}` is a one-off gesture-playback request,
+                # independent of the per-100ms control frame (and its
+                # deadman heartbeat) validated below -- see
+                # `_validate_play_message`.
+                gesture = _validate_play_message(message)
+                if gesture is not None:
+                    session.play(client_id, gesture)
+                continue
+            validated = _validate_pilot_message(message)
+            if validated is None:
+                continue
+            move, rotate, pitch, yaw = validated
+            session.update_pilot_input(client_id, move=move, rotate=rotate, neck_pitch=pitch, neck_yaw=yaw)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        # Runs for every exit path except a `WebSocketDisconnect` re-raised
+        # above having already been caught -- including any other exception
+        # propagating out of this function -- so the pilot slot and
+        # registry membership are never left dangling on an unexpected
+        # error from `send_json`/`receive_json`.
+        #
+        # The synchronous release runs before the awaited deregistration:
+        # if this task is cancelled (e.g. server shutdown) while `await
+        # registry.remove(...)` is in flight, `CancelledError` re-raises
+        # out of that await and skips whatever follows it -- releasing
+        # first means the pilot slot is freed either way.
+        if role == "pilot":
+            session.release_pilot(client_id)
+            if ai is not None:
+                await ai.stop(reason="pilot_left")
+        await registry.remove(websocket)
+
+
+#: Browsers may reuse a page or stylesheet without asking (heuristic caching
+#: from `Last-Modified`), so after an app update a phone kept showing the old
+#: look. `no-cache` makes them check every time; an unchanged file still costs
+#: only a 304.
+_REVALIDATE = {"Cache-Control": "no-cache"}
+
+
+class _RevalidatedStaticFiles(StaticFiles):
+    """`StaticFiles` whose responses tell the browser to check for a newer version on every load."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers.update(_REVALIDATE)
+        return response
+
+
+class _PromptBody(BaseModel):
+    """`PUT /api/prompts/{mode_id}` body."""
+
+    text: str
+
+
+class _VoiceBody(BaseModel):
+    """`PUT /api/voice` and `POST /api/voice/preview` body."""
+
+    voice: str
+
+
+class _ModeBody(BaseModel):
+    """`PUT /api/mode` body."""
+
+    mode: str
+
+
+class _AudioBody(BaseModel):
+    """`PUT /api/audio` body: both levels in percent."""
+
+    speaker_volume: int = Field(ge=SPEAKER_VOLUME_MIN, le=SPEAKER_VOLUME_MAX)
+    mic_gain: int = Field(ge=MIC_GAIN_MIN, le=MIC_GAIN_MAX)
+
+
+def create_app(
+    robot: Palmimo,
+    session: PilotSession,
+    robot_loop: RobotLoop,
+    video: VideoStream,
+    ai: AiController,
+    prompts: EditablePrompts,
+    telemetry: Telemetry,
+    voices: VoiceSetting | None = None,
+    *,
+    audio_levels: AudioLevels | None = None,
+    mic_level: MicLevel | None = None,
+    mode_setting: ModeSetting | None = None,
+    voice_preview: VoicePreview | None = None,
+) -> FastAPI:
+    """Assemble the FastAPI app around an already-constructed robot loop and video stream.
+
+    Args:
+        robot (Palmimo): The facade the lifespan connects/disconnects.
+        session (PilotSession): Shared pilot state; written only on the server's event loop.
+        robot_loop (RobotLoop): Drives `robot` from `session`; started/stopped by the lifespan.
+        video (VideoStream): Drives head camera capture; started/stopped by the lifespan.
+        ai (AiController): Starts/stops AI modes; stopped by the lifespan before the robot parks.
+        prompts (EditablePrompts): The AI modes the pilot page lists, and the prompts the homepage edits.
+        telemetry (Telemetry): Receives session start/end events.
+        voices (VoiceSetting | None): The AI voice the homepage picks; `None` uses the one saved
+            under the data home (`voices.default_voice_path`).
+        audio_levels (AudioLevels | None): The speaker volume and mic gain the homepage sets;
+            `None` uses the ones saved under the data home (`audio_levels.default_audio_levels_path`).
+        mic_level (MicLevel | None): The running AI mode's mic loudness, sent to the homepage meter;
+            `None` sends no meter updates.
+        mode_setting (ModeSetting | None): The AI mode the homepage picks and the pilot page's AI
+            button starts; `None` uses the one saved under the data home (`modes.default_mode_path`).
+        voice_preview (VoicePreview | None): Plays voice samples on the robot's speaker;
+            `None` leaves `POST /api/voice/preview` unavailable (503).
+
+    Returns:
+        FastAPI: The assembled app, ready for `uvicorn.run`.
+    """
+    registry = _ConnectionRegistry()
+    voice_setting = voices if voices is not None else VoiceSetting(default_voice_path())
+    levels = audio_levels if audio_levels is not None else AudioLevels(default_audio_levels_path())
+    chosen_mode = mode_setting if mode_setting is not None else ModeSetting(default_mode_path(), prompts)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if robot.has_connectable_resource:
+            robot.connect()
+        robot_loop.start()
+        video.start()
+        telemetry.event("session_start", servo_attached=robot.driver is not None, ai_available=ai.available)
+        broadcast_task = asyncio.create_task(
+            _broadcast_loop(robot, session, robot_loop, video, registry, ai, chosen_mode)
+        )
+        level_task = asyncio.create_task(_mic_level_loop(mic_level, registry, ai)) if mic_level is not None else None
+        try:
+            yield
+        finally:
+            if level_task is not None:
+                level_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await level_task
+            broadcast_task.cancel()
+            try:
+                await broadcast_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                # However the broadcast task ended, robot/video teardown
+                # below must still run -- it is the only path that eases
+                # the physical robot to a stop and releases the camera.
+                _LOG.exception("status broadcast task ended with an unexpected error")
+            finally:
+                # AI first: its audio must stop before the robot parks.
+                with contextlib.suppress(Exception):
+                    await ai.stop(reason="shutdown")
+                if voice_preview is not None:
+                    with contextlib.suppress(Exception):
+                        await voice_preview.stop()
+                telemetry.event("session_end")
+                video.stop()
+                if robot_loop.shutdown():
+                    if robot.has_connectable_resource:
+                        robot.disconnect()
+                else:
+                    # `shutdown()` left the control thread still running
+                    # (past its settle_timeout) rather than block the
+                    # lifespan on it -- that thread is the only one allowed
+                    # to touch `robot`, so disconnecting here would close
+                    # the servo port out from under it.
+                    _LOG.error("loop thread still running; leaving the servo port open")
+
+    app = FastAPI(lifespan=lifespan)
+    app.mount("/static", _RevalidatedStaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.get("/")
+    async def viewer_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "viewer.html", headers=_REVALIDATE)
+
+    @app.get("/pilot")
+    async def pilot_page() -> FileResponse:
+        return FileResponse(STATIC_DIR / "pilot.html", headers=_REVALIDATE)
+
+    @app.get("/api/modes")
+    async def list_modes() -> dict[str, Any]:
+        return {
+            "ai_available": ai.available,
+            "modes": [{"id": mode.id, "label": mode.label} for mode in prompts.modes()],
+        }
+
+    def _prompt_entry(mode_id: str, label: str) -> dict[str, Any]:
+        return {
+            "id": mode_id,
+            "label": label,
+            "text": prompts.prompt(mode_id),
+            "default_text": prompts.default_prompt(mode_id),
+            "custom": prompts.is_custom(mode_id),
+        }
+
+    def _label(mode_id: str) -> str:
+        for mode in prompts.modes():
+            if mode.id == mode_id:
+                return mode.label
+        raise HTTPException(status_code=404, detail="unknown mode")
+
+    @app.get("/api/prompts")
+    async def list_prompts() -> list[dict[str, Any]]:
+        return [_prompt_entry(mode.id, mode.label) for mode in prompts.modes()]
+
+    @app.put("/api/prompts/{mode_id}")
+    async def save_prompt(mode_id: str, body: _PromptBody) -> dict[str, Any]:
+        label = _label(mode_id)
+        try:
+            prompts.save(mode_id, body.text)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            _LOG.exception("could not save prompt for mode %r", mode_id)
+            raise HTTPException(status_code=500, detail="could not write the prompt file") from exc
+        return _prompt_entry(mode_id, label)
+
+    @app.delete("/api/prompts/{mode_id}")
+    async def reset_prompt(mode_id: str) -> dict[str, Any]:
+        label = _label(mode_id)
+        try:
+            prompts.reset(mode_id)
+        except OSError as exc:
+            _LOG.exception("could not reset prompt for mode %r", mode_id)
+            raise HTTPException(status_code=500, detail="could not remove the prompt file") from exc
+        return _prompt_entry(mode_id, label)
+
+    def _voice_entry() -> dict[str, Any]:
+        return {
+            "voice": voice_setting.get(),
+            "default_voice": DEFAULT_VOICE,
+            "voices": list(VOICES),
+            "custom": voice_setting.is_custom(),
+        }
+
+    @app.get("/api/voice")
+    async def get_voice() -> dict[str, Any]:
+        return _voice_entry()
+
+    @app.put("/api/voice")
+    async def save_voice(body: _VoiceBody) -> dict[str, Any]:
+        try:
+            voice_setting.save(body.voice)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            _LOG.exception("could not save the AI voice")
+            raise HTTPException(status_code=500, detail="could not write the voice setting") from exc
+        return _voice_entry()
+
+    @app.post("/api/voice/preview")
+    async def preview_voice(body: _VoiceBody) -> dict[str, Any]:
+        if body.voice not in VOICES:
+            raise HTTPException(status_code=422, detail="unknown voice")
+        if voice_preview is None:
+            raise HTTPException(status_code=503, detail="voice preview is not available")
+        # The running AI mode owns the speaker.
+        if ai.running:
+            raise HTTPException(status_code=409, detail="an AI mode is using the speaker")
+        try:
+            seconds = await voice_preview.play(body.voice)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=503, detail="no sample recorded for this voice") from exc
+        except (ValueError, OSError) as exc:
+            _LOG.exception("could not play the sample for voice %r", body.voice)
+            raise HTTPException(status_code=500, detail="could not play the sample") from exc
+        return {"voice": body.voice, "seconds": round(seconds, 2)}
+
+    def _mode_entry() -> dict[str, Any]:
+        return {
+            "mode": chosen_mode.get(),
+            "default_mode": chosen_mode.default(),
+            "modes": [{"id": mode.id, "label": mode.label} for mode in prompts.modes()],
+        }
+
+    @app.get("/api/mode")
+    async def get_mode() -> dict[str, Any]:
+        return _mode_entry()
+
+    @app.put("/api/mode")
+    async def save_mode(body: _ModeBody) -> dict[str, Any]:
+        try:
+            chosen_mode.save(body.mode)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            _LOG.exception("could not save the AI mode")
+            raise HTTPException(status_code=500, detail="could not write the mode setting") from exc
+        return _mode_entry()
+
+    def _audio_entry() -> dict[str, Any]:
+        current = levels.get()
+        return {
+            "speaker_volume": current.speaker_volume,
+            "mic_gain": current.mic_gain,
+            "default_speaker_volume": DEFAULT_SPEAKER_VOLUME,
+            "default_mic_gain": DEFAULT_MIC_GAIN,
+            "speaker_volume_range": [SPEAKER_VOLUME_MIN, SPEAKER_VOLUME_MAX],
+            "mic_gain_range": [MIC_GAIN_MIN, MIC_GAIN_MAX],
+        }
+
+    @app.get("/api/audio")
+    async def get_audio() -> dict[str, Any]:
+        return _audio_entry()
+
+    @app.put("/api/audio")
+    async def save_audio(body: _AudioBody) -> dict[str, Any]:
+        try:
+            levels.save(speaker_volume=body.speaker_volume, mic_gain=body.mic_gain)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except OSError as exc:
+            _LOG.exception("could not save the audio levels")
+            raise HTTPException(status_code=500, detail="could not write the audio levels") from exc
+        return _audio_entry()
+
+    @app.get("/video.mjpeg")
+    async def video_stream() -> StreamingResponse:
+        if not video.has_camera:
+            raise HTTPException(status_code=503, detail="camera not available")
+        return StreamingResponse(
+            mjpeg_generator(video),
+            media_type=f"multipart/x-mixed-replace; boundary={MJPEG_BOUNDARY}",
+        )
+
+    @app.websocket("/api/control")
+    async def control(websocket: WebSocket) -> None:
+        if not _origin_is_allowed(websocket):
+            await websocket.close(code=1008)
+            return
+        await websocket.accept()
+        await _control_connection(websocket, session, registry, id(websocket), ai, chosen_mode, voice_preview)
+
+    return app
+
+
+async def _mic_level_loop(
+    mic_level: MicLevel,
+    registry: _ConnectionRegistry,
+    ai: AiController,
+    *,
+    interval: float = MIC_LEVEL_INTERVAL_S,
+) -> None:
+    """Send the mic's peak loudness to every client while an AI mode has the mic open.
+
+    A message of its own (`{"mic_level": ...}`) rather than a field of the
+    2 Hz status: the meter needs a faster rate, and a status-shaped message
+    with fields missing would read as the robot going offline. Each
+    iteration is guarded like `_broadcast_loop`'s, so one failure never
+    ends the meter for the rest of the process.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            level = mic_level.take()
+            if level is None or not ai.running:
+                continue
+            await registry.broadcast({"mic_level": round(level, 3)})
+        except Exception:
+            _LOG.exception("mic level broadcast failed")
+
+
+async def _broadcast_loop(
+    robot: Palmimo,
+    session: PilotSession,
+    robot_loop: RobotLoop,
+    video: VideoStream,
+    registry: _ConnectionRegistry,
+    ai: AiController | None = None,
+    mode_setting: ModeSetting | None = None,
+) -> None:
+    """Push the `@2Hz` status payload to every connected client until cancelled.
+
+    Also ends a running AI mode when the robot's control cycle is failing,
+    so a broken robot does not keep spending the account's API usage.
+
+    Each iteration is guarded so one failure (e.g. `session.status()` or a
+    broadcast raising) is logged and skipped rather than ending the task --
+    a task death here would silently stop every client's status updates for
+    the rest of the process, with no automatic recovery.
+    """
+    while True:
+        await asyncio.sleep(STATUS_BROADCAST_INTERVAL_S)
+        try:
+            if ai is not None and ai.running and not robot_loop.robot_ok:
+                await ai.stop(notice=NOTICE_ROBOT_OFFLINE, reason="robot_offline")
+            status = session.status()
+            await registry.broadcast(
+                {
+                    "pilot_present": status.pilot_present,
+                    "motion": status.motion,
+                    "loop_fps": robot_loop.loop_fps,
+                    "camera_ok": video.camera_ok,
+                    "robot_ok": robot_loop.robot_ok,
+                    # Whether a servo driver was attached at startup -- `False`
+                    # means the app is running compute-only (no probe found a
+                    # bus, or --dry-run), distinct from `robot_ok`, which is
+                    # about a control-cycle failure on an attached driver.
+                    "servo_attached": robot.driver is not None,
+                    "mode": status.mode,
+                    "ai_mode": status.ai_mode,
+                    "notice": status.notice,
+                    "ai_available": ai is not None and ai.available,
+                    # The homepage's choice, so the pilot page's AI button names
+                    # the mode it will start.
+                    "selected_mode": mode_setting.get() if mode_setting is not None else None,
+                    "selected_mode_label": mode_setting.label() if mode_setting is not None else None,
+                    "ai_mode_label": (
+                        mode_setting.label(status.ai_mode)
+                        if mode_setting is not None and status.ai_mode is not None
+                        else status.ai_mode
+                    ),
+                }
+            )
+        except Exception:
+            _LOG.exception("status broadcast failed")

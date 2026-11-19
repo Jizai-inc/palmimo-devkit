@@ -1,0 +1,98 @@
+"""Behavior of `palmimo_controller.main._build_servo_driver`'s startup probe retry -- no real
+hardware, no real sleep."""
+
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from palmimo_controller import main
+from palmimo_controller.main import PROBE_RETRY_ATTEMPTS, _build_servo_driver
+
+
+def test_build_servo_driver_attaches_after_transient_probe_failures() -> None:
+    # Without this, a probe that only fails on its first attempt(s) -- e.g.
+    # a servo bus still settling right after a prior process was killed --
+    # would fall back to compute-only even though the bus is actually fine,
+    # exactly the accident that motivated retrying at all.
+    attempts: list[str | None] = []
+
+    def probe(port: str | None) -> Exception | None:
+        attempts.append(port)
+        return RuntimeError("bus busy") if len(attempts) < PROBE_RETRY_ATTEMPTS else None
+
+    driver = _build_servo_driver("/dev/ttyACM0", probe=probe, sleep=lambda _seconds: None)
+
+    assert driver is not None
+    assert len(attempts) == PROBE_RETRY_ATTEMPTS
+
+
+def test_build_servo_driver_degrades_to_compute_only_after_every_attempt_fails() -> None:
+    # Without this, a genuinely absent bus could retry forever (or stop
+    # retrying but still attach a driver), instead of cleanly degrading to
+    # compute-only the way --dry-run does.
+    attempts = 0
+
+    def probe(port: str | None) -> Exception | None:
+        nonlocal attempts
+        attempts += 1
+        return RuntimeError("no bus")
+
+    driver = _build_servo_driver(None, probe=probe, sleep=lambda _seconds: None)
+
+    assert driver is None
+    assert attempts == PROBE_RETRY_ATTEMPTS
+
+
+@pytest.mark.parametrize("error_name", ["ResourceBusyError", "ReservationSetupError"])
+def test_build_servo_driver_propagates_reservation_errors(error_name: str) -> None:
+    reservation = pytest.importorskip("palmimo_sdk.reservation")
+    error_type = getattr(reservation, error_name)
+    error = error_type("servo_bus")
+
+    with (
+        patch("palmimo_controller.main.DynamixelDriver", return_value=MagicMock(connect=MagicMock(side_effect=error))),
+        pytest.raises(error_type),
+    ):
+        _build_servo_driver("fake", sleep=lambda _seconds: None)
+
+
+def test_build_face_skips_detection_when_disabled() -> None:
+    def find_port() -> str | None:
+        raise AssertionError("must not scan with --no-face")
+
+    assert main._build_face(no_face=True, find_port=find_port) is None
+
+
+def test_build_face_runs_without_a_face_when_none_is_plugged_in() -> None:
+    assert main._build_face(no_face=False, find_port=lambda: None) is None
+
+
+def test_build_face_runs_without_a_face_when_detection_fails() -> None:
+    def find_port() -> str | None:
+        raise OSError("no serial stack")
+
+    assert main._build_face(no_face=False, find_port=find_port) is None
+
+
+def test_build_face_attaches_the_probed_face() -> None:
+    sentinel = object()
+    probed: list[str] = []
+
+    def probe(port: str) -> Any:  # stands in for a FaceDisplay
+        probed.append(port)
+        return sentinel
+
+    assert main._build_face(no_face=False, find_port=lambda: "/dev/ttyACM1", probe=probe) is sentinel
+    assert probed == ["/dev/ttyACM1"]
+
+
+def test_build_idle_factory_is_none_when_no_idle_is_passed() -> None:
+    from palmimo_controller.ai.idle import Idle
+    from palmimo_controller.session import PilotSession
+    from palmimo_controller.telemetry import Telemetry
+
+    session, telemetry = PilotSession(), Telemetry(emit=lambda _line: None)
+    assert main._build_idle_factory(session, telemetry, enabled=False) is None
+    factory = main._build_idle_factory(session, telemetry, enabled=True)
+    assert factory is not None and isinstance(factory(), Idle)
