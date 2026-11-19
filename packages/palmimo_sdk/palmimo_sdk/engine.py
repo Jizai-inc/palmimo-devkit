@@ -18,7 +18,7 @@ Typical usage::
 import math
 from enum import Enum, auto
 from itertools import pairwise
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, overload
 
 from . import kinematics
 
@@ -54,6 +54,86 @@ class Motion(Enum):
 # The neck-only one-shot gestures — shared by the engine's dispatch and the
 # facade's servo-tuning sync so the membership can't drift between them.
 NECK_GESTURES: tuple[Motion, ...] = (Motion.NOD, Motion.HEAD_SHAKE)
+
+
+class _Knob:
+    """A runtime tuning knob that rejects out-of-range values on assignment.
+
+    Accepts a finite number within ``[lo, hi]`` (``None`` = unbounded; an
+    exclusive bound is marked with ``lo_open``) and raises :class:`ValueError`
+    otherwise, leaving the previous value in place. Declared as a class attribute
+    of :class:`MotionEngine`; the value lives in the instance ``__dict__``.
+    """
+
+    def __init__(self, lo: float | None = None, hi: float | None = None, *, lo_open: bool = False) -> None:
+        self._lo = lo
+        self._hi = hi
+        self._lo_open = lo_open
+        self._name = ""
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self._name = name
+        self._slot = f"_knob_{name}"
+
+    @overload
+    def __get__(self, obj: None, objtype: type) -> "_Knob": ...
+    @overload
+    def __get__(self, obj: object, objtype: type) -> float: ...
+    def __get__(self, obj: object | None, objtype: type) -> "_Knob | float":
+        if obj is None:
+            return self
+        value: float = obj.__dict__[self._slot]
+        return value
+
+    def __set__(self, obj: object, value: float) -> None:
+        number = self._validate(value)
+        obj.__dict__[self._slot] = number
+
+    def _range_text(self) -> str:
+        lo = "-inf" if self._lo is None else f"{self._lo:g}"
+        hi = "inf" if self._hi is None else f"{self._hi:g}"
+        return f"{'(' if self._lo_open else '['}{lo}, {hi}{']' if self._hi is not None else ')'}"
+
+    def _validate(self, value: float) -> float:
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{self._name}={value!r} must be finite.")
+        below = self._lo is not None and (number <= self._lo if self._lo_open else number < self._lo)
+        if below or (self._hi is not None and number > self._hi):
+            raise ValueError(f"{self._name}={value!r} must be within {self._range_text()}.")
+        return number
+
+
+class _CountKnob:
+    """A runtime tuning knob holding an integer >= 1; anything else raises :class:`ValueError`."""
+
+    def __init__(self) -> None:
+        self._name = ""
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self._name = name
+        self._slot = f"_knob_{name}"
+
+    @overload
+    def __get__(self, obj: None, objtype: type) -> "_CountKnob": ...
+    @overload
+    def __get__(self, obj: object, objtype: type) -> int: ...
+    def __get__(self, obj: object | None, objtype: type) -> "_CountKnob | int":
+        if obj is None:
+            return self
+        value: int = obj.__dict__[self._slot]
+        return value
+
+    def __set__(self, obj: object, value: float) -> None:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(value)
+            or value != int(value)
+            or value < 1
+        ):
+            raise ValueError(f"{self._name}={value!r} must be an integer >= 1.")
+        obj.__dict__[self._slot] = int(value)
 
 
 class MotionEngine:
@@ -173,81 +253,81 @@ class MotionEngine:
         # separate wave_intro_speed times the prep raise and the return, so a
         # slow intro + fast strokes provides deliberate contrast in pacing.
         # Set both equal for a uniform global speed.
-        self.wave_speed: float = self._WAVE_SPEED
-        self.wave_intro_speed: float = self._WAVE_INTRO_SPEED
+        self.wave_speed = self._WAVE_SPEED
+        self.wave_intro_speed = self._WAVE_INTRO_SPEED
         # Rate of just the FIRST big up-stroke (base -> peak), so the "raise the
         # arm" can be slow/deliberate while later waves stay quick.
         # Baked slower than wave_speed for the official deliberate raise.
-        self.wave_raise_speed: float = self._WAVE_RAISE_SPEED
-        self.wave_size: float = self._WAVE_SIZE
+        self.wave_raise_speed = self._WAVE_RAISE_SPEED
+        self.wave_size = self._WAVE_SIZE
         # Per-wave amplitude decay: the first up-stroke swings the full wave_size,
         # each later one is multiplied by this factor (0..1). 1.0 = every wave the
         # same (old behavior); <1 = "raise big, then taper to small waves".
-        self.wave_decay: float = self._WAVE_DECAY
+        self.wave_decay = self._WAVE_DECAY
         # Wave shape: number of up/down waves, seconds per up-down cycle, and the
         # dwell fraction (0 = continuous quick wiggle, higher = move-then-hold).
-        self.wave_count: int = self._WAVE_COUNT
-        self.wave_period: float = self._WAVE_PERIOD
-        self.wave_dwell: float = self._WAVE_DWELL
+        self.wave_count = self._WAVE_COUNT
+        self.wave_period = self._WAVE_PERIOD
+        self.wave_dwell = self._WAVE_DWELL
         # Two-handed wave (WAVE_BOTH) posture knobs — runtime-settable so the
         # tip-margin can be dialed on hardware. lean = how far the body shifts
         # BACKWARD onto the mid/rear quad before both arms lift (mm of forward
         # stance-foot displacement); noseup = how far the rear corners drop to
         # pitch the body nose-up into a "beg" pose (mm). See _apply_wave_both.
-        self.wave_both_lean: float = self._WAVE_BOTH_LEAN
-        self.wave_both_noseup: float = self._WAVE_BOTH_NOSEUP
+        self.wave_both_lean = self._WAVE_BOTH_LEAN
+        self.wave_both_noseup = self._WAVE_BOTH_NOSEUP
         # Inward yaw (deg) on each raised arm so the two hands angle toward the
         # front centre (closer together). See _apply_wave_both.
-        self.wave_both_yaw: float = self._WAVE_BOTH_YAW
+        self.wave_both_yaw = self._WAVE_BOTH_YAW
         # Extra forward shift (mm) of the MIDDLE stance feet only. This is the
         # main stability knob: it moves the stance quad's front edge (the
         # middle-feet line) ahead of the CoG, which the symmetric lean alone
         # cannot do without folding the rear knees. For the middle legs
         # (mounted at ±90°) a forward shift is almost a pure yaw swing, so it
         # costs no knee torque. See _apply_wave_both.
-        self.wave_both_mid_forward: float = self._WAVE_BOTH_MID_FWD
+        self.wave_both_mid_forward = self._WAVE_BOTH_MID_FWD
         # Two-hand stroke size (mm) — separate from the single wave's
         # wave_size so the two-handed default can stay softer (both arms pump
         # the body in phase, so the same stroke disturbs pitch twice as hard).
-        self.wave_both_size: float = self._WAVE_BOTH_SIZE
+        self.wave_both_size = self._WAVE_BOTH_SIZE
         # Prep/return rate for WAVE_BOTH only (the single wave keeps
         # wave_intro_speed) — a separate knob so it can be tuned independently
         # of the single-arm wave; defaults to the same rate (2.3).
-        self.wave_both_intro_speed: float = self._WAVE_BOTH_INTRO_SPEED
+        self.wave_both_intro_speed = self._WAVE_BOTH_INTRO_SPEED
         # Arm phase offset as a fraction of wave_period: 0 = both arms stroke
         # together (banzai), 0.5 = perfect alternation (right arm half a wave
         # behind the left). Alternation also CANCELS the arms' pitch reaction
         # instead of doubling it. See _apply_wave_both.
-        self.wave_both_phase: float = self._WAVE_BOTH_PHASE
+        self.wave_both_phase = self._WAVE_BOTH_PHASE
         # Two-hand stroke rate and per-wave decay — own knobs (NOT the shared
         # wave_speed/wave_decay) so the two-hand feel can be tuned without
         # touching the official single-arm wave.
-        self.wave_both_speed: float = self._WAVE_BOTH_SPEED
-        self.wave_both_decay: float = self._WAVE_BOTH_DECAY
+        self.wave_both_speed = self._WAVE_BOTH_SPEED
+        self.wave_both_decay = self._WAVE_BOTH_DECAY
         # Clap knobs — the hand open/close is specified in HAND SEPARATION mm
         # (centre-to-centre of the front feet), converted to arm azimuths by
         # the geometry in _apply_clap, so "stop a few mm short of touching" is
-        # a direct knob. gap = closest approach (floored in code so knob abuse
+        # a direct knob. gap = closest approach (validated >= the gap floor so knob abuse
         # can't slam the feet together); open = separation between claps.
-        self.clap_count: int = self._CLAP_COUNT
-        self.clap_period: float = self._CLAP_PERIOD
-        self.clap_gap: float = self._CLAP_GAP
-        self.clap_open: float = self._CLAP_OPEN
-        self.clap_height: float = self._CLAP_HEIGHT
-        self.clap_dwell: float = self._CLAP_DWELL
+        self.clap_count = self._CLAP_COUNT
+        self.clap_period = self._CLAP_PERIOD
+        self.clap_gap = self._CLAP_GAP
+        self.clap_open = self._CLAP_OPEN
+        self.clap_height = self._CLAP_HEIGHT
+        self.clap_dwell = self._CLAP_DWELL
         # Per-beat reopen decay (1.0 = every beat reopens fully). <1 makes each
         # reopen shallower, starting from the FIRST reopen (the raise opens to
         # clap_open in full; the opening before beat 2 is already decay x) —
         # a decay control that keeps repeated beats from feeling mechanical. It
         # is neutral by default because a real clap does not taper much. The CLOSED end never moves,
         # so the gap floor is unaffected.
-        self.clap_decay: float = self._CLAP_DECAY
+        self.clap_decay = self._CLAP_DECAY
         # Clap's own prep/return rate — kept separate from wave_both_intro_speed
         # because the two gestures want different paces (the clap's raise is
         # slower and more deliberate than the two-hand wave's); sharing the
         # knob would silently change one gesture's rate whenever the other's
         # tuning changes.
-        self.clap_intro_speed: float = self._CLAP_INTRO_SPEED
+        self.clap_intro_speed = self._CLAP_INTRO_SPEED
         # Monotonic phase for the wave gesture, reset whenever a wave starts so
         # the eased lift always begins from the ground (see _apply_wave).
         self._wave_phase: float = 0.0
@@ -278,15 +358,15 @@ class MotionEngine:
         # Nod / head-shake tuning knobs (amplitude, cycle period, stroke count,
         # per-stroke decay) — runtime-switchable, defaults in the _NOD_* /
         # _SHAKE_* ClassVars below.
-        self.nod_amp_deg: float = self._NOD_AMP_DEG
-        self.nod_period: float = self._NOD_PERIOD
-        self.nod_count: int = self._NOD_COUNT
-        self.nod_decay: float = self._NOD_DECAY
-        self.nod_first_down_scale: float = self._NOD_FIRST_DOWN_SCALE
-        self.shake_amp_deg: float = self._SHAKE_AMP_DEG
-        self.shake_period: float = self._SHAKE_PERIOD
-        self.shake_swings: int = self._SHAKE_SWINGS
-        self.shake_decay: float = self._SHAKE_DECAY
+        self.nod_amp_deg = self._NOD_AMP_DEG
+        self.nod_period = self._NOD_PERIOD
+        self.nod_count = self._NOD_COUNT
+        self.nod_decay = self._NOD_DECAY
+        self.nod_first_down_scale = self._NOD_FIRST_DOWN_SCALE
+        self.shake_amp_deg = self._SHAKE_AMP_DEG
+        self.shake_period = self._SHAKE_PERIOD
+        self.shake_swings = self._SHAKE_SWINGS
+        self.shake_decay = self._SHAKE_DECAY
         # Monotonic phase (s) for the neck gestures, reset whenever one starts,
         # and the neck pose captured at that moment so an off-center head can
         # be blended home instead of snapping (see _apply_neck_gesture).
@@ -325,7 +405,7 @@ class MotionEngine:
         # neck-pitch that counts as "front": idle look targets settle around
         # it and the nod/head-shake gestures oscillate from and return to it,
         # so the robot's default head height can sit above the servo neutral.
-        self.neck_rest_pitch_deg: float = self._NECK_REST_PITCH_DEG
+        self.neck_rest_pitch_deg = self._NECK_REST_PITCH_DEG
 
         # Neck target (normalized -1..1)
         self._neck_target_pitch: float = 0.0
@@ -354,21 +434,21 @@ class MotionEngine:
         # _apply_dance.
         # Dance knobs — defaults are the official hardware-tuned feel (see the
         # _DANCE_* ClassVars). All runtime-settable for re-tuning.
-        self.dance_roll_deg: float = self._DANCE_ROLL_DEG  # body roll amplitude (degrees)
-        self.dance_pivot_h: float = self._DANCE_PIVOT_H  # mm: roll-pivot height above the
+        self.dance_roll_deg = self._DANCE_ROLL_DEG  # body roll amplitude (degrees)
+        self.dance_pivot_h = self._DANCE_PIVOT_H  # mm: roll-pivot height above the
         # coxa-axis plane. Sets the lateral head swing
         # = (dance_head_h - pivot_h)*sin(theta); near head
         # height keeps the head ~fixed in space.
-        self.dance_head_h: float = self._DANCE_HEAD_H  # mm: head-centre height above the
+        self.dance_head_h = self._DANCE_HEAD_H  # mm: head-centre height above the
         # coxa plane (CAD; URDF neck base +110mm + arm).
         # Used to hold the head level when leveling.
         self.dance_level_head: bool = self._DANCE_LEVEL_HEAD  # True: lift the body so the head
         # stays at a constant height (flat left/right sway).
         # False: arc (head dips at extremes) — the default.
-        self.dance_dwell: float = self._DANCE_DWELL  # 0..~0.8: pause near each sway extreme. The
+        self.dance_dwell = self._DANCE_DWELL  # 0..~0.8: pause near each sway extreme. The
         # sine is steepened then clamped to ±1, so the body
         # sways over, HOLDS, then sways back. 0 = continuous.
-        self.dance_speed: float = self._DANCE_SPEED  # dance tempo (own knob, NOT gait_speed; the
+        self.dance_speed = self._DANCE_SPEED  # dance tempo (own knob, NOT gait_speed; the
         # phase advances at dance_speed * 0.8 in _apply_dance)
 
     # ================================================================
@@ -740,9 +820,7 @@ class MotionEngine:
         # quickly and HOLDS there, instead of a constant continuous wobble.
         sway = math.sin(phase_rad)
         if self.dance_dwell > 0.0:
-            # Clamp <1 so a dwell of 1.0+ (set via API/CLI) can't divide by zero
-            # or flip the sway; mirrors wave_dwell's clamp in _build_wave_timeline.
-            dwell = min(0.99, self.dance_dwell)
+            dwell = self.dance_dwell
             sway = max(-1.0, min(1.0, sway / (1.0 - dwell)))
         theta = math.radians(self.dance_roll_deg) * sway  # roll angle (rad)
         h = self.dance_pivot_h
@@ -961,9 +1039,9 @@ class MotionEngine:
         multiplier (``None`` = the shared ``wave_decay``; the two-hand wave
         passes its own ``wave_both_decay``).
         """
-        count = max(1, int(self.wave_count))
-        period = max(0.05, float(self.wave_period))
-        dwell_frac = min(0.95, max(0.0, float(self.wave_dwell)))
+        count = self.wave_count
+        period = self.wave_period
+        dwell_frac = self.wave_dwell
         half = period / 2.0
         move = half * (1.0 - dwell_frac)
         hold = half * dwell_frac
@@ -978,7 +1056,7 @@ class MotionEngine:
         # Amplitude scale of the current up-stroke as a fraction of wave_size; the
         # up keyframe level is 1.0 + amp (2.0 = full swing, 1.5 = half). It starts
         # full and decays each wave so the first raise is big and later waves taper.
-        decay = max(0.0, min(1.0, float(self.wave_decay if decay is None else decay)))
+        decay = self.wave_decay if decay is None else decay
         amp = 1.0
         for i in range(count):
             up_level = 1.0 + amp
@@ -1038,11 +1116,11 @@ class MotionEngine:
         # arm slowly), then the rest of the up/down waves at wave_speed (quick).
         ph = self._wave_phase
         if ph >= outro_start or ph < intro_end:
-            rate = max(self._MIN_RATE, float(self.wave_intro_speed))
+            rate = self.wave_intro_speed
         elif ph < raise_end:
-            rate = max(self._MIN_RATE, float(self.wave_raise_speed))
+            rate = self.wave_raise_speed
         else:
-            rate = max(self._MIN_RATE, float(self.wave_speed))
+            rate = self.wave_speed
         self._wave_phase += self._WAVE_DT * rate
         t = self._wave_phase
 
@@ -1183,7 +1261,7 @@ class MotionEngine:
         # shared timeline this far behind the first. 0 = strokes in unison;
         # 0.5 * period = perfect alternation, which also cancels the arms'
         # pitch reaction on the body instead of doubling it.
-        off = max(0.0, min(1.0, float(self.wave_both_phase))) * max(0.05, float(self.wave_period))
+        off = self.wave_both_phase * self.wave_period
 
         # Same pacing as the single-arm wave — slow prep/return, slow
         # first raise, quick strokes — but the prep/return rate is the two-hand
@@ -1194,11 +1272,11 @@ class MotionEngine:
         # — quicker than the opener, which reads fine mid-gesture.)
         ph = self._wave_phase
         if ph >= outro_start + lead + off or ph < intro_end + lead:
-            rate = max(self._MIN_RATE, float(self.wave_both_intro_speed))
+            rate = self.wave_both_intro_speed
         elif ph < raise_end + lead:
-            rate = max(self._MIN_RATE, float(self.wave_raise_speed))
+            rate = self.wave_raise_speed
         else:
-            rate = max(self._MIN_RATE, float(self.wave_both_speed))
+            rate = self.wave_both_speed
         self._wave_phase += self._WAVE_DT * rate
         t = self._wave_phase
 
@@ -1271,9 +1349,9 @@ class MotionEngine:
         at ``clap_period`` s each → lower the hands → release the stance.
         """
         lead = self._WAVE_BOTH_POSE_LEAD
-        count = max(1, int(self.clap_count))
-        period = max(0.1, float(self.clap_period))
-        dwell = min(0.8, max(0.0, float(self.clap_dwell)))
+        count = self.clap_count
+        period = self.clap_period
+        dwell = self.clap_dwell
         half = period / 2.0
         move = half * (1.0 - dwell)
         hold = half * dwell
@@ -1283,7 +1361,7 @@ class MotionEngine:
         # all the way to the gap; with clap_decay < 1 each REOPEN is shallower
         # (the hands settle toward each other), so the taper never tightens the
         # closed end and the gap floor still holds.
-        decay = max(0.0, min(1.0, float(self.clap_decay)))
+        decay = self.clap_decay
         raise_end = lead + self._CLAP_RAISE_S
         keys: list[tuple[float, float]] = [(raise_end, 0.0)]
         t = raise_end
@@ -1308,7 +1386,7 @@ class MotionEngine:
         # floored so 0/negative can't freeze or reverse the gesture), the
         # strokes in real time so clap_period is wall-clock seconds.
         ph = self._wave_phase
-        rate = max(self._MIN_RATE, float(self.clap_intro_speed)) if (ph < raise_end or ph >= strokes_end) else 1.0
+        rate = self.clap_intro_speed if (ph < raise_end or ph >= strokes_end) else 1.0
         self._wave_phase += self._WAVE_DT * rate
         t_now = self._wave_phase
 
@@ -1341,8 +1419,8 @@ class MotionEngine:
             math.radians(self.LEG_MOUNT_ANGLE[self._WAVE_BOTH_LEGS[0]])
         )
         natural_sep = 2.0 * (coxa_y + base[1])
-        gap = max(self._CLAP_GAP_FLOOR, float(self.clap_gap))
-        open_sep = max(gap, float(self.clap_open))
+        gap = self.clap_gap
+        open_sep = max(gap, self.clap_open)
         sep_target = open_sep + (gap - open_sep) * closure
         sep = natural_sep + (sep_target - natural_sep) * lift_lvl
         # Foot y from the leg origin; clamped inside the arc so the sqrt and
@@ -1352,7 +1430,7 @@ class MotionEngine:
         # Height floor: the separation sweep runs regardless of the lift, so an
         # unclamped 0/negative height would scrub the loaded feet across the
         # floor (or command below-ground targets). See _CLAP_HEIGHT_FLOOR.
-        lift = lift_lvl * max(self._CLAP_HEIGHT_FLOOR, float(self.clap_height))
+        lift = lift_lvl * self.clap_height
 
         for leg_id in self._WAVE_BOTH_LEGS:
             side = 1.0 if leg_id in self.LEFT_LEGS else -1.0
@@ -1624,6 +1702,55 @@ class MotionEngine:
     # relocate the neck's working center outside a sane mechanical window.
     _NECK_REST_LIMIT_DEG: ClassVar[float] = 20.0
 
+    # Tuning knobs: each rejects out-of-range values with ValueError on
+    # assignment (see _Knob). Ranges are documented in doc/reference/api-reference.md.
+    wave_speed = _Knob(_MIN_RATE)
+    wave_intro_speed = _Knob(_MIN_RATE)
+    wave_raise_speed = _Knob(_MIN_RATE)
+    wave_both_intro_speed = _Knob(_MIN_RATE)
+    wave_both_speed = _Knob(_MIN_RATE)
+    clap_intro_speed = _Knob(_MIN_RATE)
+    wave_decay = _Knob(0.0, 1.0)
+    wave_both_decay = _Knob(0.0, 1.0)
+    clap_decay = _Knob(0.0, 1.0)
+    nod_decay = _Knob(0.0, 1.0)
+    shake_decay = _Knob(0.0, 1.0)
+    wave_count = _CountKnob()
+    clap_count = _CountKnob()
+    nod_count = _CountKnob()
+    shake_swings = _CountKnob()
+    wave_period = _Knob(0.05)
+    nod_period = _Knob(0.05)
+    shake_period = _Knob(0.05)
+    clap_period = _Knob(0.1)
+    wave_dwell = _Knob(0.0, 0.95)
+    clap_dwell = _Knob(0.0, 0.8)
+    dance_dwell = _Knob(0.0, 0.99)
+    wave_both_phase = _Knob(0.0, 1.0)
+    wave_both_yaw = _Knob(0.0)
+    wave_size = _Knob(0.0)
+    wave_both_size = _Knob(0.0)
+    wave_both_lean = _Knob()
+    wave_both_noseup = _Knob()
+    wave_both_mid_forward = _Knob()
+    clap_gap = _Knob(_CLAP_GAP_FLOOR)
+    clap_open = _Knob(_CLAP_GAP_FLOOR)
+    clap_height = _Knob(_CLAP_HEIGHT_FLOOR)
+    nod_first_down_scale = _Knob(0.1)
+    nod_amp_deg = _Knob(0.0)
+    shake_amp_deg = _Knob(0.0)
+    neck_rest_pitch_deg = _Knob(-_NECK_REST_LIMIT_DEG, _NECK_REST_LIMIT_DEG)
+    # Provisional ceiling: 5 deg ran cleanly on hardware, 30 deg tipped the robot,
+    # nothing in between was measured.
+    DANCE_ROLL_MAX_DEG: ClassVar[float] = 10.0
+    dance_roll_deg = _Knob(0.0, DANCE_ROLL_MAX_DEG)
+    dance_pivot_h = _Knob(0.0, lo_open=True)
+    dance_head_h = _Knob(0.0, lo_open=True)
+    # The phase advances dance_speed * 0.8 cycles per frame mod 1: 0 freezes, a
+    # negative value runs backwards and a large one aliases, so the step is
+    # capped at 0.1 cycle per frame.
+    dance_speed = _Knob(0.0, 0.125, lo_open=True)
+
     # Chin-up mechanical travel (deg), PUBLIC alongside NECK_PITCH_TRAVEL_DEG
     # for the same reason (see that constant's comment) and used the same way
     # by NeckPitchDegrees/look() for negative (chin-up) values. Unlike the
@@ -1646,11 +1773,9 @@ class MotionEngine:
 
         Public because callers that reason about the neutral pose (e.g. the
         facade's return-to-neutral) must target this rather than the raw
-        servo neutral. The trim is clamped to ±``_NECK_REST_LIMIT_DEG``.
+        servo neutral. The trim is validated to ±``_NECK_REST_LIMIT_DEG``.
         """
-        lim = self._NECK_REST_LIMIT_DEG
-        trim = max(-lim, min(lim, float(self.neck_rest_pitch_deg)))
-        return self.NEUTRAL - round(trim * self.TICK_PER_DEG)
+        return self.NEUTRAL - round(self.neck_rest_pitch_deg * self.TICK_PER_DEG)
 
     def _neck_pitch_up_reach_ticks(self) -> int:
         """Tick ceiling a full chin-up ``set_neck(pitch=-1)`` actually converges to.
@@ -1706,7 +1831,7 @@ class MotionEngine:
 
     def _neck_amp_ticks(self, amp_deg: float) -> float:
         """Degrees -> neck tick offset, clamped to the neck's safe amplitude."""
-        return min(float(self._neck_amplitude), abs(amp_deg) * self.TICK_PER_DEG)
+        return min(float(self._neck_amplitude), amp_deg * self.TICK_PER_DEG)
 
     def _build_nod_timeline(self) -> list[tuple[float, float]]:
         """Nod keyframes as ``(time_s, neck-pitch tick offset)``.
@@ -1717,10 +1842,10 @@ class MotionEngine:
         instead of snapping down. A POSITIVE neck-pitch offset tips the chin
         down on this hardware.
         """
-        period = max(0.05, float(self.nod_period))
-        count = max(1, int(self.nod_count))
-        decay = max(0.0, min(1.0, float(self.nod_decay)))
-        first_scale = max(0.1, float(self.nod_first_down_scale))
+        period = self.nod_period
+        count = self.nod_count
+        decay = self.nod_decay
+        first_scale = self.nod_first_down_scale
         amp = self._neck_amp_ticks(self.nod_amp_deg)
         keys: list[tuple[float, float]] = [(0.0, 0.0)]
         t = 0.0
@@ -1742,9 +1867,9 @@ class MotionEngine:
         ``shake_swings`` ends half-way through a round trip for a stronger
         "no-no" feel.
         """
-        period = max(0.05, float(self.shake_period))
-        swings = max(1, int(self.shake_swings))
-        decay = max(0.0, min(1.0, float(self.shake_decay)))
+        period = self.shake_period
+        swings = self.shake_swings
+        decay = self.shake_decay
         amp = self._neck_amp_ticks(self.shake_amp_deg)
         keys: list[tuple[float, float]] = [(0.0, 0.0)]
         t = 0.0

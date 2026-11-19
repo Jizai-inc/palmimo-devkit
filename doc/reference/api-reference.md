@@ -1339,18 +1339,22 @@ engine.
 
 The wave ships with baked-in defaults that reproduce the tuned hardware feel — no
 knobs needed. These properties override the choreography at runtime if desired;
-all are settable on `robot`:
+all are settable on `robot`. Every tuning knob in this section and the next three
+validates on assignment: a value outside its Range column (or a NaN / infinite value)
+raises `ValueError` and leaves the previous value in place. Nothing is clamped
+silently. The check lives in `MotionEngine`, so `robot.engine.<knob> = ...` is
+rejected the same way.
 
-| Property | Default | Description |
-|----------|---------|-------------|
-| `wave_size` | 160 mm | Swing size above the rest height |
-| `wave_speed` | 1.9 | Up/down stroke rate (>1 = snappier) |
-| `wave_intro_speed` | 2.3 | Prep-raise + return rate |
-| `wave_raise_speed` | 0.6 | Rate of just the first big up-stroke (slow, deliberate) |
-| `wave_decay` | 0.8 | Per-wave amplitude multiplier — each wave 0.8x the last (1 = uniform) |
-| `wave_count` | 2 | Number of up/down waves |
-| `wave_period` | 1.0 s | Seconds per up-down cycle |
-| `wave_dwell` | 0.6 | Hold fraction per half-cycle (0 = continuous wiggle) |
+| Property | Default | Range | Description |
+|----------|---------|-------|-------------|
+| `wave_size` | 160 mm | ≥ 0 | Swing size above the rest height |
+| `wave_speed` | 1.9 | ≥ 0.2 | Up/down stroke rate (>1 = snappier) |
+| `wave_intro_speed` | 2.3 | ≥ 0.2 | Prep-raise + return rate |
+| `wave_raise_speed` | 0.6 | ≥ 0.2 | Rate of just the first big up-stroke (slow, deliberate) |
+| `wave_decay` | 0.8 | 0–1 | Per-wave amplitude multiplier — each wave 0.8x the last (1 = uniform) |
+| `wave_count` | 2 | integer ≥ 1 | Number of up/down waves |
+| `wave_period` | 1.0 s | ≥ 0.05 s | Seconds per up-down cycle |
+| `wave_dwell` | 0.6 | 0–0.95 | Hold fraction per half-cycle (0 = continuous wiggle) |
 
 **Automatic per-axis servo tuning:** while a wave (or `wave_both` / `clap`) is
 active, the facade applies a crisp arm treatment to the moving arm(s)
@@ -1370,18 +1374,18 @@ periods so they stay tempo-matched as a reply pair. Defaults were tuned on
 hardware with on-camera review (2026-07): gentle first descent, bold amplitude,
 near-uniform stroke size.
 
-| Property | Default | Description |
-|----------|---------|-------------|
-| `nod_amp_deg` | 25° | Depth of the first chin-down stroke |
-| `nod_period` | 0.65 s | Seconds per down-up cycle |
-| `nod_count` | 2 | Number of down-up cycles |
-| `nod_decay` | 0.95 | Per-cycle amplitude multiplier (<1 = later dips shallower) |
-| `nod_first_down_scale` | 1.6 | Duration multiplier of just the first descent (>1 = gentler opening; start latency is unchanged) |
-| `shake_amp_deg` | 25° | Width of the first sideways swing |
-| `shake_period` | 0.66 s | Seconds per full left-right-left cycle |
-| `shake_swings` | 4 | Side peaks (4 = 2 round trips); odd values end half-way for a stronger "no-no" |
-| `shake_decay` | 0.95 | Per-swing amplitude multiplier |
-| `neck_rest_pitch_deg` | 15° | Resting pitch trim (positive raises the gaze; clamped to ±20°). Robot-wide: idle look targets and the gestures' home position all sit on this trimmed center |
+| Property | Default | Range | Description |
+|----------|---------|-------|-------------|
+| `nod_amp_deg` | 25° | ≥ 0° (then limited to the neck travel) | Depth of the first chin-down stroke |
+| `nod_period` | 0.65 s | ≥ 0.05 s | Seconds per down-up cycle |
+| `nod_count` | 2 | integer ≥ 1 | Number of down-up cycles |
+| `nod_decay` | 0.95 | 0–1 | Per-cycle amplitude multiplier (<1 = later dips shallower) |
+| `nod_first_down_scale` | 1.6 | ≥ 0.1 | Duration multiplier of just the first descent (>1 = gentler opening; start latency is unchanged) |
+| `shake_amp_deg` | 25° | ≥ 0° (then limited to the neck travel) | Width of the first sideways swing |
+| `shake_period` | 0.66 s | ≥ 0.05 s | Seconds per full left-right-left cycle |
+| `shake_swings` | 4 | integer ≥ 1 | Side peaks (4 = 2 round trips); odd values end half-way for a stronger "no-no" |
+| `shake_decay` | 0.95 | 0–1 | Per-swing amplitude multiplier |
+| `neck_rest_pitch_deg` | 15° | ±20° | Resting pitch trim (positive raises the gaze; accepted range ±20°). Robot-wide: idle look targets and the gestures' home position all sit on this trimmed center |
 
 Amplitudes are clamped to the neck's safe range (±300 ticks ≈ ±`MotionEngine.NECK_PITCH_TRAVEL_DEG`
 / `NECK_YAW_TRAVEL_DEG`, ~26.4°) regardless of the knob value, and the absolute pitch additionally never leaves the
@@ -1410,22 +1414,22 @@ margin and middle-leg servo heat on hardware before relying on a wider setting).
 
 Shared beg-stance knobs (used by both gestures):
 
-| Property | Default | Description |
-|----------|---------|-------------|
-| `wave_both_mid_forward` | 35 mm | Middle feet extra forward shift — carries the support quad's front edge ahead of the CoG. The main stability knob: raise it before raising anything else |
-| `wave_both_lean` | 10 mm | Whole-body backward shift. Also folds the rear knees under load — keep small, prefer `mid_forward` for margin |
-| `wave_both_noseup` | 8 mm | Rear corners drop — the nose-up "beg" look |
-| `wave_both_intro_speed` | 2.3 | Prep/return rate for the two-hand gestures (the single wave keeps `wave_intro_speed`; the middle-feet drag held up fine at this clip on hardware). Rate knobs are floored at 0.2 — 0/negative would freeze/reverse the gesture |
+| Property | Default | Range | Description |
+|----------|---------|-------|-------------|
+| `wave_both_mid_forward` | 35 mm | any finite value | Middle feet extra forward shift — carries the support quad's front edge ahead of the CoG. The main stability knob: raise it before raising anything else |
+| `wave_both_lean` | 10 mm | any finite value | Whole-body backward shift. Also folds the rear knees under load — keep small, prefer `mid_forward` for margin |
+| `wave_both_noseup` | 8 mm | any finite value | Rear corners drop — the nose-up "beg" look |
+| `wave_both_intro_speed` | 2.3 | ≥ 0.2 | Prep/return rate for the two-hand gestures (the single wave keeps `wave_intro_speed`; the middle-feet drag held up fine at this clip on hardware). Rate knobs accept values from 0.2 up — 0/negative would freeze/reverse the gesture |
 
 `wave_both` only:
 
-| Property | Default | Description |
-|----------|---------|-------------|
-| `wave_both_size` | 110 mm | Two-hand swing above the rest height (single wave: 160). Both arms pump the body pitch in phase — raise together with `mid_forward` |
-| `wave_both_yaw` | 15 deg | Inward yaw on each raised arm (hands closer together). Clamped per frame so the hand separation never drops below 25 mm (unlike the clap, the wave must not make contact — unclamped, ~41°+ would collide the paddles). Also moves the arms' mass forward, eating tip margin — raise `mid_forward` with it |
-| `wave_both_phase` | 0.5 | Arm offset in wave periods: 0.5 = alternation (the default look), 0 = both arms together (banzai). Alternation also cancels the arms' pitch reaction instead of doubling it |
-| `wave_both_speed` | 2.6 | Stroke rate — own knob, so the two-hand tempo doesn't touch the single wave's 1.9 |
-| `wave_both_decay` | 0.9 | Per-wave amplitude multiplier (single wave: 0.8) |
+| Property | Default | Range | Description |
+|----------|---------|-------|-------------|
+| `wave_both_size` | 110 mm | ≥ 0 | Two-hand swing above the rest height (single wave: 160). Both arms pump the body pitch in phase — raise together with `mid_forward` |
+| `wave_both_yaw` | 15 deg | ≥ 0 | Inward yaw on each raised arm (hands closer together). Clamped per frame so the hand separation never drops below 25 mm (unlike the clap, the wave must not make contact — unclamped, ~41°+ would collide the paddles). Also moves the arms' mass forward, eating tip margin — raise `mid_forward` with it |
+| `wave_both_phase` | 0.5 | 0–1 | Arm offset in wave periods: 0.5 = alternation (the default look), 0 = both arms together (banzai). Alternation also cancels the arms' pitch reaction instead of doubling it |
+| `wave_both_speed` | 2.6 | ≥ 0.2 | Stroke rate — own knob, so the two-hand tempo doesn't touch the single wave's 1.9 |
+| `wave_both_decay` | 0.9 | 0–1 | Per-wave amplitude multiplier (single wave: 0.8) |
 
 The stroke count/shape reuses the shared wave knobs (`wave_raise_speed`,
 `wave_count`, `wave_period`, `wave_dwell`); defaults are the 2026-07-04
@@ -1434,16 +1438,16 @@ hardware tuning (alternate, 2 waves per arm, quick strokes, light decay).
 `clap` only — open/close is specified as hand separation in mm (centre-to-centre
 of the front feet), converted to arm yaw internally:
 
-| Property | Default | Description |
-|----------|---------|-------------|
-| `clap_count` | 3 | Close/open strokes per gesture |
-| `clap_period` | 0.2 s | Seconds per close+open (~5 Hz patter — the 2026-07-04 hardware tuning; the narrow `clap_open` is what lets this tempo track at full amplitude) |
-| `clap_gap` | 20 mm | Commanded closest foot-centre separation, = the engine floor. 20 is where the paddle faces just touch — **the light touch is the intended clap feel** (owner-tuned); the floor only prevents jamming them harder than that. At the shipped 5 Hz tempo the arm IIR rounds the actual approach to ~31 mm (measured); slow `clap_period` to ≤0.4 s to reach the commanded gap (and the light touch). Raise the gap if contact is undesired |
-| `clap_open` | 90 mm | Separation between claps (small travel = fast tempo stays crisp) |
-| `clap_height` | 90 mm | Hand lift above the neutral foot height (floored at 10 mm — the open/close sweep must not scrub the grounded feet) |
-| `clap_dwell` | 0.0 | Fraction of each half-stroke held at the ends (0 = continuous patter) |
-| `clap_decay` | 1.0 | Per-beat reopen multiplier. <1 makes each reopen shallower (the hands settle toward each other) — the "repetition wants decay" lever. Every beat still closes to `clap_gap`, so the contact floor is unaffected |
-| `clap_intro_speed` | 1.2 | Prep/raise + lower/release rate — the clap's own knob (deliberately slower than `wave_both_intro_speed`'s 2.3: the slow raise before the fast patter is the approved contrast) |
+| Property | Default | Range | Description |
+|----------|---------|-------|-------------|
+| `clap_count` | 3 | integer ≥ 1 | Close/open strokes per gesture |
+| `clap_period` | 0.2 s | ≥ 0.1 s | Seconds per close+open (~5 Hz patter — the 2026-07-04 hardware tuning; the narrow `clap_open` is what lets this tempo track at full amplitude) |
+| `clap_gap` | 20 mm | ≥ 20 mm | Commanded closest foot-centre separation, = the engine floor. 20 is where the paddle faces just touch — **the light touch is the intended clap feel** (owner-tuned); the floor only prevents jamming them harder than that. At the shipped 5 Hz tempo the arm IIR rounds the actual approach to ~31 mm (measured); slow `clap_period` to ≤0.4 s to reach the commanded gap (and the light touch). Raise the gap if contact is undesired |
+| `clap_open` | 90 mm | ≥ 20 mm | Separation between claps (small travel = fast tempo stays crisp) |
+| `clap_height` | 90 mm | ≥ 10 mm | Hand lift above the neutral foot height (minimum 10 mm — the open/close sweep must not scrub the grounded feet) |
+| `clap_dwell` | 0.0 | 0–0.8 | Fraction of each half-stroke held at the ends (0 = continuous patter) |
+| `clap_decay` | 1.0 | 0–1 | Per-beat reopen multiplier. <1 makes each reopen shallower (the hands settle toward each other) — the "repetition wants decay" lever. Every beat still closes to `clap_gap`, so the contact floor is unaffected |
+| `clap_intro_speed` | 1.2 | ≥ 0.2 | Prep/raise + lower/release rate — the clap's own knob (deliberately slower than `wave_both_intro_speed`'s 2.3: the slow raise before the fast patter is the approved contrast) |
 ## Dance Tuning
 
 The dance ships with baked-in defaults that reproduce the tuned hardware feel — a
@@ -1451,13 +1455,13 @@ small snappy body roll on an arcing head, with a brief hold at each extreme. No
 knobs needed; these properties override the sway at runtime if desired, all
 settable on `robot`:
 
-| Property | Default | Description |
-|----------|---------|-------------|
-| `dance_roll_deg` | 5° | Body roll amplitude |
-| `dance_pivot_h` | 125 mm | Roll-pivot height; near head height keeps the head ~fixed in space |
-| `dance_dwell` | 0.2 | Hold fraction at each sway extreme (0 = continuous sine) |
-| `dance_speed` | 0.0149 | Dance tempo (its own knob — does NOT change the walk `gait_speed`) |
-| `dance_level_head` | False | Arc head (dips at extremes); set True to lift the body for a flat sway |
+| Property | Default | Range | Description |
+|----------|---------|-------|-------------|
+| `dance_roll_deg` | 5° | 0–10° (`DANCE_ROLL_MAX_DEG`) | Body roll amplitude |
+| `dance_pivot_h` | 125 mm | > 0 mm | Roll-pivot height; near head height keeps the head ~fixed in space |
+| `dance_dwell` | 0.2 | 0–0.99 | Hold fraction at each sway extreme (0 = continuous sine) |
+| `dance_speed` | 0.0149 | > 0, ≤ 0.125 | Dance tempo (its own knob — does NOT change the walk `gait_speed`) |
+| `dance_level_head` | False | — | Arc head (dips at extremes); set True to lift the body for a flat sway |
 
 **Finishing flourish (`perform_dance`):** the finished performance sways
 `sways` (3) times, **ending on an extreme** (the held side, not a center
@@ -1472,6 +1476,9 @@ crossing), then closes with two stages tuned on hardware:
   = slower/softer). Never an ease-out *during* the dance, which would read as
   extra sway.
 
+> `DANCE_ROLL_MAX_DEG` (`MotionEngine.DANCE_ROLL_MAX_DEG`, 10°) is a provisional ceiling: 5° ran
+> cleanly on hardware and 30° tipped the robot; nothing in between was measured.
+>
 > Defaults are hardware-tuned — see `engine.py` `_DANCE_*` (the sway) and
 > `robot.py` `_DANCE_*` (the finish). `dance_speed` is fps-compensated: it is
 > scaled by the readback-slowed framerate it was tuned at, so playback at the
