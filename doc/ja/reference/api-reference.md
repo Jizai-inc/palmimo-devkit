@@ -157,7 +157,7 @@ t.join()                 # the worker thread's run() raised MotionCancelled
 すべてのモーターの Position_P_Gain を設定します（`None` は接続時に取得したモーターごとのデフォルトへ戻します）。計算のみの場合やゲイン制御非対応のドライバーでは何もしません。
 
 ### `robot.read_p_gain() -> dict[str, int] | None`
-サーボの現在の Position_P_Gain を、モーターごとに読み返します。ドライバーが接続されていなければ `None` です。
+サーボの現在の Position_P_Gain を、応答したモーターごとに読み返します。応答しないサーボは結果に含まれません。ドライバーが接続されていなければ `None` です。
 
 ### `robot.set_iir(enabled: bool, alpha: float | None = None) -> None`
 目標値の送信列に対する、指令側の IIR ローパスを有効 / 無効にします。 *alpha* は (0, 1] で、小さいほど強く平滑化します。計算のみの場合や非対応のドライバーでは何もしません。
