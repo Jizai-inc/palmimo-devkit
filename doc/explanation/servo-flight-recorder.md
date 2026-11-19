@@ -62,6 +62,14 @@ The [header definition](../reference/api-reference.md#files-and-header) specifie
 that aggregation and the meaning of unknown timing. Wall-clock time identifies
 the file, while monotonic offsets keep clock adjustments out of sample timing.
 
+A dump is read long after it is written, often against a different checkout,
+so the header also names the code that wrote it. The SDK records its own
+installed version but does not run `git`: a library that shells out on every
+construction would surprise its callers, and only the application knows which
+checkout it runs from. An application resolves that once at startup and passes
+it as `code_version`; until it does, the git fields stay `null` rather than
+guessed.
+
 ## One capture for a continuing latch
 
 A latch normally produces one file. New axes detected while its window is open

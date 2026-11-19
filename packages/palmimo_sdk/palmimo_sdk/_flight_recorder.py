@@ -2,6 +2,7 @@
 # Copyright 2026 Jizai Inc.
 """Servo incident windows; see doc/explanation/servo-flight-recorder.md."""
 
+import importlib.metadata
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 HARDWARE_ERROR_INTERVAL_S = 1.0
 POST_WINDOW_GRACE_S = 0.25
 MAX_DUMPS_PER_CONNECTION = 10
+SDK_DISTRIBUTION = "palmimo-sdk"
 
 
 def _local_now() -> datetime:
@@ -33,6 +35,48 @@ def default_incident_dir() -> Path:
     state = os.environ.get("XDG_STATE_HOME", "")
     root = Path(state) if state and Path(state).is_absolute() else Path.home() / ".local" / "state"
     return root / "palmimo" / "incidents"
+
+
+@dataclass(frozen=True)
+class CodeVersion:
+    """The code a process started from, written into every incident header.
+
+    The SDK never runs ``git``: a caller that knows its checkout resolves this
+    once at startup and passes it to :class:`~palmimo_sdk.Palmimo`. Any field
+    may be ``None`` when it could not be determined.
+
+    Args:
+        commit: Short hash of the checkout's ``HEAD``.
+        branch: Checked-out branch; ``None`` when detached.
+        dirty: Whether a tracked file differs from ``HEAD``.
+        packages: Installed version of each distribution the caller names.
+            The recorder always sets ``palmimo-sdk`` itself.
+
+    Raises:
+        TypeError: A field holds a value of another type, which the incident
+            header could not be written with.
+    """
+
+    commit: str | None = None
+    branch: str | None = None
+    dirty: bool | None = None
+    packages: Mapping[str, str | None] = field(default_factory=dict, hash=False)
+
+    def __post_init__(self) -> None:
+        if not (
+            isinstance(self.commit, str | None)
+            and isinstance(self.branch, str | None)
+            and isinstance(self.dirty, bool | None)
+            and all(isinstance(name, str) and isinstance(value, str | None) for name, value in self.packages.items())
+        ):
+            raise TypeError(f"CodeVersion fields must be strings, a bool, or None: {self!r}")
+
+
+def _installed_version(distribution: str) -> str | None:
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -100,8 +144,16 @@ class ServoFlightRecorder:
         context_samples: int = 36,
         post_s: float = 2.0,
         post_max_s: float = 4.0,
+        code_version: CodeVersion | None = None,
         logger: logging.Logger = logger,
     ) -> None:
+        version = code_version or CodeVersion()
+        self._version_fields: dict[str, Any] = {
+            "commit": version.commit,
+            "branch": version.branch,
+            "dirty": version.dirty,
+            "packages": {**version.packages, SDK_DISTRIBUTION: _installed_version(SDK_DISTRIBUTION)},
+        }
         self._incident_dir = incident_dir
         self._clock = clock
         self._wall_clock = wall_clock
@@ -332,6 +384,7 @@ class ServoFlightRecorder:
                     "post_s": window.deadline - window.at,
                     "post_s_captured": captured,
                     "truncated": captured < window.deadline - window.at,
+                    **self._version_fields,
                 }
                 stream.write(json.dumps(header) + "\n")
                 for row in rows:
