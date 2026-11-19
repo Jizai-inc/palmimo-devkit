@@ -6,6 +6,7 @@ functions here, so they are pinned without one.
 """
 
 import time
+from collections.abc import Callable
 
 import dynamixel_sdk
 import pytest
@@ -365,9 +366,21 @@ class SilentSerial:
     def flush(self) -> None:
         pass
 
+    def close(self) -> None:
+        pass
 
-@pytest.mark.parametrize("num_retry", [_TORQUE_OFF_RETRY, 5], ids=["guard_cut", "disconnect"])
-def test_disable_torque_on_a_silent_servo_stalls_for_tens_of_milliseconds_per_try(num_retry: int) -> None:
+
+@pytest.mark.parametrize(
+    ("cut", "tries"),
+    [
+        (lambda bus: bus.disable_torque(num_retry=_TORQUE_OFF_RETRY), 1 + _TORQUE_OFF_RETRY),
+        (lambda bus: bus.disconnect(), 6),
+    ],
+    ids=["guard_cut", "disconnect"],
+)
+def test_disable_torque_on_a_silent_servo_stalls_for_tens_of_milliseconds_per_try(
+    cut: Callable[[DynamixelBus], None], tries: int
+) -> None:
     """The SDK's own per-packet timeout (about 34 ms at 1 Mbaud) bounds the stall, through the real handlers."""
     bus = DynamixelBus(port="/dev/null", motors={"leg_1_yaw": 1}, model="xc330-m288")
     serial = SilentSerial()
@@ -378,11 +391,11 @@ def test_disable_torque_on_a_silent_servo_stalls_for_tens_of_milliseconds_per_tr
 
     start = time.monotonic()
     with pytest.raises(ConnectionError, match=r"1 motor\(s\): leg_1_yaw"):
-        bus.disable_torque(num_retry=num_retry)
+        cut(bus)
     elapsed = time.monotonic() - start
 
-    assert serial.packets_sent == 1 + num_retry
-    assert elapsed < (1 + num_retry) * 0.1
+    assert serial.packets_sent == tries
+    assert elapsed < tries * 0.1
 
 
 @pytest.mark.parametrize(
