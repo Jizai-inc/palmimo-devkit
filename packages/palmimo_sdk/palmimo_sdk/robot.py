@@ -2500,18 +2500,23 @@ class Palmimo:
         if default_pv is None:
             default_pv = _WAVE_LEG_PV
 
-        # Release whatever the previous gesture applied.
+        # Release whatever the previous gesture applied. Each restore runs on
+        # its own, so one failed write cannot leave the others unrestored.
+        restores: list[Callable[[], object]] = []
         if self._gesture_tuned is not None:
+            kind = self._gesture_tuned[0]
+            if kind == "soft_return":
+                soft_motors = list(self._gesture_tuned[1])
+                restores.append(lambda: self._write_gain(tuner, None, motors=soft_motors))
+            else:
+                if kind == "wave":
+                    if has_iir:
+                        restores.append(lambda: tuner.set_iir(False))
+                    restores.append(lambda: self._write_gain(tuner, None))  # restore captured defaults
+                restores.append(lambda: tuner.set_profile_velocity_units(default_pv))
+        for restore in restores:
             with contextlib.suppress(Exception):
-                kind = self._gesture_tuned[0]
-                if kind == "soft_return":
-                    self._write_gain(tuner, None, motors=list(self._gesture_tuned[1]))
-                else:
-                    if kind == "wave":
-                        if has_iir:
-                            tuner.set_iir(False)
-                        self._write_gain(tuner, None)  # restore captured defaults
-                    tuner.set_profile_velocity_units(default_pv)
+                restore()
 
         # Apply the new gesture's tuning.
         if want is not None and want[0] == "wave":

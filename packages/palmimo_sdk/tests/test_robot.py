@@ -2549,6 +2549,23 @@ def test_wave_arm_trip_drops_to_idle_and_softens_only_the_arm() -> None:
     assert robot.last_overload_trip == trip
 
 
+def test_wave_exit_restores_the_gain_when_the_iir_release_fails() -> None:
+    class _IirReleaseFails(_OverloadDriver):
+        def set_iir(self, enabled: bool, alpha: float | None = None, motors: list[str] | None = None) -> None:
+            if not enabled:
+                raise RuntimeError("iir release failed")
+
+    driver = _IirReleaseFails()
+    robot, _ = _overload_robot(driver)
+    robot.wave()
+    robot.step()
+    robot.stop()
+
+    robot.step()
+
+    assert driver.gain_calls[-1] == (None, None)
+
+
 def test_trip_frame_is_computed_but_not_written() -> None:
     driver = _OverloadDriver()
     robot, clock = _overload_robot(driver)
