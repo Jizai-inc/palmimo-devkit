@@ -1736,7 +1736,7 @@ class Palmimo:
 
     @wave_count.setter
     def wave_count(self, value: int) -> None:
-        self._engine.wave_count = int(value)
+        self._engine.wave_count = value
 
     @property
     def wave_period(self) -> float:
@@ -1779,7 +1779,7 @@ class Palmimo:
 
     @nod_count.setter
     def nod_count(self, value: int) -> None:
-        self._engine.nod_count = int(value)
+        self._engine.nod_count = value
 
     @property
     def nod_decay(self) -> float:
@@ -1827,7 +1827,7 @@ class Palmimo:
 
     @shake_swings.setter
     def shake_swings(self, value: int) -> None:
-        self._engine.shake_swings = int(value)
+        self._engine.shake_swings = value
 
     @property
     def shake_decay(self) -> float:
@@ -1921,7 +1921,7 @@ class Palmimo:
 
     @clap_count.setter
     def clap_count(self, value: int) -> None:
-        self._engine.clap_count = int(value)
+        self._engine.clap_count = value
 
     @property
     def clap_period(self) -> float:

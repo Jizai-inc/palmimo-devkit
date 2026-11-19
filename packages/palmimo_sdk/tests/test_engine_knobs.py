@@ -108,9 +108,10 @@ def test_count_knob_accepts_an_integral_float() -> None:
     assert engine.wave_count == 3
 
 
-def test_facade_setter_raises_and_leaves_the_old_value() -> None:
+@pytest.mark.parametrize(("knob", "value"), [("dance_roll_deg", 30), ("wave_count", 2.5)])
+def test_facade_setter_raises_and_leaves_the_old_value(knob: str, value: float) -> None:
     robot = Palmimo()
-    before = robot.dance_roll_deg
-    with pytest.raises(ValueError, match="dance_roll_deg"):
-        robot.dance_roll_deg = 30
-    assert robot.dance_roll_deg == before
+    before = getattr(robot, knob)
+    with pytest.raises(ValueError, match=knob):
+        setattr(robot, knob, value)
+    assert getattr(robot, knob) == before
