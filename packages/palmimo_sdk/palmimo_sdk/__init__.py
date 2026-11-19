@@ -97,6 +97,7 @@ from .overload import (
     OverloadTrip,
 )
 from .rail import RAIL_CONSECUTIVE, RAIL_UNDERVOLTAGE_V, RailTrip
+from .rearm import ReArm
 from .reservation import ReservationSetupError, ResourceBusyError
 from .robot import (
     MotionCancelled,
@@ -107,6 +108,7 @@ from .robot import (
     Palmimo,
     RoutineStep,
 )
+from .telemetry import WatchChange
 from .thermal import NeckThermalState
 
 
@@ -155,6 +157,7 @@ __all__ = [
     "PiperEngine",
     "PortDetectionError",
     "RailTrip",
+    "ReArm",
     "ReservationSetupError",
     "ResourceBusyError",
     "RoutineStep",
@@ -167,6 +170,7 @@ __all__ = [
     "Subscription",
     "TtsEngine",
     "TtsVoice",
+    "WatchChange",
     "default_incident_dir",
     "describe_hardware_error",
     "find_face_port",

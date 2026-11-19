@@ -53,8 +53,9 @@ sweep would spend bus time on a latched value that changes infrequently. Widenin
 only neck reads would leave the legs uncovered.
 
 The trigger time is when the host observes the latch, not the instant the servo
-cuts torque. A gap in `step()` calls, including a direct wake or sleep glide,
-can make that delay longer than the nominal poll schedule. For a single trigger
+cuts torque. A gap in `step()` calls can make that delay longer than the
+nominal poll schedule; the direct wake, sleep and timed neutral glides poll on
+the same schedule, so they leave no such gap. For a single trigger
 axis, `last_clean_t` and zero bracket the physical latch between the last zero
 response and detection. With multiple triggering axes the header aggregates
 their clean times; it is not a separate precise event-time band for every axis.

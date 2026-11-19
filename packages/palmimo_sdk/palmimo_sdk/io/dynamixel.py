@@ -167,8 +167,8 @@ def _resolve_single(candidates: list[str], label: str) -> str:
     raise PortDetectionError(f"Multiple {label} found: {listed}. Cannot safely choose one -- specify with --port.")
 
 
-def _seed_hold_pose(bus: Any) -> None:
-    """Write each motor's present position into its Goal_Position.
+def _seed_hold_pose(bus: Any, motors: Sequence[str] | None = None) -> None:
+    """Write each of *motors*' present position into its Goal_Position (every motor when ``None``).
 
     Torque-on then holds the pose instead of jumping to a stale goal.
 
@@ -176,27 +176,47 @@ def _seed_hold_pose(bus: Any) -> None:
         ConnectionError: When some motor's position is still unread after
             :data:`_SEED_READ_ATTEMPTS` batch reads.
     """
+    names = list(bus.motors) if motors is None else list(motors)
     seeded: dict[str, int] = {}
     last_error: Exception | None = None
     for _ in range(_SEED_READ_ATTEMPTS):
         try:
-            pres = bus.sync_read("Present_Position", normalize=False)
+            if motors is None:
+                pres = bus.sync_read("Present_Position", normalize=False)
+            else:
+                # Ask only these motors, so a silent motor elsewhere on the bus cannot fail the read.
+                span = bus.sync_read_span(["Present_Position"], motors=names)
+                pres = {motor: regs["Present_Position"] for motor, regs in span.values.items()}
         except OSError as exc:
             last_error = exc
             continue
         if pres is not None:
-            seeded.update({motor: tick for motor, tick in pres.items() if tick is not None})
-        if all(motor in seeded for motor in bus.motors):
+            seeded.update({motor: tick for motor, tick in pres.items() if tick is not None and motor in names})
+        if all(motor in seeded for motor in names):
             break
-    missing = [motor for motor in bus.motors if motor not in seeded]
+    missing = [motor for motor in names if motor not in seeded]
     if missing:
         raise ConnectionError(
             f"Could not read the hold pose of {', '.join(missing)} after {_SEED_READ_ATTEMPTS} attempts; "
-            "torque was left off."
+            "torque was not turned on."
         ) from last_error
-    for motor in bus.motors:
+    for motor in names:
         # A position read back from hardware, not a caller-chosen goal: write it verbatim.
         bus.write("Goal_Position", motor, seeded[motor], normalize=False)
+
+
+def _arm_motors(bus: Any, profile_velocity: int, motors: Sequence[str] | None = None) -> None:
+    """Hold *motors* (every motor when ``None``) where they are, set their profile, then turn torque on.
+
+    Torque goes on last, so a failed seed or profile write leaves it off.
+    """
+    _seed_hold_pose(bus, motors)
+    if motors is None:
+        bus.sync_write("Profile_Velocity", profile_velocity, normalize=False)
+    else:
+        for motor in motors:
+            bus.write("Profile_Velocity", motor, profile_velocity, normalize=False)
+    bus.enable_torque(motors=motors)
 
 
 def _open_dynamixel_bus(
@@ -226,9 +246,7 @@ def _open_dynamixel_bus(
         bus.configure_motors()
         for motor in bus.motors:
             bus.write("Operating_Mode", motor, OPERATING_MODE_POSITION)
-        _seed_hold_pose(bus)
-        bus.sync_write("Profile_Velocity", profile_velocity, normalize=False)
-        bus.enable_torque()
+        _arm_motors(bus, profile_velocity)
     except BaseException:
         # Even a torque write failure must reach closePort via disconnect's finally.
         with contextlib.suppress(Exception):
@@ -536,6 +554,17 @@ class DynamixelDriver(ServoDriver):
             silent=sweep.silent,
             unreached=sweep.unreached,
         )
+
+    def arm(self, motors: Sequence[str]) -> None:
+        """Hold *motors* where they are, restore the default profile, and turn their torque on, as connect does.
+
+        Raises:
+            RuntimeError: The driver is not connected, or a motor refused torque.
+            ConnectionError: Some motor's position could not be read; torque was not turned on.
+        """
+        if self._bus is None:
+            raise RuntimeError("Driver is not connected. Call connect() before arm().")
+        _arm_motors(self._bus, self._profile_velocity, motors)
 
     def read_hardware_errors(self, motors: Sequence[str] | None = None) -> HardwareErrorRead:
         if self._bus is None:

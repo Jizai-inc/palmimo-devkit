@@ -260,6 +260,23 @@ class ServoDriver(ABC):
         """
         raise NotImplementedError(f"{type(self).__name__} does not support read_hardware_errors().")
 
+    def arm(self, motors: Sequence[str]) -> None:
+        """Put *motors* back to work as connect leaves them: held where they are, default profile, torque on.
+
+        For a servo that rebooted with its RAM settings at their defaults.
+        Position_P_Gain is the caller's to write, since it changes at runtime.
+
+        Optional capability; the default raises :class:`NotImplementedError`.
+
+        Args:
+            motors (Sequence[str]): Motors to arm.
+
+        Raises:
+            RuntimeError: The driver is not connected, or a motor refused torque.
+            ConnectionError: Some motor's position could not be read; torque was not turned on.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support arm().")
+
     def set_profile_velocity(self, ticks_per_second: int | dict[str, int]) -> None:
         """Set the goal-approach speed, in **ticks per second**.
 

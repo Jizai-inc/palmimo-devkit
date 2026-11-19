@@ -155,8 +155,14 @@ in `toolset.py` saying so).
   / `play()` / `play_keyframes()`, the MCP server, and the agent tool layer (`palmimo_sdk/agent/`).
   **The LeRobot teleop integration (`integrations/lerobot/`) drives the engine
   directly and is NOT covered** — see that package's `palmimo.py` module
-  docstring. The overload and rail guards likewise do not watch `wake()`, `sleep()` or
-  `return_to_neutral()`, which write the driver directly.
+  docstring. The overload and rail guards also watch the glides of `wake()`,
+  `return_to_neutral(duration=...)` and `sleep()`, which write the driver
+  directly; there they only record a trip and never stop the glide.
+- **A servo that answers again after going silent is re-armed by `step()`**
+  (gain, hold goal, profile, torque on), unless a hardware error is latched on
+  it, the overload guard cut its torque, or `limp()` left it limp — see
+  `robot.drain_rearms()` / `robot.unarmed_motors` in
+  [doc/reference/api-reference.md](doc/reference/api-reference.md#overload-guard).
 - Always smooth transitions — abrupt jumps damage gears
 - `stop()` returns to neutral gradually; NEVER skip it
 - Safe servo range: 200-3900 (avoid mechanical limits at 0 and 4095)

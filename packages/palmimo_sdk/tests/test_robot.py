@@ -22,11 +22,12 @@ from palmimo_sdk import (
     Speaker,
 )
 from palmimo_sdk.engine import MotionEngine
-from palmimo_sdk.io.base import ServoPositions, ServoTelemetry
+from palmimo_sdk.io.base import HardwareErrorRead, ServoPositions, ServoTelemetry
 from palmimo_sdk.kinematics import LEG_MOTORS, leg_motors
 from palmimo_sdk.overload import OVERLOAD_POLL_INTERVAL_S, SOFT_RETURN_GAIN
 from palmimo_sdk.rail import RAIL_CONSECUTIVE
 from palmimo_sdk.robot import NeckPitchDegrees, NeckPitchNormalized, NeckYawDegrees, NeckYawNormalized
+from palmimo_sdk.telemetry import RECHECK_INTERVAL_S
 from palmimo_sdk.thermal import NECK_COOL_C, NECK_HOT_C, NECK_MOTORS, NECK_STALE_S, NECK_WARM_C
 
 
@@ -2441,6 +2442,8 @@ class _OverloadDriver(ServoDriver):
         self.torque_supported = torque_supported
         self.profile_velocity = 300
         self.telemetry_error: Exception | None = None
+        self.silent: set[str] = set()
+        self.on_write: Callable[[], None] | None = None
         self._connected = True
 
     @property
@@ -2455,6 +2458,8 @@ class _OverloadDriver(ServoDriver):
 
     def _write_positions(self, positions: dict[str, int]) -> None:
         self.writes.append(dict(positions))
+        if self.on_write is not None:
+            self.on_write()
 
     def read_positions(self) -> dict[str, int]:
         return dict(self.positions)
@@ -2463,11 +2468,21 @@ class _OverloadDriver(ServoDriver):
         self.telemetry_requests.append(None if motors is None else tuple(motors))
         if self.telemetry_error is not None:
             raise self.telemetry_error
-        wanted = motors if motors is not None else LEG_MOTORS
+        wanted = list(motors if motors is not None else LEG_MOTORS)
+        silent: tuple[str, ...] = ()
+        unreached: tuple[str, ...] = ()
+        # Like the real bus: the sweep stops at the first silent motor.
+        for i, motor in enumerate(wanted):
+            if motor in self.silent:
+                silent, unreached = (motor,), tuple(wanted[i + 1 :])
+                wanted = wanted[:i]
+                break
         return ServoTelemetry(
             current={m: self.currents[m] for m in wanted if m in self.currents},
             position={m: self.positions[m] for m in wanted if m in self.positions},
             voltage={m: self.voltages[m] for m in wanted if m in self.voltages},
+            silent=silent,
+            unreached=unreached,
         )
 
     def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
@@ -2529,6 +2544,208 @@ def test_wave_arm_trip_drops_to_idle_and_softens_only_the_arm() -> None:
     assert (trip.channel, trip.motion) == ("arm", "wave")
     assert robot.drain_overload_trips() == []
     assert robot.last_overload_trip == trip
+
+
+def test_arm_trips_when_a_motor_ahead_of_it_on_the_bus_stays_silent() -> None:
+    """A silent axis cuts every sweep short, so it is set aside rather than hiding the arm behind it."""
+    driver = _OverloadDriver()
+    driver.silent = {"leg_1_yaw"}
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800}
+
+    _poll_steps(robot, clock, 12)
+
+    assert robot.motion == "idle"
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_6_yaw", "arm", "wave")
+    assert robot.unwatched_motors == ("leg_1_yaw",)
+    (change,) = robot.drain_watch_changes()
+    assert (change.motor, change.watched) == ("leg_1_yaw", False)
+
+
+def _glide_robot(driver: _OverloadDriver) -> Palmimo:
+    """A robot waving with *driver*'s clock advancing one poll per written frame."""
+    robot, clock = _overload_robot(driver)
+    driver.on_write = lambda: clock.advance(_POLL_DT)
+    robot.wave()
+    return robot
+
+
+def test_return_to_neutral_glide_judges_the_lowered_arm_on_the_leg_channel_and_only_records() -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    # The waving arm lands and takes weight on the way: over the arm threshold, under the leg one.
+    driver.currents = {"leg_6_yaw": 800, "leg_2_pitch1": 1300}
+
+    robot.return_to_neutral(duration=0.3)
+
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_2_pitch1", "leg", "return_to_neutral")
+    assert _soft_gain_calls(driver) == []
+    assert driver.torque_calls == []
+    assert len(driver.writes) == 18  # round(0.3 s * 60 fps): the glide ran to its last frame
+
+
+def test_return_to_neutral_glide_keeps_its_duration_when_each_frame_takes_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    elapsed = [0.0]
+    monkeypatch.setattr(time, "perf_counter", lambda: elapsed[0])
+    monkeypatch.setattr(time, "sleep", lambda s: elapsed.__setitem__(0, elapsed[0] + s))
+    on_write = driver.on_write
+    assert on_write is not None
+
+    def slow_write() -> None:
+        on_write()
+        elapsed[0] += 0.005  # the bus time a frame spends
+
+    driver.on_write = slow_write
+
+    robot.return_to_neutral(duration=0.3)
+
+    assert elapsed[0] == pytest.approx(0.3)
+
+
+def test_wake_glide_records_a_trip_under_its_name() -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    driver.currents = {"leg_2_pitch1": 1300}
+
+    robot.wake(duration=0.3)
+
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_2_pitch1", "leg", "wake")
+
+
+def test_wake_ramps_an_arm_left_soft_by_a_step_trip_without_restoring_it_to_full_gain_first() -> None:
+    driver = _OverloadDriver()
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800}
+    _poll_steps(robot, clock, 12)
+    assert _soft_gain_calls(driver) == [(SOFT_RETURN_GAIN, _ARM_6)]
+    driver.currents = {}
+    before = len(driver.gain_calls)
+
+    robot.wake(duration=0.3)
+
+    assert (None, _ARM_6) not in driver.gain_calls[before:]
+
+
+def test_sleep_glide_records_a_trip_without_softening_the_arm() -> None:
+    driver = _OverloadDriver()
+    robot = _glide_robot(driver)
+    driver.currents = {"leg_6_yaw": 1300}
+
+    robot.sleep(duration=0.3)
+
+    (trip,) = robot.drain_overload_trips()
+    assert (trip.motor, trip.channel, trip.motion) == ("leg_6_yaw", "leg", "sleep")
+    assert (SOFT_RETURN_GAIN, _ARM_6) not in _soft_gain_calls(driver)
+    assert driver.torque_calls == []
+
+
+class _RearmDriver(_OverloadDriver):
+    """Logs, in order, every write a re-arm makes, and reports injected latched hardware errors."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.latched: dict[str, int] = {}
+        self.log: list[tuple[str, tuple[str, ...] | None]] = []
+        self.gains: list[tuple[int | None, tuple[str, ...] | None]] = []
+
+    def read_hardware_errors(self, motors: Sequence[str] | None = None) -> HardwareErrorRead:
+        asked = list(motors if motors is not None else LEG_MOTORS)
+        return HardwareErrorRead(errors={m: self.latched.get(m, 0) for m in asked if m not in self.silent})
+
+    def arm(self, motors: Sequence[str]) -> None:
+        self.log.append(("arm", tuple(motors)))
+
+    def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
+        super().set_position_p_gain(value, motors)
+        self.log.append(("gain", None if motors is None else tuple(motors)))
+        self.gains.append((value, None if motors is None else tuple(motors)))
+
+    def set_torque_enabled(self, enabled: bool, motors: Sequence[str] | None = None) -> None:
+        super().set_torque_enabled(enabled, motors)
+        self.log.append(("torque on" if enabled else "torque off", None if motors is None else tuple(motors)))
+
+
+def _silence_then_answer(robot: Palmimo, clock: _FakeClock, driver: _RearmDriver, motor: str) -> None:
+    """Leave *motor* silent long enough to be set aside, then let it answer its re-check."""
+    driver.silent = {motor}
+    _poll_steps(robot, clock, 12)
+    assert motor in robot.unwatched_motors
+    driver.silent = set()
+    driver.log.clear()
+    _poll_steps(robot, clock, round(RECHECK_INTERVAL_S / _POLL_DT) + 2)
+    assert motor not in robot.unwatched_motors
+
+
+def test_a_motor_that_answers_again_is_rearmed_holding_where_it_is() -> None:
+    driver = _RearmDriver()
+    robot, clock = _overload_robot(driver)
+
+    _silence_then_answer(robot, clock, driver, "leg_1_yaw")
+
+    one = ("leg_1_yaw",)
+    assert driver.log[:2] == [("gain", one), ("arm", one)]
+    (rearm,) = robot.drain_rearms()
+    assert (rearm.motor, rearm.armed, rearm.reason) == ("leg_1_yaw", True, "")
+    assert robot.unarmed_motors == {}
+
+
+def test_a_rearmed_motor_gets_back_the_gain_the_robot_last_gave_it() -> None:
+    driver = _RearmDriver()
+    robot, clock = _overload_robot(driver)
+    robot.set_p_gain(300)
+
+    _silence_then_answer(robot, clock, driver, "leg_1_yaw")
+
+    assert (300, ("leg_1_yaw",)) in driver.gains
+
+
+def test_a_motor_with_a_latched_hardware_error_is_not_rearmed() -> None:
+    driver = _RearmDriver()
+    driver.latched = {"leg_1_yaw": 0x20}
+    robot, clock = _overload_robot(driver)
+
+    _silence_then_answer(robot, clock, driver, "leg_1_yaw")
+
+    assert [c for c in driver.log if c[1] == ("leg_1_yaw",)] == []
+    (rearm,) = robot.drain_rearms()
+    assert not rearm.armed
+    assert "Overload" in robot.unarmed_motors["leg_1_yaw"]
+
+
+def test_an_arm_whose_torque_the_overload_guard_cut_is_not_rearmed() -> None:
+    driver = _RearmDriver(gain_raises=True)
+    robot, clock = _overload_robot(driver)
+    robot.wave()
+    driver.currents = {"leg_6_yaw": 800}
+    _poll_steps(robot, clock, 3)
+    assert ("torque off", _ARM_6) in driver.log
+    driver.currents = {}
+
+    _silence_then_answer(robot, clock, driver, "leg_6_yaw")
+
+    assert not [c for c in driver.log if c[0] == "arm"]
+    assert "cut its torque" in robot.unarmed_motors["leg_6_yaw"]
+
+
+def test_blind_guards_names_the_leg_guard_once_the_bus_reads_empty() -> None:
+    driver = _RearmDriver()
+    robot, clock = _overload_robot(driver)
+    driver.silent = set(LEG_MOTORS)
+    _poll_steps(robot, clock, 20)
+    assert robot.blind_guards == ("leg telemetry guard",)
+
+    driver.silent = set()
+    _poll_steps(robot, clock, round(RECHECK_INTERVAL_S / _POLL_DT) * 3)
+    assert robot.blind_guards == ()
 
 
 def test_trip_frame_is_computed_but_not_written() -> None:
