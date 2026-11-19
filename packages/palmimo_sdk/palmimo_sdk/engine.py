@@ -440,7 +440,7 @@ class MotionEngine:
         self.dance_level_head: bool = self._DANCE_LEVEL_HEAD  # True: lift the body so the head
         # stays at a constant height (flat left/right sway).
         # False: arc (head dips at extremes) — the default.
-        self.dance_dwell = self._DANCE_DWELL  # 0..~0.8: pause near each sway extreme. The
+        self.dance_dwell = self._DANCE_DWELL  # 0..0.99: pause near each sway extreme. The
         # sine is steepened then clamped to ±1, so the body
         # sways over, HOLDS, then sways back. 0 = continuous.
         self.dance_speed = self._DANCE_SPEED  # dance tempo (own knob, NOT gait_speed; the
@@ -1378,7 +1378,7 @@ class MotionEngine:
         total = lower_end + self._WAVE_RETURN_S  # then the stance releases
 
         # Clock: slow prep/raise and lower/release (the clap's own intro rate,
-        # floored so 0/negative can't freeze or reverse the gesture), the
+        # validated >= _MIN_RATE so it cannot freeze or reverse the gesture), the
         # strokes in real time so clap_period is wall-clock seconds.
         ph = self._wave_phase
         rate = self.clap_intro_speed if (ph < raise_end or ph >= strokes_end) else 1.0
