@@ -2418,6 +2418,24 @@ def test_disconnect_then_reconnect_re_judges_the_neck_immediately() -> None:
     assert robot.neck_thermal_state is NeckThermalState.NORMAL
 
 
+def test_disconnect_drops_the_neck_judgement_when_the_driver_disconnect_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver), auto_wake=False)
+    robot.connect()
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+
+    def _port_gone() -> None:
+        raise OSError("port gone")
+
+    monkeypatch.setattr(driver, "disconnect", _port_gone)
+    with pytest.raises(OSError):
+        robot.disconnect(park=False)
+
+    assert robot.neck_thermal_state is NeckThermalState.UNMONITORED
+    assert robot.neck_lock_active is False
+
+
 # ================================================================
 # LEG OVERLOAD GUARD WIRING (overload.py's OverloadGuard, wired into step())
 # ================================================================

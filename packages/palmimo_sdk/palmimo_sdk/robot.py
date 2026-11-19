@@ -944,17 +944,17 @@ class Palmimo:
                         self._driver.disconnect()
                 finally:
                     _step(self._flush_recorder)
-                # Per-axis tuning tracking is connection-scoped (see connect()).
-                self._gesture_tuned = None
-                self._neck_gesture_tuned = False
-                # Nothing is left to watch once the driver is gone -- reflect that in
-                # neck_thermal_state immediately rather than leaving the last reading
-                # (possibly HOT) visible until the next step() polls. poll(None) also
-                # releases neck_lock_active (see thermal.py): there is no driver left
-                # to write a centering command to.
-                self._thermal.poll(None)
-                self._engine.neck_hold_center = False
-                self._leg_safety.reset()
+                    # Per-axis tuning tracking is connection-scoped (see connect()).
+                    self._gesture_tuned = None
+                    self._neck_gesture_tuned = False
+                    # Nothing is left to watch once the driver is gone -- reflect that in
+                    # neck_thermal_state immediately rather than leaving the last reading
+                    # (possibly HOT) visible until the next step() polls. poll(None) also
+                    # releases neck_lock_active (see thermal.py): there is no driver left
+                    # to write a centering command to.
+                    self._thermal.poll(None)
+                    self._engine.neck_hold_center = False
+                    self._leg_safety.reset()
             finally:
                 self._disconnecting = False
         if interrupt is not None:
