@@ -809,6 +809,21 @@ from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK
 
 `HardwareErrorRead`、`HARDWARE_ERROR_BITS`、`describe_hardware_error(bits)` は `palmimo_sdk` からエクスポートされています。このヘルパーは、ゼロなら `"-"` を返し、それ以外はビットの昇順に名前をカンマ区切りで並べて返します（たとえば `0x21` は `"InputVoltage,Overload"` になります）。未知のビットは `"bit<N>"` と名付けます。`HARDWARE_ERROR_BITS` は、ビット位置から `InputVoltage`（0）、`Overheating`（2）、`ElectricalShock`（4）、`Overload`（5）への対応です。ビット 3 は XC330-M288 の e-Manual で予約済みとされており、`"bit3"` と表します。
 
+`ServoDriver` は、 `DynamixelDriver` が提供し、ファサードがジェスチャー・ wake ・ `limp()` で使うサーボ調整も宣言しています。いずれも任意の機能です。
+
+| メンバー | 内容 | デフォルト |
+|---|---|---|
+| `set_profile_velocity(ticks_per_second)` | 目標値へ向かう速度（tick/s）。スカラーかモーターごとの dict で指定し、 `0` はバックエンドが許す最大速度 | `NotImplementedError` を送出 |
+| `set_profile_velocity_units(value, motors=None)` | バックエンド固有のプロファイルレジスタ値を変換せずに書き込む（Dynamixel では 1 回の移動あたりのミリ秒。 `0` でプロファイルを無効化） | `NotImplementedError` を送出 |
+| `profile_velocity` | `set_profile_velocity_units` で戻す先のプロファイルレジスタ値 | `None` |
+| `set_position_p_gain(value, motors=None)` | Position_P_Gain。 `None` でバックエンドのデフォルトに戻す | `NotImplementedError` を送出 |
+| `position_p_gain` | 全モーターに最後に設定したゲイン。未設定ならデフォルト | `None` |
+| `read_position_p_gain()` | 各サーボから読み戻した現在のゲイン | `NotImplementedError` を送出 |
+| `set_iir(enabled, alpha=None, motors=None)` | サーボへ送る目標値のローパスフィルター。 `alpha` は (0, 1] で、 1.0 は平滑化なし | `NotImplementedError` を送出 |
+| `iir_enabled` / `iir_alpha` | フィルターの状態 | `False` / `1.0` |
+
+デフォルトは、その機能を持たないバックエンドが返す値です。バックエンドはハードウェアで実現できるものだけを上書きします。どれを上書きしているかは `supports(driver, name)`（`palmimo_sdk` から export）で判定できます。 `driver` が `name` を持ち、それが `ServoDriver` のデフォルトでなければ真です。ファサードは、ドライバーが対応していない調整を飛ばします。
+
 ### `DynamixelDriver`
 
 同梱のハードウェアバックエンドです（Dynamixel シリアルバス。`palmimo-sdk[hardware]` extra が必要です）。
