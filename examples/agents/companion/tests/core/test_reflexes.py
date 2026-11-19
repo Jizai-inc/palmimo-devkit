@@ -8,8 +8,11 @@ from typing import Any, cast
 
 from palmimo_companion_agent.core.perception import Detection, DetectionKind
 from palmimo_companion_agent.core.reflexes import ReflexEngine
-from palmimo_companion_agent.core.tools import LOOK_AT_FACE_SEEN_MARK
-from palmimo_sdk.agent.toolset import AgentToolSet
+from palmimo_companion_agent.core.tools import COMPANION_TOOL_MODELS, LOOK_AT_FACE_SEEN_MARK
+from palmimo_sdk.agent.toolset import TOOL_MODELS, AgentToolSet
+
+
+_REAL_TOOL_MODELS = {**TOOL_MODELS, **COMPANION_TOOL_MODELS}
 
 
 class FakeToolset:
@@ -20,11 +23,17 @@ class FakeToolset:
     """
 
     def __init__(
-        self, *, busy: bool = False, look_at_face_result: str = LOOK_AT_FACE_SEEN_MARK, servo_bus: bool = True
+        self,
+        *,
+        busy: bool = False,
+        look_at_face_result: str = LOOK_AT_FACE_SEEN_MARK,
+        servo_bus: bool = True,
+        face_fails: bool = False,
     ) -> None:
         self.busy = busy
         self.look_at_face_result = look_at_face_result
         self.servo_bus = servo_bus
+        self.face_fails = face_fails
         self.calls: list[tuple[str, dict]] = []
 
     def is_busy(self) -> bool:
@@ -34,13 +43,14 @@ class FakeToolset:
         from palmimo_sdk.agent.tools import ToolResult
 
         self.calls.append((name, args))
+        _REAL_TOOL_MODELS[name].model_validate(args)
         servo_note = "" if self.servo_bus else " (no servo bus connected; nothing moved)"
         if name == "wave_both":
             return ToolResult(text="waved both front legs" + servo_note)
         if name == "look_at_face":
             return ToolResult(text=self.look_at_face_result + servo_note)
-        if name == "show_emoji":
-            return ToolResult(text="face shown")
+        if name == "set_face":
+            return ToolResult(text="face shown", is_error=self.face_fails)
         raise AssertionError(f"unexpected tool call: {name}")
 
 
@@ -130,7 +140,7 @@ async def test_no_wave_or_turn_is_reported_without_a_servo_bus() -> None:
         )
     )
 
-    assert [name for name, _ in toolset.calls] == ["wave_both", "look_at_face", "show_emoji", "look_at_face"]
+    assert [name for name, _ in toolset.calls] == ["wave_both", "look_at_face", "set_face", "look_at_face"]
     assert notes == ["[reflex] answered a call (heard 'palmimo')."]
 
 
@@ -243,8 +253,8 @@ async def test_a_name_call_shows_a_face_before_it_looks_for_anyone() -> None:
 
     await engine.run(_detections([Detection(summary="someone called the robot by name", kind=DetectionKind.NAME_CALL)]))
 
-    assert [name for name, _ in toolset.calls] == ["show_emoji", "look_at_face"]
-    assert toolset.calls[0][1]["emoji"] == "HAPPY"
+    assert [name for name, _ in toolset.calls] == ["set_face", "look_at_face"]
+    assert toolset.calls[0][1]["name"] == "HAPPY"
     assert any("answered a call" in note for note in notes)
 
 
@@ -258,6 +268,16 @@ async def test_a_name_call_is_answered_even_when_no_face_is_found() -> None:
 
     assert any("answered a call" in note for note in notes)
     assert not any("found the caller" in note for note in notes)
+
+
+async def test_a_name_call_is_not_reported_as_answered_when_the_face_fails() -> None:
+    toolset = FakeToolset(face_fails=True)
+    notes, notify = _recorder()
+    engine = ReflexEngine(_toolset(toolset), notify)
+
+    await engine.run(_detections([Detection(summary="called", kind=DetectionKind.NAME_CALL)]))
+
+    assert not any("answered a call" in note for note in notes)
 
 
 async def test_a_name_call_is_skipped_while_the_robot_is_busy() -> None:
@@ -279,4 +299,4 @@ async def test_calling_twice_in_quick_succession_answers_once() -> None:
     calls = [Detection(summary="called", kind=DetectionKind.NAME_CALL)] * 2
     await engine.run(_detections(calls))
 
-    assert [name for name, _ in toolset.calls].count("show_emoji") == 1
+    assert [name for name, _ in toolset.calls].count("set_face") == 1

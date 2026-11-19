@@ -150,8 +150,11 @@ class ReflexEngine:
         neither -- treating the glance as the acknowledgement would leave those
         calls with no visible answer at all.
         """
-        await self._toolset.call("show_emoji", {"emoji": _NAME_CALL_FACE, "reason": "reflex: heard my name"})
-        self._notify(f"[reflex] answered a call ({detection.summary}).")
+        shown = await self._toolset.call("set_face", {"name": _NAME_CALL_FACE, "reason": "reflex: heard my name"})
+        if shown.is_error:
+            _log.warning("name-call reflex could not show its face: %s", shown.text)
+        else:
+            self._notify(f"[reflex] answered a call ({detection.summary}).")
         result = await self._toolset.call(
             "look_at_face",
             {
