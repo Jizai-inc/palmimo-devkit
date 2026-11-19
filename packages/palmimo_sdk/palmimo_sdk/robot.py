@@ -70,7 +70,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
-from ._flight_recorder import ServoFlightRecorder, default_incident_dir
+from ._flight_recorder import CodeVersion, ServoFlightRecorder, default_incident_dir
 from ._flight_ride import FlightRide
 from ._leg_safety import LegSafety
 from ._signals import signals_ignored
@@ -422,6 +422,9 @@ class Palmimo:
             :func:`default_incident_dir` on the first driver connection and
             retains that path across reconnects. Directories are created only
             when writing an incident; ignored when ``flight_recorder=False``.
+        code_version (CodeVersion, optional): The code this process started from, written into
+            every incident header. ``None`` leaves the git fields ``null``; the installed
+            ``palmimo-sdk`` version is always recorded.
         display (FaceDisplay, optional): Face display resource. When attached, the connection lifecycle bundles
             it alongside the driver — :meth:`connect` opens it and plays the
             boot-wake animation, :meth:`disconnect` returns it to IDLE and closes
@@ -523,6 +526,7 @@ class Palmimo:
         rail_undervoltage_v: float | None = RAIL_UNDERVOLTAGE_V,
         flight_recorder: bool = True,
         incident_dir: str | os.PathLike[str] | None = None,
+        code_version: CodeVersion | None = None,
     ) -> None:
         if fps <= 0:
             raise ValueError("fps must be positive.")
@@ -550,6 +554,7 @@ class Palmimo:
         self._flight_enabled = flight_recorder
         self._incident_dir = Path(incident_dir) if flight_recorder and incident_dir is not None else None
         self._flight_clock = thermal_clock or time.monotonic
+        self._code_version = code_version
         self._recorder: ServoFlightRecorder | None = None
         self._flight_ride: FlightRide | None = None
         self._last_goal: dict[str, int] = {}
@@ -794,7 +799,9 @@ class Palmimo:
                     if self._recorder is None:
                         if self._incident_dir is None:
                             self._incident_dir = default_incident_dir()
-                        self._recorder = ServoFlightRecorder(self._incident_dir, clock=self._flight_clock)
+                        self._recorder = ServoFlightRecorder(
+                            self._incident_dir, clock=self._flight_clock, code_version=self._code_version
+                        )
                         self._flight_ride = FlightRide(
                             self._recorder, clock=self._flight_clock, logger=logger, frame_s=self.dt
                         )
