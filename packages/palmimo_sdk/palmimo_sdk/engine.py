@@ -16,6 +16,7 @@ Typical usage::
 """
 
 import math
+import numbers
 from enum import Enum, auto
 from itertools import pairwise
 from typing import TYPE_CHECKING, ClassVar, overload
@@ -82,12 +83,14 @@ class _Knob:
     def __get__(self, obj: object | None, objtype: type) -> "_Knob | float":
         if obj is None:
             return self
-        value: float = obj.__dict__[self._slot]
+        try:
+            value: float = obj.__dict__[self._slot]
+        except KeyError:
+            raise AttributeError(self._name) from None
         return value
 
     def __set__(self, obj: object, value: float) -> None:
-        number = self._validate(value)
-        obj.__dict__[self._slot] = number
+        obj.__dict__[self._slot] = self._validate(value)
 
     def _range_text(self) -> str:
         lo = "-inf" if self._lo is None else f"{self._lo:g}"
@@ -95,6 +98,8 @@ class _Knob:
         return f"{'(' if self._lo_open else '['}{lo}, {hi}{']' if self._hi is not None else ')'}"
 
     def _validate(self, value: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
+            raise ValueError(f"{self._name}={value!r} must be a real number.")
         number = float(value)
         if not math.isfinite(number):
             raise ValueError(f"{self._name}={value!r} must be finite.")
@@ -104,15 +109,11 @@ class _Knob:
         return number
 
 
-class _CountKnob:
+class _CountKnob(_Knob):
     """A runtime tuning knob holding an integer >= 1; anything else raises :class:`ValueError`."""
 
     def __init__(self) -> None:
-        self._name = ""
-
-    def __set_name__(self, owner: type, name: str) -> None:
-        self._name = name
-        self._slot = f"_knob_{name}"
+        super().__init__(1.0)
 
     @overload
     def __get__(self, obj: None, objtype: type) -> "_CountKnob": ...
@@ -121,19 +122,13 @@ class _CountKnob:
     def __get__(self, obj: object | None, objtype: type) -> "_CountKnob | int":
         if obj is None:
             return self
-        value: int = obj.__dict__[self._slot]
-        return value
+        return int(super().__get__(obj, objtype))
 
-    def __set__(self, obj: object, value: float) -> None:
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, int | float)
-            or not math.isfinite(value)
-            or value != int(value)
-            or value < 1
-        ):
+    def _validate(self, value: float) -> float:
+        number = super()._validate(value)
+        if number != int(number):
             raise ValueError(f"{self._name}={value!r} must be an integer >= 1.")
-        obj.__dict__[self._slot] = int(value)
+        return int(number)
 
 
 class MotionEngine:
