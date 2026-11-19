@@ -7,19 +7,26 @@ OpenAI calls.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import os
+import signal
 import subprocess
 import sys
 import tomllib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from typer.testing import CliRunner
 
+from palmimo_sdk.shutdown import STOP_SIGNALS, TERMINATING_SIGNALS, StopRequest, stop_flag_on_signals
+from palmimo_wakeword_agent import main as main_module
 from palmimo_wakeword_agent.main import _discard_stale_audio, _missing_api_key_error, listen_loop
 from palmimo_wakeword_agent.output import configure_output
 from palmimo_wakeword_agent.settings import WakewordAgentSettings
@@ -400,6 +407,175 @@ async def test_stale_audio_discarded_even_when_utterance_is_ignored() -> None:
     assert segmenter.reset_calls == 1
 
 
+# --- shutdown: the stop predicate and the signal handlers behind it ---
+
+
+class EndlessSubscription(FakeSubscription):
+    """A chunk feed that never ends on its own, capped so a broken stop check fails a test
+    on the assertion instead of hanging the suite."""
+
+    def __init__(self, cap: int = 1000) -> None:
+        super().__init__([])
+        self.cap = cap
+        self.served = 0
+
+    def __iter__(self) -> Iterator[str]:
+        while self.served < self.cap:
+            self.served += 1
+            yield f"chunk-{self.served}"
+
+
+def _idle_loop_kwargs(**overrides: Any) -> dict[str, Any]:
+    """`listen_loop` keyword arguments whose utterances are never wired, so the loop only idles."""
+    return {
+        "segmenter": FakeSegmenter(set()),
+        "detector": FakeDetector({}),
+        "stt": lambda u: "",
+        "agent": FakeAgent(),
+        "say": Recorder().say,
+        "is_speaking": _never_speaking,
+    } | overrides
+
+
+def _stop_on_call(n: int) -> Callable[[], bool]:
+    """A stop predicate that stays ``False`` until its *n*-th call, then stays ``True``.
+
+    Counting calls pins down *where* in the utterance handler the stop lands.
+    """
+    calls = 0
+
+    def stop() -> bool:
+        nonlocal calls
+        calls += 1
+        return calls >= n
+
+    return stop
+
+
+def _commanding_loop_kwargs(**overrides: Any) -> dict[str, Any]:
+    """`listen_loop` keyword arguments where the first chunk is a full "<wake word>, <command>"."""
+    return (
+        _idle_loop_kwargs(
+            segmenter=FakeSegmenter({"chunk-1"}),
+            detector=FakeDetector({"パルミーモ前に進んで": WakeMatch(command="前に進んで")}),
+            stt=lambda u: "パルミーモ前に進んで",
+        )
+        | overrides
+    )
+
+
+async def test_listen_loop_exits_when_stop_predicate_turns_true() -> None:
+    chunks = EndlessSubscription()
+    segmenter = FakeSegmenter(set())
+
+    await listen_loop(chunks, **_idle_loop_kwargs(segmenter=segmenter, stop=_stop_on_call(4)))
+
+    assert segmenter.fed == ["chunk-1", "chunk-2", "chunk-3"]
+    assert chunks.served == 4  # the 4th chunk hit the stop check and never reached the segmenter
+
+
+@pytest.mark.parametrize("signum", STOP_SIGNALS, ids=lambda s: s.name)
+async def test_listen_loop_exits_on_signal_when_wrapped_in_the_shared_stop_flag(signum: signal.Signals) -> None:
+    chunks = EndlessSubscription()
+    delivered = 0
+
+    def is_speaking() -> bool:
+        nonlocal delivered
+        delivered += 1
+        if delivered == 3:
+            signal.raise_signal(signum)
+        return False
+
+    with stop_flag_on_signals(StopRequest()) as stop:
+        await listen_loop(chunks, **_idle_loop_kwargs(is_speaking=is_speaking, stop=stop))
+
+    assert chunks.served == 4  # chunk 3 raised it; chunk 4's stop check ended the loop
+
+
+async def test_listen_loop_cancels_an_in_flight_command_when_stopped() -> None:
+    # AgentToolSet.call turns this CancelledError into a motion cancel, so the
+    # robot stops moving instead of finishing the motion first.
+    class SlowAgent:
+        def __init__(self) -> None:
+            self.cancelled = False
+            self.finished = False
+
+        async def run(self, text: str) -> str:
+            try:
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+            self.finished = True
+            return "進みます。"
+
+    agent = SlowAgent()
+    recorder = Recorder()
+
+    await listen_loop(
+        EndlessSubscription(),
+        **_commanding_loop_kwargs(agent=agent, say=recorder.say, stop=_stop_on_call(3)),
+    )
+
+    assert agent.cancelled is True
+    assert agent.finished is False
+    assert recorder.said == []
+
+
+async def test_listen_loop_does_not_start_a_command_when_stopped_during_stt() -> None:
+    agent = FakeAgent()
+    recorder = Recorder()
+
+    await listen_loop(
+        EndlessSubscription(),
+        **_commanding_loop_kwargs(agent=agent, say=recorder.say, stop=_stop_on_call(2)),
+    )
+
+    assert agent.calls == []
+    assert recorder.said == []
+
+
+async def test_listen_loop_does_not_speak_a_reply_when_stopped_after_the_command() -> None:
+    agent = FakeAgent(reply="進みます。")
+    recorder = Recorder()
+
+    await listen_loop(
+        EndlessSubscription(),
+        **_commanding_loop_kwargs(agent=agent, say=recorder.say, stop=_stop_on_call(3)),
+    )
+
+    assert agent.calls == ["前に進んで"]  # the command itself completed
+    assert recorder.said == []
+
+
+async def test_listen_loop_cancellation_reaches_the_in_flight_command() -> None:
+    # The tool layer only stops the robot when its own coroutine is cancelled,
+    # so cancelling the loop as a task must not orphan `agent.run`.
+    class SlowAgent:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.cancelled = False
+
+        async def run(self, text: str) -> str:
+            self.started.set()
+            try:
+                await asyncio.sleep(5)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+            return "進みます。"
+
+    agent = SlowAgent()
+    loop_task = asyncio.ensure_future(listen_loop(EndlessSubscription(), **_commanding_loop_kwargs(agent=agent)))
+    await agent.started.wait()
+
+    loop_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await loop_task
+
+    assert agent.cancelled is True
+
+
 # --- configure_output, the entry point's output setup ---
 
 #: Ceiling for every wait around the probe process, so a stdout that stays
@@ -500,3 +676,133 @@ def test_every_console_script_configures_output() -> None:
         assert "configure_output" in entry_point.__code__.co_names, (
             f"console script {script!r} ({target}) does not call configure_output()"
         )
+
+
+# --- main(): every stop signal ends at the park ---
+
+
+class _FakeStream:
+    def __init__(self, chunks: EndlessSubscription) -> None:
+        self._chunks = chunks
+
+    def __enter__(self) -> EndlessSubscription:
+        return self._chunks
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+class _FakeMic:
+    def __init__(self) -> None:
+        self.chunks = EndlessSubscription()
+
+    def stream(self) -> _FakeStream:
+        return _FakeStream(self.chunks)
+
+
+class _FakeRobot:
+    def __init__(self) -> None:
+        self.connected = False
+
+    def connect(self) -> None:
+        self.connected = True
+
+
+def _patch_runtime(
+    monkeypatch: pytest.MonkeyPatch, *, is_speaking: Callable[[], bool] = _never_speaking
+) -> tuple[_FakeRobot, _FakeMic, list[bool]]:
+    """Wire main() to fakes around the real listen loop, and record what the park was asked to do."""
+    robot = _FakeRobot()
+    mic = _FakeMic()
+    parked: list[bool] = []
+    runtime = SimpleNamespace(robot=robot, mic=mic, **_idle_loop_kwargs(is_speaking=is_speaking))
+    monkeypatch.setattr(main_module, "build_runtime", lambda settings: runtime)
+    monkeypatch.setattr(main_module, "park", lambda robot, *, legs=True: parked.append(legs))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("GEMINI_API_KEY", "sk-test")
+    return robot, mic, parked
+
+
+def _signal_on_call(n: int, *signums: signal.Signals) -> Callable[[], bool]:
+    """An ``is_speaking`` that raises *signums* in order from its *n*-th call on, one per call."""
+    calls = 0
+    pending = list(signums)
+
+    def is_speaking() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls >= n and pending:
+            signal.raise_signal(pending.pop(0))
+        return False
+
+    return is_speaking
+
+
+@pytest.mark.parametrize("signum", STOP_SIGNALS, ids=lambda s: s.name)
+def test_main_parks_the_robot_when_a_signal_stops_the_listen_loop(
+    monkeypatch: pytest.MonkeyPatch, signum: signal.Signals
+) -> None:
+    """The ssh-drop case: SIGHUP (and SIGTERM, SIGINT) mid-loop must reach the torque-off, legs first."""
+    robot, mic, parked = _patch_runtime(monkeypatch, is_speaking=_signal_on_call(3, signum))
+
+    result = CliRunner().invoke(main_module.app, [], catch_exceptions=False)
+
+    assert robot.connected
+    assert mic.chunks.served == 4  # the loop ended on its stop check, not on the cap
+    assert parked == [True]
+    assert "parking the robot" in result.output
+
+
+@pytest.mark.parametrize("signum", STOP_SIGNALS, ids=lambda s: s.name)
+def test_main_parks_the_robot_when_a_second_signal_interrupts_the_loop(
+    monkeypatch: pytest.MonkeyPatch, signum: signal.Signals
+) -> None:
+    """A second signal is the operator saying the graceful path is too slow -- release torque, skip the leg return."""
+
+    async def _wedged_loop(*args: object, stop: Callable[[], bool], **kwargs: object) -> None:
+        # A loop that never reaches its stop check, like one blocked on a mic
+        # that stopped delivering.
+        signal.raise_signal(signum)
+        assert stop()
+        signal.raise_signal(signum)
+        pytest.fail("the second signal did not interrupt the loop")
+
+    _robot, _mic, parked = _patch_runtime(monkeypatch)
+    monkeypatch.setattr(main_module, "listen_loop", _wedged_loop)
+
+    CliRunner().invoke(main_module.app, [], catch_exceptions=False)
+
+    assert parked == [False]
+
+
+@pytest.mark.parametrize("signum", STOP_SIGNALS, ids=lambda s: s.name)
+def test_main_parks_the_robot_when_a_signal_lands_during_connect(
+    monkeypatch: pytest.MonkeyPatch, signum: signal.Signals
+) -> None:
+    """Torque is on from connect(), before the loop's own stop check exists.
+
+    Without a handler there, SIGTERM/SIGHUP take the default disposition, which
+    terminates the interpreter without unwinding -- nothing parks.
+    """
+    robot, _mic, parked = _patch_runtime(monkeypatch)
+
+    def _signalled_connect() -> None:
+        robot.connected = True
+        signal.raise_signal(signum)
+
+    monkeypatch.setattr(robot, "connect", _signalled_connect)
+
+    CliRunner().invoke(main_module.app, [], catch_exceptions=False)
+
+    assert parked == [False], "a signal during connect did not reach the park"
+
+
+def test_main_hands_the_signal_dispositions_back_after_the_park(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A leaked SIG_IGN would make the process unstoppable by SIGTERM/SIGHUP for the rest of its life."""
+    _patch_runtime(monkeypatch, is_speaking=_signal_on_call(1, signal.SIGTERM))
+    before = {signum: signal.getsignal(signum) for signum in STOP_SIGNALS}
+
+    CliRunner().invoke(main_module.app, [], catch_exceptions=False)
+
+    assert {signum: signal.getsignal(signum) for signum in STOP_SIGNALS} == before
+    assert all(before[signum] is not signal.SIG_IGN for signum in TERMINATING_SIGNALS)

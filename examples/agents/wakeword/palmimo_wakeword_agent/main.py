@@ -12,13 +12,22 @@ and its CLI.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from typing import Protocol
 
 import typer
 
 from palmimo_sdk import PALMIMO_NAMES
+from palmimo_sdk.shutdown import (
+    TERMINATING_SIGNALS,
+    StopRequest,
+    interrupt_on_signals,
+    park,
+    signals_ignored,
+    stop_flag_on_signals,
+)
 
 from .output import configure_output
 from .settings import WakewordAgentSettings
@@ -51,6 +60,79 @@ class AudioSubscriptionLike[ChunkT](Protocol):
     def get(self, timeout: float | None = None) -> ChunkT | None: ...
 
 
+#: How often an in-flight ``agent.run`` re-checks the stop flag (see
+#: :func:`_run_until_stopped`). Short enough that a Ctrl-C during a motion feels
+#: immediate, long enough not to spin the event loop for nothing.
+_STOP_POLL_S = 0.05
+
+
+def _run_forever() -> bool:
+    """Default :func:`listen_loop` stop predicate: never asks the loop to stop."""
+    return False
+
+
+class _StoppedError(Exception):
+    """Internal: *stop* fired while an utterance was still being handled.
+
+    Caught by :func:`listen_loop` ahead of its ``except Exception``, so it ends
+    the loop instead of being reported as a transient STT/LLM error.
+    """
+
+
+async def _run_until_stopped[T](coro: Coroutine[object, object, T], stop: Callable[[], bool]) -> T:
+    """Await *coro*, cancelling it as soon as *stop* turns true.
+
+    The stop flag is set from a signal handler (see
+    :func:`~palmimo_sdk.shutdown.stop_flag_on_signals`), which cannot safely
+    touch the event loop, so it is polled from inside the loop here instead.
+
+    Cancelling rather than waiting matters on hardware:
+    :meth:`~palmimo_sdk.agent.AgentToolSet.call` catches
+    :class:`asyncio.CancelledError` to cancel the motion and then waits for the
+    motion worker to settle. Without that, a stop during a walk would let the
+    motion run to completion before the loop noticed.
+
+    Raises:
+        _StoppedError: If *stop* fired first. The cancellation has already been
+            awaited to completion by then, so the robot is settled.
+    """
+    task = asyncio.ensure_future(coro)
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=_STOP_POLL_S)
+            if done:
+                return task.result()
+            if stop():
+                await _cancel_and_settle(task)
+                raise _StoppedError
+    except asyncio.CancelledError:
+        # `AgentToolSet.call` only stops the robot when its own coroutine is
+        # cancelled, so a cancellation of ours is passed down, not orphaned.
+        await _cancel_and_settle(task)
+        raise
+
+
+async def _cancel_and_settle[T](task: asyncio.Task[T]) -> None:
+    """Cancel *task* and wait for it to actually finish.
+
+    Its outcome is suppressed -- we are already shutting down, and neither the
+    cancellation nor an error the command failed with may replace the reason we
+    are leaving. ``KeyboardInterrupt`` is not suppressed: a second signal during
+    this wait is the operator saying the graceful path is too slow, and
+    :func:`~palmimo_sdk.shutdown.stop_flag_on_signals` has handed the
+    disposition back for exactly that.
+    """
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+
+
+def _say_best_effort(line: str) -> None:
+    """Print *line*, skipping it when stdout is gone (a dropped ssh session raises ``OSError``)."""
+    with contextlib.suppress(OSError, ValueError):
+        print(line, flush=True)
+
+
 async def listen_loop[ChunkT](
     chunks: AudioSubscriptionLike[ChunkT],
     *,
@@ -60,8 +142,9 @@ async def listen_loop[ChunkT](
     agent: _AgentLike,
     say: Callable[[str], None],
     is_speaking: Callable[[], bool],
+    stop: Callable[[], bool] = _run_forever,
 ) -> None:
-    """Consume mic *chunks* forever, executing one-shot "<wake word>, <command>" utterances.
+    """Consume mic *chunks* until *stop*, executing one-shot "<wake word>, <command>" utterances.
 
     ``async`` because ``CommandAgent.run`` (and the ``AgentToolSet.call`` it
     drives) is a coroutine; every other dependency here
@@ -70,8 +153,23 @@ async def listen_loop[ChunkT](
     ``agent.run`` is awaited. Any :class:`Exception` raised by *stt* or
     ``agent.run`` (a transient Whisper/OpenAI hiccup, say) is caught and
     printed so a single bad request can't kill the always-on session.
+
+    *stop* is polled (see :func:`~palmimo_sdk.shutdown.stop_flag_on_signals`);
+    returning ``True`` ends the loop normally, so the caller's park runs. It is
+    checked once per chunk, after ``stt`` returns (so a stop that arrived during
+    that round trip does not start a motion), and before speaking a reply nobody
+    is waiting for. ``agent.run`` is already in flight by then, so it is
+    cancelled rather than polled, via :func:`_run_until_stopped`.
+
+    While waiting for the *next* chunk the loop blocks in
+    ``Subscription.__next__``, so a stop is only seen while audio is flowing. A
+    mic that has stopped delivering entirely leaves the wait blocked; the second
+    signal, which :func:`~palmimo_sdk.shutdown.stop_flag_on_signals` hands back
+    to the disposition underneath, is the way out there.
     """
     for chunk in chunks:
+        if stop():
+            break
         if is_speaking():  # never transcribe our own TTS
             segmenter.reset()
             continue
@@ -84,9 +182,15 @@ async def listen_loop[ChunkT](
             match = detector.match(text)
             if match is None or not match.command:
                 continue  # no wake word, or the wake word alone
-            reply = await agent.run(match.command)
+            if stop():
+                break  # a stop landed during stt -- do not start a motion now
+            reply = await _run_until_stopped(agent.run(match.command), stop)
             print(f"[reply] {reply}")
+            if stop():
+                break
             say(reply)
+        except _StoppedError:
+            break  # the in-flight command was cancelled and the robot has settled
         except Exception as exc:  # a transient STT/LLM error must not kill the session
             print(f"[error] {exc!r}")
         finally:
@@ -192,21 +296,43 @@ def main(
 
     rt = build_runtime(settings)
     print(f'Palmimo wake-word agent started. Say "{PALMIMO_NAMES[0]} <command>" in one breath.')
-    try:
-        with rt.robot, rt.mic.stream() as chunks:
-            asyncio.run(
-                listen_loop(
-                    chunks,
-                    segmenter=rt.segmenter,
-                    detector=rt.detector,
-                    stt=rt.stt,
-                    agent=rt.agent,
-                    say=rt.say,
-                    is_speaking=rt.is_speaking,
-                )
-            )
-    except KeyboardInterrupt:
-        print("\nExiting.")
+    stop_request = StopRequest()
+    stopped_cleanly = False
+    # Three layers, outermost first. The ignore keeps SIGTERM/SIGHUP off
+    # `SIG_DFL` -- which terminates without unwinding -- from the moment the
+    # inner layers hand their dispositions back until the park has finished.
+    # `interrupt_on_signals` covers `connect()` and the mic open: torque is on
+    # for both, and neither reaches the loop's stop check, so a termination
+    # signal there unwinds instead. `stop_flag_on_signals` covers the listen
+    # loop, which blocks synchronously and polls the flag.
+    with signals_ignored(*TERMINATING_SIGNALS):
+        try:
+            with interrupt_on_signals(stop_request):
+                rt.robot.connect()
+                with rt.mic.stream() as chunks, stop_flag_on_signals(stop_request) as stop:
+                    asyncio.run(
+                        listen_loop(
+                            chunks,
+                            segmenter=rt.segmenter,
+                            detector=rt.detector,
+                            stt=rt.stt,
+                            agent=rt.agent,
+                            say=rt.say,
+                            is_speaking=rt.is_speaking,
+                            stop=stop,
+                        )
+                    )
+                    if stop():
+                        _say_best_effort("\n[stop] signal received; parking the robot...")
+            stopped_cleanly = True
+        except KeyboardInterrupt:  # a signal outside the listen loop, or a second one inside it
+            _say_best_effort("\nExiting.")
+        finally:
+            # `legs` mirrors `Palmimo.__exit__`: a loop that ended on its stop
+            # check returns the legs to neutral first; an interrupt releases
+            # torque without streaming more motion at a robot that may already
+            # be in a bad state.
+            park(rt.robot, legs=stopped_cleanly)
 
 
 def run() -> None:
