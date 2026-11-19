@@ -1444,6 +1444,7 @@ def test_dance_roll_extremes_stay_continuous_and_in_safe_range(roll_deg: float) 
     """
     engine = MotionEngine()
     vars(engine)["_knob_dance_roll_deg"] = roll_deg  # past the validated knob, to exercise the kinematics
+    assert engine.dance_roll_deg == roll_deg
     engine.motion = Motion.DANCE
     previous = dict(engine.step())
     for _ in range(400):
