@@ -479,11 +479,23 @@ class DynamixelDriver(ServoDriver):
         return None
 
     def read_position_p_gain(self) -> dict[str, int]:
-        """Read the live Position_P_Gain back from every servo (for verification)."""
+        """Read the live Position_P_Gain back from every servo (for verification).
+
+        A servo that does not answer is left out of the result; every servo
+        that does answer is in it.
+        """
         if self._bus is None:
             raise RuntimeError("Driver is not connected. Call connect() before read_position_p_gain().")
-        raw = self._bus.sync_read("Position_P_Gain", normalize=False)
-        return {n: int(v) for n, v in (raw or {}).items() if v is not None}
+        gains: dict[str, int] = {}
+        remaining: Sequence[str] | None = None
+        while True:
+            sweep = self._bus.sync_read_span(["Position_P_Gain"], motors=remaining)
+            gains.update({n: int(v["Position_P_Gain"]) for n, v in sweep.values.items()})
+            # A sweep stops at the first silent servo; ask the ones behind it again.
+            # No silent servo means the sweep finished or never went out.
+            if not sweep.unreached or not sweep.silent:
+                return gains
+            remaining = sweep.unreached
 
     @property
     def iir_enabled(self) -> bool:
