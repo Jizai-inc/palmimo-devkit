@@ -20,7 +20,7 @@ from palmimo_teleop.robot_loop import (
     RobotLoop,
     SettleFailedError,
 )
-from palmimo_teleop.session import PilotSession
+from palmimo_teleop.session import DEADMAN_TIMEOUT_S, GESTURE_PLAY_SECONDS, PilotSession
 
 
 class FakeEngine:
@@ -166,8 +166,6 @@ def test_tick_always_applies_look_and_step() -> None:
 def test_tick_stops_once_the_deadman_expires() -> None:
     # Without this, a robot loop reading a session whose pilot connection
     # died would keep issuing the last motion forever instead of stopping.
-    from palmimo_teleop.session import DEADMAN_TIMEOUT_S
-
     robot = FakeRobot()
     clock = FakeClock()
     session = PilotSession(now=clock)
@@ -178,6 +176,42 @@ def test_tick_stops_once_the_deadman_expires() -> None:
     _loop(robot, session).tick()
     assert ("stop", None) in robot.calls
     assert not any(call[0] == "set_motion" for call in robot.calls)
+
+
+def _playing_wave(neck_pitch: float = 0.0) -> tuple[FakeRobot, FakeClock, PilotSession, RobotLoop]:
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = PilotSession(now=clock)
+    session.acquire_pilot("a")
+    session.update_pilot_input("a", move=None, rotate=0, neck_pitch=neck_pitch, neck_yaw=0.0)
+    session.play("a", "wave")
+    loop = _loop(robot, session)
+    loop.tick()
+    return robot, clock, session, loop
+
+
+def test_tick_plays_a_gesture_through_a_deadman_gap_without_restarting_it() -> None:
+    # Without this, a link gap longer than the deadman stops the robot mid-wave
+    # and the resumed frames replay it from the start.
+    robot, clock, session, loop = _playing_wave()
+    clock.now += DEADMAN_TIMEOUT_S + 0.1
+    loop.tick()
+    session.update_pilot_input("a", move=None, rotate=0, neck_pitch=0.0, neck_yaw=0.0)
+    loop.tick()
+    assert [call for call in robot.calls if call[0] == "set_motion"] == [("set_motion", "wave")]
+    assert ("stop", None) not in robot.calls
+
+
+def test_tick_stops_when_the_link_stays_dead_past_the_gesture_window() -> None:
+    # Without this, a gesture kept alive through the deadman could run forever
+    # on a dead link instead of ending at its play window.
+    robot, clock, _, loop = _playing_wave()
+    clock.now += DEADMAN_TIMEOUT_S + 0.1
+    loop.tick()
+    assert ("stop", None) not in robot.calls
+    clock.now += GESTURE_PLAY_SECONDS["wave"]
+    loop.tick()
+    assert ("stop", None) in robot.calls
 
 
 def test_tick_does_not_reissue_set_motion_while_the_resolved_motion_is_unchanged() -> None:

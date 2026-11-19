@@ -134,15 +134,15 @@ def test_effective_input_with_no_pilot_is_inert() -> None:
     assert session.effective_input() == PilotInput()
 
 
-def test_effective_input_stops_gesture_after_the_deadman_window() -> None:
-    # Without this, a pilot whose connection silently died could leave dance
-    # looping on the robot forever instead of stopping within 400ms.
+def test_effective_input_keeps_a_playing_gesture_through_the_deadman_window() -> None:
+    # Without this, a link gap longer than the deadman (a phone on Wi-Fi) cuts
+    # a wave short, and it replays from the start once frames resume.
     session, clock = _session()
     session.acquire_pilot("a")
-    _heartbeat(session)
+    session.update_pilot_input("a", move=None, rotate=0, neck_pitch=0.8, neck_yaw=0.5)
     session.play("a", "dance")
     clock.advance(DEADMAN_TIMEOUT_S + 0.01)
-    assert session.effective_input().gesture is None
+    assert session.effective_input() == PilotInput(gesture="dance")
 
 
 def test_play_by_the_pilot_is_reflected_in_effective_input() -> None:
