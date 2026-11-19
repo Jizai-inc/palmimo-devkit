@@ -224,17 +224,14 @@ class PilotSession:
     def effective_input(self) -> PilotInput:
         """Resolve what `robot_loop.RobotLoop` should apply right now.
 
-        Move/rotate/gesture/neck/speed all collapse to inert (translation,
-        rotation, gesture off, neck centered, default speed) when there is
-        no pilot or the deadman has expired. The neck used to hold its last-known target
-        through a deadman expiry on the theory that holding gaze is never
-        unsafe; a physical robot proved otherwise -- holding the neck at an
-        extreme (e.g. fully up) is a known cause of neck-servo overheating,
-        so an unattended neck must recenter, not freeze wherever the pilot
-        last left it. A playing gesture (`play()`) is reported only while
-        its window (`GESTURE_PLAY_SECONDS`) has not yet elapsed -- there is
-        no separate "expire" step; this simply stops reporting it once
-        `_now()` passes `gesture_until`.
+        Move/rotate/neck/speed collapse to inert (translation, rotation, neck
+        centered, default speed) when there is no pilot or the deadman has
+        expired. The neck must recenter rather than hold its last target: a
+        neck held at an extreme (e.g. fully up) is a known cause of neck-servo
+        overheating. A playing gesture (`play()`) is reported only while its
+        window (`GESTURE_PLAY_SECONDS`) has not elapsed, and it rides through
+        a deadman expiry so a short link gap does not cut it off and replay
+        it; the window alone then bounds it.
 
         Reads `self._state` into a local exactly once: a second read could
         observe a fresher `_PilotState` the writer replaced in between,
@@ -243,11 +240,13 @@ class PilotSession:
         """
         state = self._state
         current = state.input
-        if not self.pilot_present or self._deadman_expired(state):
+        if not self.pilot_present:
             return PilotInput()
         gesture = None
         if state.gesture_until is not None and self._now() < state.gesture_until:
             gesture = state.playing_gesture
+        if self._deadman_expired(state):
+            return PilotInput(gesture=gesture)
         return PilotInput(
             move=current.move,
             rotate=current.rotate,

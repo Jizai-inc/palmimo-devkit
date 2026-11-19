@@ -165,13 +165,16 @@ The pilot page sends one control frame every 100ms
 (`{"move", "rotate", "neck", "seq"}`) on a fixed interval rather than only on
 input change -- this doubles as the deadman heartbeat. If the server goes
 **400ms** without a frame from the pilot (`session.DEADMAN_TIMEOUT_S`), the
-robot loop stops translation, rotation, any playing gesture, **and the
-neck** on its own -- the neck returns to center (`pitch=0, yaw=0`), it does
+robot loop stops translation, rotation, **and the neck** on its own --
+the neck returns to center (`pitch=0, yaw=0`), it does
 not hold whatever target the pilot last aimed it at, since an unattended
 neck held at an extreme (e.g. fully up) is a known cause of neck-servo
 overheating on real hardware. The pilot slot itself stays held as long as
 the WebSocket is still open, so a brief network hiccup does not lose the
-slot, only the motion. A pilot
+slot, only the motion. A wave or dance that is already playing is the
+exception: it keeps playing through the gap, up to its 5-second window, so a
+flaky connection (a phone on Wi-Fi) does not cut it off and replay it from the
+start when frames resume. A pilot
 WebSocket disconnecting outright stops the robot and releases the slot -- the
 deadman timer and that disconnect handling are the only stop paths: there is
 no separate emergency-stop control, since a closed WebSocket already gets the

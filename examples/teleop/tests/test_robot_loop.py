@@ -180,6 +180,57 @@ def test_tick_stops_once_the_deadman_expires() -> None:
     assert not any(call[0] == "set_motion" for call in robot.calls)
 
 
+def _playing_wave(neck_pitch: float = 0.0) -> tuple[FakeRobot, FakeClock, PilotSession, RobotLoop]:
+    robot = FakeRobot()
+    clock = FakeClock()
+    session = PilotSession(now=clock)
+    session.acquire_pilot("a")
+    session.update_pilot_input("a", move=None, rotate=0, neck_pitch=neck_pitch, neck_yaw=0.0)
+    session.play("a", "wave")
+    loop = _loop(robot, session)
+    loop.tick()
+    return robot, clock, session, loop
+
+
+def test_tick_plays_a_gesture_through_a_deadman_gap_without_restarting_it() -> None:
+    # Without this, a link gap longer than the deadman stops the robot mid-wave
+    # and the resumed frames replay it from the start.
+    from palmimo_teleop.session import DEADMAN_TIMEOUT_S
+
+    robot, clock, session, loop = _playing_wave()
+    clock.now += DEADMAN_TIMEOUT_S + 0.1
+    loop.tick()
+    session.update_pilot_input("a", move=None, rotate=0, neck_pitch=0.0, neck_yaw=0.0)
+    loop.tick()
+    assert [call for call in robot.calls if call[0] == "set_motion"] == [("set_motion", "wave")]
+    assert ("stop", None) not in robot.calls
+
+
+def test_tick_recenters_the_neck_during_a_deadman_gap_while_a_gesture_plays() -> None:
+    # Without this, keeping the gesture alive could also keep the neck frozen
+    # at the pilot's last aim, which overheats the neck servo.
+    from palmimo_teleop.session import DEADMAN_TIMEOUT_S
+
+    robot, clock, _, loop = _playing_wave(neck_pitch=0.8)
+    assert ("look", (0.8 * NECK_PITCH_SIGN, 0.0)) in robot.calls
+    robot.calls.clear()
+    clock.now += DEADMAN_TIMEOUT_S + 0.1
+    loop.tick()
+    assert ("look", (0.0, 0.0)) in robot.calls
+    assert not any(call[0] == "look" and call[1] != (0.0, 0.0) for call in robot.calls)
+
+
+def test_tick_stops_when_the_link_stays_dead_past_the_gesture_window() -> None:
+    # Without this, a gesture kept alive through the deadman could run forever
+    # on a dead link instead of ending at its play window.
+    from palmimo_teleop.session import GESTURE_PLAY_SECONDS
+
+    robot, clock, _, loop = _playing_wave()
+    clock.now += GESTURE_PLAY_SECONDS["wave"] + 0.01
+    loop.tick()
+    assert ("stop", None) in robot.calls
+
+
 def test_tick_does_not_reissue_set_motion_while_the_resolved_motion_is_unchanged() -> None:
     # Without this, `set_motion("dance")`/`"wave"` would be called every
     # tick, and `MotionEngine` resets a WAVE/DANCE motion's phase on every
