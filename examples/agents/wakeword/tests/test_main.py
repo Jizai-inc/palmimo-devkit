@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from palmimo_sdk.shutdown import STOP_SIGNALS, TERMINATING_SIGNALS, StopRequest, stop_flag_on_signals
+from palmimo_sdk.shutdown import STOP_SIGNALS, TERMINATING_SIGNALS
 from palmimo_wakeword_agent import main as main_module
 from palmimo_wakeword_agent.main import _discard_stale_audio, _missing_api_key_error, listen_loop
 from palmimo_wakeword_agent.output import configure_output
@@ -474,24 +474,6 @@ async def test_listen_loop_exits_when_stop_predicate_turns_true() -> None:
     assert chunks.served == 4  # the 4th chunk hit the stop check and never reached the segmenter
 
 
-@pytest.mark.parametrize("signum", STOP_SIGNALS, ids=lambda s: s.name)
-async def test_listen_loop_exits_on_signal_when_wrapped_in_the_shared_stop_flag(signum: signal.Signals) -> None:
-    chunks = EndlessSubscription()
-    delivered = 0
-
-    def is_speaking() -> bool:
-        nonlocal delivered
-        delivered += 1
-        if delivered == 3:
-            signal.raise_signal(signum)
-        return False
-
-    with stop_flag_on_signals(StopRequest()) as stop:
-        await listen_loop(chunks, **_idle_loop_kwargs(is_speaking=is_speaking, stop=stop))
-
-    assert chunks.served == 4  # chunk 3 raised it; chunk 4's stop check ended the loop
-
-
 async def test_listen_loop_cancels_an_in_flight_command_when_stopped() -> None:
     # AgentToolSet.call turns this CancelledError into a motion cancel, so the
     # robot stops moving instead of finishing the motion first.
@@ -522,7 +504,9 @@ async def test_listen_loop_cancels_an_in_flight_command_when_stopped() -> None:
     assert recorder.said == []
 
 
-async def test_listen_loop_does_not_start_a_command_when_stopped_during_stt() -> None:
+async def test_listen_loop_does_not_start_a_command_when_stopped_during_stt(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     agent = FakeAgent()
     recorder = Recorder()
 
@@ -533,9 +517,12 @@ async def test_listen_loop_does_not_start_a_command_when_stopped_during_stt() ->
 
     assert agent.calls == []
     assert recorder.said == []
+    assert capsys.readouterr().out == ""  # after an ssh drop, stdout is a dead tty that raises
 
 
-async def test_listen_loop_does_not_speak_a_reply_when_stopped_after_the_command() -> None:
+async def test_listen_loop_does_not_speak_a_reply_when_stopped_after_the_command(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     agent = FakeAgent(reply="進みます。")
     recorder = Recorder()
 
@@ -546,6 +533,7 @@ async def test_listen_loop_does_not_speak_a_reply_when_stopped_after_the_command
 
     assert agent.calls == ["前に進んで"]  # the command itself completed
     assert recorder.said == []
+    assert "[reply]" not in capsys.readouterr().out
 
 
 async def test_listen_loop_cancellation_reaches_the_in_flight_command() -> None:
@@ -707,6 +695,34 @@ class _FakeRobot:
     def connect(self) -> None:
         self.connected = True
 
+    # Palmimo's own context-manager protocol, so a main() that leans on it
+    # instead of calling park() fails an assertion rather than a TypeError.
+    def __enter__(self) -> _FakeRobot:
+        self.connect()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+def _fail_on_unhandled_signal(signum: int, frame: object) -> None:
+    pytest.fail(f"{signal.Signals(signum).name} reached the process-level handler: main() installed none")
+
+
+@pytest.fixture(autouse=True)
+def _stand_in_for_sig_dfl() -> Iterator[None]:
+    """Stand in for SIGTERM/SIGHUP's default disposition while main() runs.
+
+    SIG_DFL would terminate the whole pytest run without a report, so a
+    regression that leaves no handler installed fails the one test instead.
+    """
+    previous = {signum: signal.signal(signum, _fail_on_unhandled_signal) for signum in TERMINATING_SIGNALS}
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
 
 def _patch_runtime(
     monkeypatch: pytest.MonkeyPatch, *, is_speaking: Callable[[], bool] = _never_speaking
@@ -798,11 +814,10 @@ def test_main_parks_the_robot_when_a_signal_lands_during_connect(
 
 
 def test_main_hands_the_signal_dispositions_back_after_the_park(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A leaked SIG_IGN would make the process unstoppable by SIGTERM/SIGHUP for the rest of its life."""
+    """A leaked SIG_IGN would leave SIGTERM/SIGHUP unable to stop the process for the rest of its life."""
     _patch_runtime(monkeypatch, is_speaking=_signal_on_call(1, signal.SIGTERM))
     before = {signum: signal.getsignal(signum) for signum in STOP_SIGNALS}
 
     CliRunner().invoke(main_module.app, [], catch_exceptions=False)
 
     assert {signum: signal.getsignal(signum) for signum in STOP_SIGNALS} == before
-    assert all(before[signum] is not signal.SIG_IGN for signum in TERMINATING_SIGNALS)

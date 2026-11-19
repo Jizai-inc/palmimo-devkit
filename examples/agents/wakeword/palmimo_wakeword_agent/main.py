@@ -157,8 +157,9 @@ async def listen_loop[ChunkT](
     *stop* is polled (see :func:`~palmimo_sdk.shutdown.stop_flag_on_signals`);
     returning ``True`` ends the loop normally, so the caller's park runs. It is
     checked once per chunk, after ``stt`` returns (so a stop that arrived during
-    that round trip does not start a motion), and before speaking a reply nobody
-    is waiting for. ``agent.run`` is already in flight by then, so it is
+    that round trip does not start a motion), and before printing or speaking a
+    reply nobody is waiting for. Nothing is printed once it is true, since after
+    an ssh drop stdout is gone. ``agent.run`` is already in flight by then, so it is
     cancelled rather than polled, via :func:`_run_until_stopped`.
 
     While waiting for the *next* chunk the loop blocks in
@@ -178,16 +179,16 @@ async def listen_loop[ChunkT](
             continue
         try:
             text = stt(utterance)
+            if stop():
+                break  # a stop landed during stt -- do not start a motion now
             print(f"[heard] {text}")
             match = detector.match(text)
             if match is None or not match.command:
                 continue  # no wake word, or the wake word alone
-            if stop():
-                break  # a stop landed during stt -- do not start a motion now
             reply = await _run_until_stopped(agent.run(match.command), stop)
-            print(f"[reply] {reply}")
             if stop():
                 break
+            print(f"[reply] {reply}")
             say(reply)
         except _StoppedError:
             break  # the in-flight command was cancelled and the robot has settled
@@ -196,7 +197,9 @@ async def listen_loop[ChunkT](
         finally:
             # Even an ignored utterance spent a network round-trip not reading
             # the mic; always restart from live audio, never a stale backlog.
-            _discard_stale_audio(chunks, segmenter)
+            # Skipped on a stop: the loop is ending, and its warning would print.
+            if not stop():
+                _discard_stale_audio(chunks, segmenter)
 
 
 def _discard_stale_audio[ChunkT](chunks: AudioSubscriptionLike[ChunkT], segmenter: _SegmenterLike[ChunkT]) -> None:
