@@ -315,8 +315,8 @@ Set Position_P_Gain on all motors (`None` restores per-motor defaults captured a
 connect). No-op compute-only or on drivers without gain control.
 
 ### `robot.read_p_gain() -> dict[str, int] | None`
-Read live Position_P_Gain back from the servos, one entry per motor. `None` if no
-driver is attached.
+Read live Position_P_Gain back from the servos, one entry per motor that answered;
+a servo that does not answer is left out. `None` if no driver is attached.
 
 ### `robot.set_iir(enabled: bool, alpha: float | None = None) -> None`
 Enable/disable the command-side IIR low-pass on the goal stream. *alpha* in (0, 1]:
