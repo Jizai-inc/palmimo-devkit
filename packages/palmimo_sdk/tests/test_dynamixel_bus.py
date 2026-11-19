@@ -362,6 +362,9 @@ class SilentSerial:
     def reset_input_buffer(self) -> None:
         pass
 
+    def flush(self) -> None:
+        pass
+
 
 @pytest.mark.parametrize("num_retry", [_TORQUE_OFF_RETRY, 5], ids=["guard_cut", "disconnect"])
 def test_disable_torque_on_a_silent_servo_stalls_for_tens_of_milliseconds_per_try(num_retry: int) -> None:
