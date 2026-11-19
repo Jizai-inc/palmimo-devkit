@@ -58,7 +58,7 @@ entry points in this repository have **not** all moved onto it yet:
 | Entry point | Today |
 |---|---|
 | A user script (`with Palmimo() as robot:`) | Covered. `Palmimo.disconnect()` enforces the rule on its own — see below — without the caller touching this module. |
-| MCP server (`palmimo_sdk/mcp/__main__.py`) | Parks on a terminating signal, using its own equivalent of `interrupt_on_signals` plus `_signals.signals_ignored`. It moves onto this module in a follow-up; the behaviour does not change when it does. |
+| MCP server (`palmimo_sdk/mcp/__main__.py`) | Parks on SIGINT, SIGTERM or SIGHUP, using its own equivalent of `interrupt_on_signals` plus `_signals.signals_ignored`, then ends the process by that same signal. SIGINT takes that route too: the stdio transport reads stdin on a worker thread that cannot be cancelled, so while the client holds stdin open `asyncio.Runner`'s cancellation never completes, and the same thread keeps an ordinary interpreter exit waiting. It moves onto this module in a follow-up; the behaviour does not change when it does. |
 | companion pipeline CLI / TUI | Covered. The CLI stops through `loop_stop_on_signals` and ignores every later stop signal, SIGINT included, for the whole of `Runtime.aclose()` — so a second Ctrl+C does not shorten that teardown. The TUI turns SIGTERM/SIGHUP into `KeyboardInterrupt` through `interrupt_on_signals`, nested in `signals_ignored(*TERMINATING_SIGNALS)` so they stay ignored from there into the park; on that path it parks the robot without running the rest of `aclose()`. |
 | companion realtime, wake-word agent | Not yet. Each carries its own stop handling, and the gaps are known — the wake-word agent's is described above. They move onto this module one at a time. |
 
