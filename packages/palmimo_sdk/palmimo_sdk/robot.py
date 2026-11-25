@@ -1736,7 +1736,7 @@ class Palmimo:
 
     @wave_count.setter
     def wave_count(self, value: int) -> None:
-        self._engine.wave_count = int(value)
+        self._engine.wave_count = value
 
     @property
     def wave_period(self) -> float:
@@ -1779,7 +1779,7 @@ class Palmimo:
 
     @nod_count.setter
     def nod_count(self, value: int) -> None:
-        self._engine.nod_count = int(value)
+        self._engine.nod_count = value
 
     @property
     def nod_decay(self) -> float:
@@ -1827,7 +1827,7 @@ class Palmimo:
 
     @shake_swings.setter
     def shake_swings(self, value: int) -> None:
-        self._engine.shake_swings = int(value)
+        self._engine.shake_swings = value
 
     @property
     def shake_decay(self) -> float:
@@ -1912,7 +1912,7 @@ class Palmimo:
         self._engine.wave_both_decay = float(value)
 
     # Clap knobs — hand open/close in separation mm, tempo, count, lift. The
-    # closest approach (clap_gap) is floored inside the engine so the feet can
+    # closest approach (clap_gap) is validated inside the engine so the feet can
     # never be commanded into each other; the beg stance itself is shaped by
     # the shared wave_both_* posture knobs.
     @property
@@ -1921,7 +1921,7 @@ class Palmimo:
 
     @clap_count.setter
     def clap_count(self, value: int) -> None:
-        self._engine.clap_count = int(value)
+        self._engine.clap_count = value
 
     @property
     def clap_period(self) -> float:
@@ -2013,9 +2013,7 @@ class Palmimo:
 
     @dance_dwell.setter
     def dance_dwell(self, value: float) -> None:
-        # Clamp to [0, 0.99): _apply_dance divides by (1 - dwell); 1.0+ would be a
-        # ZeroDivisionError / flipped sway. The engine clamps too (defence in depth).
-        self._engine.dance_dwell = max(0.0, min(0.99, float(value)))
+        self._engine.dance_dwell = float(value)
 
     @property
     def dance_level_head(self) -> bool:

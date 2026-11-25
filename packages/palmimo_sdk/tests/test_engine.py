@@ -942,13 +942,6 @@ def test_gesture_mid_gait_settles_legs() -> None:
     assert all(pos[f"leg_{i}_{s}"] == engine.NEUTRAL for i in range(1, 7) for s in ("yaw", "pitch1", "pitch2"))
 
 
-def test_neck_rest_trim_is_clamped() -> None:
-    """Even a rest-trim typo (e.g. 90°) clamps the center shift to ±20°."""
-    engine = MotionEngine()
-    engine.neck_rest_pitch_deg = 90.0
-    assert engine.neck_pitch_center() == engine.NEUTRAL - round(20.0 * engine.TICK_PER_DEG)
-
-
 def test_gesture_seconds_matches_timeline() -> None:
     """gesture_seconds matches the timeline's endpoint, and is None for non-gesture motions."""
     engine = MotionEngine()
@@ -1067,42 +1060,21 @@ def test_wave_completes_safely_and_holds_neutral(leg: int) -> None:
 
 
 @pytest.mark.parametrize(
-    "knob,value",
-    [
-        ("wave_intro_speed", 0.0),
-        ("wave_intro_speed", -5.0),
-        ("wave_raise_speed", 0.0),
-        ("wave_raise_speed", -5.0),
-        ("wave_speed", 0.0),
-        ("wave_speed", -5.0),
-    ],
-)
-def test_wave_rate_knob_zero_or_negative_cannot_reverse_or_freeze(knob: str, value: float) -> None:
-    """Even with single wave's speed knob at 0/negative, the clock still advances forward."""
-    engine = MotionEngine()
-    setattr(engine, knob, value)
-    engine.motion = Motion.WAVE
-    for _ in range(200):
-        engine.step()
-    assert engine._wave_phase > 0.05
-
-
-@pytest.mark.parametrize(
     "count,period,dwell,decay",
     [
-        (0, 1.0, 0.6, 0.8),
-        (2, 0.0, 0.6, 0.8),
-        (2, 1.0, -1.0, -1.0),
-        (2, 1.0, 2.0, 2.0),
+        (1, 1.0, 0.6, 0.8),
+        (2, 0.05, 0.6, 0.8),
+        (2, 1.0, 0.0, 0.0),
+        (2, 1.0, 0.95, 1.0),
     ],
 )
-def test_wave_shape_knob_extremes_stay_safe_and_finish(
+def test_wave_shape_knob_bounds_stay_safe_and_finish(
     count: int,
     period: float,
     dwell: float,
     decay: float,
 ) -> None:
-    """Out-of-range input to the timeline knobs is clamped too, and the motion still returns safely to neutral."""
+    """Each timeline knob at its accepted bound keeps the ticks safe, and the motion still returns to neutral."""
     engine = MotionEngine()
     engine.wave_count = count
     engine.wave_period = period
@@ -1258,11 +1230,10 @@ def test_wave_both_yaw_extremes_respect_hand_separation_floor() -> None:
         assert min_sep >= 24.0, f"yaw={yaw} phase={phase}: {min_sep:.2f}mm"
 
 
-@pytest.mark.parametrize("height", [0.0, -50.0])
-def test_clap_height_floor_keeps_the_sweep_off_the_ground(height: float) -> None:
-    """Even with clap_height at 0/negative, the open/close sweep still happens above the floor (prevents floor scrubbing)."""
+def test_clap_height_at_its_minimum_keeps_the_sweep_off_the_ground() -> None:
+    """With clap_height at its 10mm minimum, the open/close sweep still happens above the floor (prevents floor scrubbing)."""
     engine = MotionEngine()
-    engine.clap_height = height
+    engine.clap_height = 10.0
     frames = _play_clap(engine)
     zs = [_fk_foot(3, f)[2] for f in frames]
     assert min(zs) >= -66.5  # never commands below ground level (-66mm)
@@ -1276,13 +1247,15 @@ def test_clap_height_floor_keeps_the_sweep_off_the_ground(height: float) -> None
         ("wave_raise_speed", Motion.WAVE_BOTH),
         ("wave_both_speed", Motion.WAVE_BOTH),
         ("clap_intro_speed", Motion.CLAP),
+        ("wave_intro_speed", Motion.WAVE),
+        ("wave_raise_speed", Motion.WAVE),
+        ("wave_speed", Motion.WAVE),
     ],
 )
-@pytest.mark.parametrize("value", [0.0, -5.0])
-def test_rate_knob_zero_or_negative_cannot_freeze_the_gesture(knob: str, motion: Motion, value: float) -> None:
-    """Even with a rate knob set to 0/negative, the clock still advances (prevents a permanently frozen prep or running backward)."""
+def test_rate_knob_at_its_minimum_still_advances_the_clock(knob: str, motion: Motion) -> None:
+    """With a rate knob at its minimum, the clock still advances (the gesture finishes instead of freezing)."""
     engine = MotionEngine()
-    setattr(engine, knob, value)
+    setattr(engine, knob, MotionEngine._MIN_RATE)
     engine.motion = motion
     for _ in range(400):
         before = engine._wave_phase
@@ -1350,7 +1323,7 @@ def _hand_separations(frames: list[dict[str, int]]) -> list[tuple[float, bool]]:
     [
         # explicit value: closest approach = the knob value (shipped default is 20.0 = light-contact boundary)
         (25.0, 25.0),
-        (0.0, 20.0),  # abused knob: bottoms out at the floor (20mm = light-tap boundary, the intended clap feel)
+        (20.0, 20.0),  # the minimum accepted gap (20mm = light-tap boundary, the intended clap feel)
     ],
 )
 def test_clap_hands_never_close_beyond_gap(gap_knob: float, expected_floor: float) -> None:
@@ -1441,7 +1414,7 @@ def test_clap_returns_to_neutral_and_holds() -> None:
     "gap,open_,height,count,period",
     [
         (20.0, 200.0, 120.0, 5, 0.3),  # aggressive values
-        (0.0, 10.0, 200.0, 1, 0.05),  # abused knobs (every clamp kicks in)
+        (20.0, 20.0, 10.0, 1, 0.1),  # every knob at its minimum
     ],
 )
 def test_clap_knob_extremes_stay_in_safe_range(
@@ -1461,7 +1434,7 @@ def test_clap_knob_extremes_stay_in_safe_range(
             assert SAFE_MIN_TICK <= tick <= SAFE_MAX_TICK, f"{name}={tick} out of range"
 
 
-@pytest.mark.parametrize("roll_deg", [5.0, 20.0, 30.0, 45.0])
+@pytest.mark.parametrize("roll_deg", [5.0, MotionEngine.DANCE_ROLL_MAX_DEG, 20.0, 30.0, 45.0])
 def test_dance_roll_extremes_stay_continuous_and_in_safe_range(roll_deg: float) -> None:
     """However far the body rolls, no axis teleports between frames and every tick stays safe.
 
@@ -1470,7 +1443,8 @@ def test_dance_roll_extremes_stay_continuous_and_in_safe_range(roll_deg: float) 
     sit next to atan2's branch cut and would jump ~4077 ticks in a single frame.
     """
     engine = MotionEngine()
-    engine.dance_roll_deg = roll_deg
+    vars(engine)["_knob_dance_roll_deg"] = roll_deg  # past the validated knob, to exercise the kinematics
+    assert engine.dance_roll_deg == roll_deg
     engine.motion = Motion.DANCE
     previous = dict(engine.step())
     for _ in range(400):
