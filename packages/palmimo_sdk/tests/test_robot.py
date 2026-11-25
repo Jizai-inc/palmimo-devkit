@@ -2418,6 +2418,24 @@ def test_disconnect_then_reconnect_re_judges_the_neck_immediately() -> None:
     assert robot.neck_thermal_state is NeckThermalState.NORMAL
 
 
+def test_disconnect_drops_the_neck_judgement_when_the_driver_disconnect_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    driver = _NeckTelemetryDriver(_neck_temps(NECK_HOT_C))
+    robot = Palmimo(driver=cast(ServoDriver, driver), auto_wake=False)
+    robot.connect()
+    robot.step()
+    assert robot.neck_thermal_state is NeckThermalState.HOT
+
+    def _port_gone() -> None:
+        raise OSError("port gone")
+
+    monkeypatch.setattr(driver, "disconnect", _port_gone)
+    with pytest.raises(OSError):
+        robot.disconnect(park=False)
+
+    assert robot.neck_thermal_state is NeckThermalState.UNMONITORED
+    assert robot.neck_lock_active is False
+
+
 # ================================================================
 # LEG OVERLOAD GUARD WIRING (overload.py's OverloadGuard, wired into step())
 # ================================================================
@@ -2529,6 +2547,23 @@ def test_wave_arm_trip_drops_to_idle_and_softens_only_the_arm() -> None:
     assert (trip.channel, trip.motion) == ("arm", "wave")
     assert robot.drain_overload_trips() == []
     assert robot.last_overload_trip == trip
+
+
+def test_wave_exit_restores_the_gain_when_the_iir_release_fails() -> None:
+    class _IirReleaseFails(_OverloadDriver):
+        def set_iir(self, enabled: bool, alpha: float | None = None, motors: list[str] | None = None) -> None:
+            if not enabled:
+                raise RuntimeError("iir release failed")
+
+    driver = _IirReleaseFails()
+    robot, _ = _overload_robot(driver)
+    robot.wave()
+    robot.step()
+    robot.stop()
+
+    robot.step()
+
+    assert driver.gain_calls[-1] == (None, None)
 
 
 def test_trip_frame_is_computed_but_not_written() -> None:
