@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>Palmimo Controller</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body data-role="viewer">
+    <div id="viewer-page">
+      <header id="viewer-header">
+        <div id="viewer-heading">
+          <h1 id="viewer-title">Palmimo Controller</h1>
+          <p id="viewer-caption">見学中です。操作するには「操作を開始」を押してください。</p>
+        </div>
+        <a id="pilot-link" href="/pilot">
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
+          操作を開始
+        </a>
+      </header>
+
+      <div id="viewer-columns">
+        <section id="viewer-main" aria-label="カメラと状態">
+          <div id="video-frame" role="img" aria-label="Palmimoの頭部カメラ映像">
+            <img id="video-layer" alt="" />
+            <span id="video-tag">頭部カメラ</span>
+          </div>
+          <div id="status-bar" role="status"></div>
+
+          <div id="audio-panel">
+            <section id="speaker-config" class="audio-card" aria-labelledby="speaker-config-title">
+              <div class="audio-head">
+                <h2 id="speaker-config-title" title="AIの声の音量です。話している途中でもすぐに反映されます。">スピーカー</h2>
+                <output id="speaker-volume-value" class="level-value" for="speaker-volume">100%</output>
+              </div>
+              <input id="speaker-volume" class="level-slider" type="range" min="0" max="100" step="1" value="100" aria-labelledby="speaker-config-title" aria-describedby="speaker-config-note" disabled />
+              <p id="speaker-config-note" class="audio-note">AIの声の音量</p>
+            </section>
+
+            <section id="mic-config" class="audio-card" aria-labelledby="mic-config-title">
+              <div class="audio-head">
+                <h2 id="mic-config-title" title="声を拾う感度です。100%より上げると小さな声も届きますが、大きすぎると音が割れます。">マイク</h2>
+                <output id="mic-gain-value" class="level-value" for="mic-gain">100%</output>
+              </div>
+              <input id="mic-gain" class="level-slider" type="range" min="0" max="200" step="5" value="100" aria-labelledby="mic-config-title" aria-describedby="mic-meter-hint" disabled />
+              <div id="mic-meter" class="level-meter is-idle" role="meter" aria-label="マイク入力レベル" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div id="mic-meter-fill" class="level-meter-fill"></div>
+              </div>
+              <p id="mic-meter-hint" class="audio-note">AIモード中に入力レベルを表示</p>
+            </section>
+          </div>
+          <p id="audio-load-error" class="settings-error" hidden>音量の設定を読み込めませんでした。ページを再読み込みしてください。</p>
+          <p id="audio-status" class="settings-status" role="status"></p>
+        </section>
+
+        <aside id="viewer-settings">
+          <section id="voice-picker" class="settings-card" aria-labelledby="voice-picker-title">
+            <div class="settings-head">
+              <h2 id="voice-picker-title">AIの声</h2>
+              <p class="settings-note">▶で試聴できます（ロボットのスピーカーから流れます）。選んだ声は次にAIモードを開始したときに反映されます。</p>
+            </div>
+            <p id="voice-load-error" class="settings-error" hidden>声の設定を読み込めませんでした。ページを再読み込みしてください。</p>
+            <div id="voice-list" role="radiogroup" aria-labelledby="voice-picker-title"></div>
+            <p id="voice-status" class="settings-status" role="status"></p>
+          </section>
+
+          <section id="prompt-editor" class="settings-card" aria-labelledby="prompt-editor-title">
+            <div class="settings-head">
+              <h2 id="prompt-editor-title">AIモード</h2>
+              <p class="settings-note">操作画面のAIボタンで、ここで選んだモードが始まります。</p>
+            </div>
+            <p id="mode-load-error" class="settings-error" hidden>モードの設定を読み込めませんでした。ページを再読み込みしてください。</p>
+            <div id="mode-select" role="radiogroup" aria-labelledby="prompt-editor-title"></div>
+            <p id="mode-status" class="settings-status" role="status"></p>
+            <p class="settings-note">各モードのプロンプト（キャラクターと話し方）は下で編集できます。変更は次にそのモードを開始したときに反映されます。</p>
+            <p id="prompt-load-error" class="settings-error" hidden>プロンプトを読み込めませんでした。ページを再読み込みしてください。</p>
+            <div id="prompt-list"></div>
+          </section>
+        </aside>
+      </div>
+    </div>
+    <div id="disconnected-banner" hidden>
+      <p>接続が切れました。</p>
+      <button id="reload-button" type="button">再読み込み</button>
+    </div>
+    <script src="/static/app.js"></script>
+    <script src="/static/prompts.js"></script>
+    <script src="/static/voice.js"></script>
+    <script src="/static/mode.js"></script>
+    <script src="/static/audio.js"></script>
+  </body>
+</html>

@@ -1,0 +1,1230 @@
+/* Shared styling for viewer.html and pilot.html. No CDN/vendor fonts -- this
+   ships on an offline machine, so only system fonts are used. */
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: #111;
+  color: #eee;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* `html` is clamped to the visual viewport on both pages (`dvh`, with the
+   `vh` rule first as a fallback for browsers that don't know `dvh`, tracks
+   it as mobile browser chrome shows/hides, instead of leaving a `vh`-sized
+   gap that admits a scrollbar) with its own scrolling disabled and no
+   overscroll bounce/pull-to-refresh -- a phone browser must never let a
+   swipe on the control surface scroll or bounce the page. The viewer page's
+   #viewer-page content still scrolls normally; it does so on `body`, one
+   level in, which keeps its own overflow-y auto (see below). */
+html {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Pilot is an immersive, full-screen touch-control surface: the video fills
+   the viewport and drag/hold gestures must never trigger page scroll or
+   text selection. */
+body[data-role="pilot"] {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Viewer is a normal, scrollable document: `body` (not `html`, which is
+   clamped above) owns the scroll so a tall status bar or framed video never
+   forces the whole page to jump instead of scrolling in place. */
+body[data-role="viewer"] {
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Pilot layout ("Game Boy"): `#pilot-stage` holds the video and the
+   controls, always showing the video's full 4:3 frame uncropped
+   (`object-fit: contain`) rather than covering the viewport and clipping it.
+
+   Landscape (default): both children are absolutely positioned over the
+   full stage, matching the pre-existing overlay look -- the video letterboxed
+   center, controls pinned to the bottom corners. The corners never sit over
+   the video's center, so this holds even on a narrow phone whose letterbox
+   bars are too thin to hold the controls without some overlap.
+
+   Portrait: `#pilot-stage` switches to a column flow, so the video (top,
+   held to a 4:3 box by its width) and `#controls` (the rest of the height)
+   are normal-flow siblings that can never overlap. */
+body[data-role="pilot"] #pilot-stage {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+body[data-role="pilot"] #pilot-video-frame {
+  position: absolute;
+  inset: 0;
+}
+
+body[data-role="pilot"] #video-layer {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  /* The feed is a backdrop, never a target: no long-press image callout
+     (iOS), and touches fall through to the controls layered above it. */
+  -webkit-touch-callout: none;
+  pointer-events: none;
+}
+
+@media (orientation: portrait) {
+  body[data-role="pilot"] #pilot-stage {
+    flex-direction: column;
+  }
+
+  body[data-role="pilot"] #pilot-video-frame {
+    position: relative;
+    inset: auto;
+    flex: 0 0 auto;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+  }
+
+  /* Portrait stacks the controls instead of squeezing them side by side:
+     the gestures as one full-width row of wide buttons, and the d-pad and
+     the neck stick below them, where the thumbs rest. Every size derives
+     from --u, which is held to the controls' width (the d-pad must fit half
+     of it) and to their height (6.5u in all), so a short phone shrinks the
+     controls rather than overflowing. Sizing by height needs the controls
+     to be a size container, hence the zero flex basis. */
+  body[data-role="pilot"] #controls {
+    --u: min(12.5vw, 15cqh, 80px);
+    position: relative;
+    inset: auto;
+    flex: 1 1 0;
+    min-height: 0;
+    container-type: size;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "gestures gestures"
+      "dpad stick";
+    align-items: center;
+    justify-items: center;
+    row-gap: calc(var(--u) * 0.3);
+    column-gap: calc(var(--u) * 0.2);
+    padding: calc(var(--u) * 0.3) 4vw max(calc(var(--u) * 0.3), env(safe-area-inset-bottom));
+  }
+
+  body[data-role="pilot"] #neck-controls {
+    display: contents;
+  }
+
+  body[data-role="pilot"] #gesture-buttons {
+    grid-area: gestures;
+    width: 100%;
+    grid-template-columns: repeat(4, 1fr);
+    gap: calc(var(--u) * 0.2);
+  }
+
+  body[data-role="pilot"] #gesture-buttons button {
+    width: auto;
+    height: var(--u);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+  }
+
+  body[data-role="pilot"] #gesture-buttons .icon {
+    width: calc(var(--u) * 0.5);
+    height: calc(var(--u) * 0.5);
+  }
+
+  body[data-role="pilot"] #dpad-column {
+    grid-area: dpad;
+    margin-left: 0;
+  }
+
+  body[data-role="pilot"] #dpad {
+    grid-template-columns: repeat(3, var(--u));
+    grid-template-rows: repeat(3, var(--u));
+    gap: calc(var(--u) * 0.2);
+  }
+
+  body[data-role="pilot"] #dpad button {
+    font-size: calc(var(--u) * 0.4);
+  }
+
+  /* No outward nudge here: in a half-width column it only pushed the
+     rotate buttons off the d-pad, so they read as stray buttons. */
+  body[data-role="pilot"] #rotate-left,
+  body[data-role="pilot"] #rotate-right {
+    transform: none;
+  }
+
+  body[data-role="pilot"] #neck-stick {
+    grid-area: stick;
+    width: min(40vw, calc(var(--u) * 3.4));
+    height: min(40vw, calc(var(--u) * 3.4));
+  }
+}
+
+#status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: #1b1d23;
+  border: 1px solid #2a2d35;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.status-label {
+  color: #9aa0ac;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status-ok {
+  color: #8fe0a8;
+  background: rgba(76, 175, 110, 0.14);
+  border-color: rgba(76, 175, 110, 0.4);
+}
+
+.status-bad {
+  color: #ffb3ad;
+  background: rgba(255, 107, 97, 0.14);
+  border-color: rgba(255, 107, 97, 0.45);
+}
+
+.status-ok .status-label,
+.status-bad .status-label {
+  color: inherit;
+  opacity: 0.8;
+}
+
+#disconnected-banner {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1em;
+  background: rgba(0, 0, 0, 0.85);
+  font-size: 1.2em;
+  text-align: center;
+  padding: 1em;
+}
+
+#disconnected-banner[hidden] {
+  display: none;
+}
+
+#reload-button {
+  padding: 0.6em 1.4em;
+  font-size: 1em;
+  font-weight: bold;
+  border: none;
+  border-radius: 10px;
+  background: #2e7d32;
+  color: #fff;
+}
+
+/* Styled like the mode bar beside it, so the two read as one top bar over
+   the video rather than a pale block covering it. */
+#home-link {
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  z-index: 20;
+  padding: 10px 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 999px;
+  text-decoration: none;
+  /* Leaving /pilot closes this connection's WebSocket, which the server's
+     existing disconnect handling already turns into a stop + slot release
+     (see server.py's `finally` block) -- no separate "go home" logic needed. */
+}
+
+#view-only-banner {
+  position: fixed;
+  top: 2.6em;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  text-align: center;
+  padding: 0.4em;
+  font-size: 0.9em;
+  background: rgba(192, 57, 43, 0.85);
+  color: #fff;
+}
+
+#view-only-banner[hidden] {
+  display: none;
+}
+
+/* Positioned below #home-link (which stays clickable at z-index 20) so a
+   compute-only/fault banner never covers it. */
+#servo-banner,
+#servo-fault-banner {
+  position: fixed;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  text-align: center;
+  padding: 0.5em 0.75em;
+  font-size: 0.9em;
+  font-weight: bold;
+  color: #fff;
+}
+
+#servo-banner {
+  top: 3.9em;
+  background: rgba(192, 57, 43, 0.92);
+}
+
+#servo-fault-banner {
+  top: 6.9em;
+  background: rgba(230, 126, 34, 0.92);
+}
+
+#servo-banner[hidden],
+#servo-fault-banner[hidden] {
+  display: none;
+}
+
+/* Landscape layout: the d-pad and the neck controls pinned to the bottom
+   corners, both sized in vmin (the viewport's shorter side). Portrait
+   replaces this with its own grid -- see the portrait block above. */
+#controls {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 2vmin;
+  pointer-events: none;
+}
+
+#controls[hidden] {
+  display: none;
+}
+
+#controls > * {
+  pointer-events: auto;
+  flex: 0 0 auto;
+}
+
+/* Left margin keeps rotate-left's diagonal outward nudge (see
+   `#rotate-left` below) from being clipped by the viewport's left edge. */
+#dpad-column {
+  margin-left: 4vmin;
+}
+
+#dpad {
+  display: grid;
+  grid-template-columns: repeat(3, clamp(48px, 14vmin, 84px));
+  grid-template-rows: repeat(3, clamp(48px, 14vmin, 84px));
+  gap: clamp(4px, 1.5vmin, 10px);
+}
+
+#dpad button {
+  font-size: clamp(18px, 5vmin, 28px);
+  border-radius: 12px;
+  border: none;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+#dpad button:active,
+#dpad button.pressed {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+/* Rotate sits in the grid's top corners for layout purposes, but is nudged
+   diagonally outward and made circular so it doesn't read as a 5th/6th
+   d-pad direction. */
+.rotate-button {
+  border-radius: 50%;
+  background: rgba(120, 170, 255, 0.28);
+}
+
+.rotate-button:active,
+.rotate-button.pressed {
+  background: rgba(120, 170, 255, 0.6);
+}
+
+#rotate-left {
+  transform: translate(-35%, -35%);
+}
+
+#rotate-right {
+  transform: translate(35%, -35%);
+}
+
+#fullscreen-button {
+  position: fixed;
+  bottom: 1em;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 0.5em 0.9em;
+  font-size: 1.2em;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+#fullscreen-button[hidden] {
+  display: none;
+}
+
+/* ---- Viewer page (home): a normal scrollable document, not an overlay. ----
+   Camera and status on the left, AI settings on the right; on a narrow
+   screen the two columns stack. */
+
+body[data-role="viewer"] {
+  background: #121317;
+  color: #ecedf0;
+  font-size: 15px;
+}
+
+#viewer-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 28px max(16px, env(safe-area-inset-right, 0px)) 48px max(16px, env(safe-area-inset-left, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+#viewer-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+#viewer-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#viewer-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+#viewer-caption {
+  margin: 0;
+  font-size: 13px;
+  color: #9aa0ac;
+}
+
+#pilot-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 22px;
+  border-radius: 10px;
+  background: #4f7cff;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+#pilot-link:hover {
+  background: #6a90ff;
+}
+
+#pilot-link[aria-disabled="true"] {
+  background: rgba(255, 255, 255, 0.12);
+  color: #8a8f99;
+  pointer-events: none;
+}
+
+#viewer-columns {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+#viewer-main {
+  flex: 999 1 520px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#viewer-settings {
+  flex: 1 1 360px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+#video-frame {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid #2a2d35;
+  border-radius: 14px;
+  background: #000;
+  overflow: hidden;
+}
+
+#video-frame #video-layer {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* The feed is a backdrop, never a target: no long-press image callout
+     (iOS) on the framed video either. */
+  -webkit-touch-callout: none;
+  pointer-events: none;
+}
+
+#video-tag {
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #c9cdd6;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid #2a2d35;
+  border-radius: 14px;
+  background: #1a1c22;
+}
+
+.settings-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-head h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.settings-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #9aa0ac;
+}
+
+.settings-error {
+  margin: 0;
+  font-size: 13px;
+  color: #ff8a80;
+}
+
+#voice-load-error[hidden],
+#mode-load-error[hidden],
+#prompt-load-error[hidden],
+#audio-load-error[hidden],
+#mic-meter-hint[hidden] {
+  display: none;
+}
+
+/* Speaker and mic sit under the camera as two compact cards, side by side
+   until the column is too narrow for both. */
+#audio-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.audio-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid #2a2d35;
+  border-radius: 12px;
+  background: #1a1c22;
+}
+
+.audio-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.audio-head h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #9aa0ac;
+  cursor: help;
+}
+
+.audio-note {
+  margin: 0;
+  font-size: 11px;
+  color: #6f7582;
+}
+
+.level-slider {
+  width: 100%;
+  height: 32px;
+  margin: 0;
+  accent-color: #4f7cff;
+  cursor: pointer;
+}
+
+.level-slider:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.level-slider:focus-visible {
+  outline: 2px solid #8fb0ff;
+  outline-offset: 2px;
+}
+
+.level-value {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: #d5d8df;
+}
+
+.level-meter {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #15171c;
+}
+
+.level-meter-fill {
+  width: 0;
+  height: 100%;
+  border-radius: 4px;
+  background: #8fe0a8;
+  transition: width 90ms linear;
+}
+
+.level-meter.is-idle .level-meter-fill {
+  background: #474c58;
+}
+
+.settings-status,
+.prompt-status {
+  margin: 0;
+  min-height: 1.4em;
+  font-size: 12px;
+  color: #8fe0a8;
+}
+
+.settings-status.is-error,
+.prompt-status.is-error {
+  color: #ff8a80;
+}
+
+#voice-list,
+#mode-select {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#mode-select {
+  margin-bottom: 4px;
+}
+
+/* A voice row also holds its play button, so it needs more width than a
+   mode; the grid drops to one column rather than squeezing the label. */
+#voice-list {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.choice-default {
+  white-space: nowrap;
+}
+
+#voice-list.is-busy,
+#mode-select.is-busy {
+  opacity: 0.6;
+}
+
+/* One voice is one pill: the choice fills it, and the round play button
+   sits inside its right end. Two sibling buttons, since a button cannot
+   hold another button; the row draws the shared outline. */
+.voice-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 44px;
+  padding-right: 4px;
+  border: 1px solid #2a2d35;
+  border-radius: 999px;
+  background: #15171c;
+}
+
+.voice-row:hover {
+  border-color: #474c58;
+}
+
+.voice-row.is-selected {
+  border: 1.5px solid #4f7cff;
+  background: rgba(79, 124, 255, 0.18);
+}
+
+.voice-row .choice-option,
+.voice-row .choice-option.is-selected {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  padding-left: 16px;
+  border: none;
+  border-radius: 999px 0 0 999px;
+  background: transparent;
+}
+
+.voice-play {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #d5d8df;
+  cursor: pointer;
+}
+
+.voice-play:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.voice-play svg {
+  width: 14px;
+  height: 14px;
+  margin-left: 2px;
+  fill: currentColor;
+}
+
+.voice-play.is-playing {
+  background: rgba(143, 224, 168, 0.2);
+  color: #8fe0a8;
+}
+
+.voice-play:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+
+.choice-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #2a2d35;
+  border-radius: 10px;
+  background: #15171c;
+  color: #d5d8df;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.choice-option:hover {
+  border-color: #474c58;
+}
+
+.choice-option.is-selected {
+  border: 1.5px solid #4f7cff;
+  background: rgba(79, 124, 255, 0.18);
+  color: #fff;
+  font-weight: 700;
+}
+
+.choice-default {
+  font-size: 11px;
+  font-weight: 400;
+  color: #9aa0ac;
+}
+
+.choice-check {
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#prompt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prompt-card {
+  border: 1px solid #2a2d35;
+  border-radius: 10px;
+  background: #15171c;
+  overflow: hidden;
+}
+
+.prompt-card summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 14px;
+  cursor: pointer;
+  font-weight: 700;
+  list-style: none;
+}
+
+.prompt-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.prompt-badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #262931;
+  color: #b4b9c3;
+}
+
+.prompt-badge.is-custom {
+  background: rgba(79, 124, 255, 0.22);
+  color: #c9d7ff;
+}
+
+.prompt-hint {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 400;
+  color: #9aa0ac;
+}
+
+.prompt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+
+.prompt-text {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #343843;
+  border-radius: 8px;
+  background: #0f1013;
+  color: #ecedf0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.prompt-actions button {
+  min-height: 40px;
+  padding: 0 18px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.prompt-save {
+  border: none;
+  background: #4f7cff;
+  color: #fff;
+}
+
+.prompt-reset {
+  border: 1px solid #343843;
+  background: transparent;
+  color: #ecedf0;
+}
+
+.prompt-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.choice-option:focus-visible,
+.voice-play:focus-visible,
+.prompt-card summary:focus-visible,
+.prompt-actions button:focus-visible,
+#pilot-link:focus-visible {
+  outline: 2px solid #8fb0ff;
+  outline-offset: 2px;
+}
+
+#neck-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(4px, 1.2vmin, 8px);
+}
+
+/* Four per row: seven gestures, leaving the last cell of the second row empty
+   so each gesture keeps its place. */
+#gesture-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: clamp(4px, 1.2vmin, 8px);
+}
+
+#gesture-buttons button {
+  width: clamp(40px, 10vmin, 80px);
+  height: clamp(40px, 10vmin, 80px);
+  padding: 10%;
+  border-radius: 10px;
+  border: none;
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+#gesture-buttons .icon {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+#gesture-buttons button:active,
+#gesture-buttons button.pressed {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+#neck-stick {
+  position: relative;
+  width: clamp(120px, 30vmin, 220px);
+  height: clamp(120px, 30vmin, 220px);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* Sized as a share of #neck-stick, not its own vmin value, so the handle
+   scales with the stick at every viewport instead of the two drifting out
+   of proportion at the clamp() bounds above. */
+#neck-stick-handle {
+  position: absolute;
+  width: 33%;
+  height: 33%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.6);
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* ---- AI mode bar ---- */
+
+#mode-bar {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  z-index: 20;
+  font-size: 15px;
+}
+
+#mode-bar button,
+#ai-confirm button {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#teleop-button {
+  background: #fff;
+  color: #111;
+}
+
+/* The mode badge is always shown, so the pilot can tell at a glance who is
+   driving: a neutral manual label in teleop, the blue accent once AI has it. */
+#mode-indicator {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* The AI button sits in the mode bar while in teleop, named after the mode
+   the homepage picked. It is outlined rather than filled, so it reads as an
+   action and not as AI already being on. Hidden while an AI mode runs, when
+   the teleop button takes its place. */
+#mode-bar #ai-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: #fff;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.85);
+}
+
+#mode-bar #ai-button:active {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+#mode-bar #ai-button .icon {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+#mode-bar #ai-button[hidden] {
+  display: none;
+}
+
+body.ai-active #mode-indicator {
+  background: rgba(79, 124, 255, 0.35);
+  color: #cfe4ff;
+}
+
+/* AI starting: a spinner and a pulsing bar, so the wait reads as work. */
+#mode-spinner {
+  display: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(159, 208, 255, 0.35);
+  border-top-color: #9fd0ff;
+  border-radius: 50%;
+  animation: mode-spin 0.8s linear infinite;
+}
+
+body.ai-starting #mode-spinner {
+  display: inline-block;
+}
+
+body.ai-starting #mode-bar {
+  animation: mode-pulse 1.4s ease-in-out infinite;
+}
+
+body.ai-starting #mode-indicator::after {
+  content: "";
+  display: inline-block;
+  width: 1.2em;
+  text-align: left;
+  animation: mode-dots 1.2s steps(4, end) infinite;
+}
+
+/* AI live: one brief glow when the session comes up. */
+body.ai-live-flash #mode-bar {
+  animation: mode-live 1.2s ease-out 1;
+}
+
+@keyframes mode-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes mode-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(159, 208, 255, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(159, 208, 255, 0.45);
+  }
+}
+
+@keyframes mode-dots {
+  0% {
+    content: "";
+  }
+  25% {
+    content: ".";
+  }
+  50% {
+    content: "..";
+  }
+  75% {
+    content: "...";
+  }
+}
+
+@keyframes mode-live {
+  0% {
+    box-shadow: 0 0 0 6px rgba(120, 230, 160, 0.8);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(120, 230, 160, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.ai-starting #mode-bar,
+  body.ai-live-flash #mode-bar,
+  #mode-spinner {
+    animation: none;
+  }
+
+  body.ai-starting #mode-indicator::after {
+    animation: none;
+    content: "...";
+  }
+}
+
+/* Manual controls do nothing in an AI mode, so they read as off. */
+body.ai-active #controls {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* Asks before AI takes the controls away from the pilot. In-page rather
+   than window.confirm, which can drop a phone out of fullscreen. */
+#ai-confirm {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  text-align: center;
+  z-index: 30;
+}
+
+#ai-confirm[hidden],
+#notice-banner[hidden] {
+  display: none;
+}
+
+#ai-confirm-title {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.ai-confirm-note {
+  margin: 0;
+  font-size: 14px;
+  color: #c9cdd6;
+}
+
+.ai-confirm-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+#ai-confirm-start {
+  min-width: 120px;
+  padding: 14px 20px;
+  background: #4f7cff;
+  color: #fff;
+  font-size: 18px;
+}
+
+#ai-confirm-cancel {
+  min-width: 120px;
+  padding: 14px 20px;
+  background: transparent;
+  color: #fff;
+  box-shadow: inset 0 0 0 1px #fff;
+  font-size: 18px;
+}
+
+#notice-banner {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #b3261e;
+  color: #fff;
+  z-index: 20;
+  font-size: 14px;
+}

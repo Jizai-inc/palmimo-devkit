@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "translations": {
+    "ja": {
+      "description": "ブラウザからPalmimoを操作し、ワンタップでAI会話モードに切り替えられます。APIキーがなくても手動操作は使えます。",
+      "env.OPENAI_API_KEY": "AI会話モードに使うOpenAIのAPIキーです。未設定でも手動操作は使えます。",
+      "params.audio_device": "AI会話モードで使うマイクとスピーカーです。開発用ロボット（ReSpeaker 4 Mic Array）はrespeaker、展示用ロボット（プッシュトークのUSBマイクとUSBスピーカー）はbooth-usbを選びます。booth-usbでは話す間マイクのボタンを押し続けてください。"
+    }
+  }
+}
