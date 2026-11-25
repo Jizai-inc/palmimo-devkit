@@ -131,15 +131,15 @@ Log out and back in once so the `dialout` membership takes effect.
 > does not affect it. Pass `--port` explicitly only when something specific requires
 > pinning it.
 
-### System Dependencies for the Microphone and Camera
+### System Dependencies for the Microphone, Camera, and Speaker
 
-The real microphone and camera backends need OS libraries that the Python
-dependency sync does not install. Which ones you need depends on the app:
+The real microphone, camera, and speaker backends need OS libraries that the
+Python dependency sync does not install. Which ones you need depends on the app:
 
-| App and dependency | Records / captures via | OS dependency |
+| App and dependency | Records / captures / plays via | OS dependency |
 |---|---|---|
 | the SDK's `HeadCamera` | `opencv-python` | `v4l-utils` |
-| the SDK's TTS (`palmimo_sdk.io.speaker`) | the `piper` binary | none beyond the voice models |
+| the SDK's TTS (`palmimo_sdk.io.speaker`) | `piper-plus` (the `speech` extra), played through `aplay` | `alsa-utils`, already on Raspberry Pi OS |
 | the SDK's `MicStream` / the wake-word agent example | `sounddevice` | `libportaudio2` |
 
 The camera path is the one every camera-using app shares. `opencv-python` needs a
@@ -161,6 +161,18 @@ without which startup fails with `OSError: PortAudio library not found`:
 
 ```bash
 sudo apt-get install -y libportaudio2
+```
+
+TTS synthesizes in-process and plays each utterance with `aplay`. Without a
+`device_name_hint`, that playback goes to ALSA's `default`, which on a Pi with
+no desktop audio stack can be an HDMI port with no speaker on it (see the note
+on naming the audio device above). A failed playback is logged as a warning
+and recorded in the returned handle's `error`; playback that succeeds on the
+wrong output is silent. Check the output before expecting speech:
+
+```bash
+aplay -l                                # list playback devices and their card ids
+speaker-test -D plughw:CARD=<card id> -t sine -l 1 -c 2   # must be audible, not just exit 0
 ```
 
 Voice-model downloads for TTS are covered in the
