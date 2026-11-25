@@ -118,6 +118,8 @@ terminal Accessibility permission instead.
 - `E`: dance
 - `O` / `L`: neck pitch up / down
 - `N` / `M`: neck yaw left / right
+- `C`: walk the neck back to center while held — releasing a neck key leaves the
+  neck where it is, so an off-center gaze can be held through a recording
 - `R`/`F`/`V`/`B`, `1`-`0`, `T`-`K`: IK calibration / debug poses — these write
   a leg pose directly, bypassing `MotionEngine`'s smoothing (`R/F/V/B` and
   `T/Y/U/I/G/H/J/K` step legs ±200 ticks from neutral in one frame); use them

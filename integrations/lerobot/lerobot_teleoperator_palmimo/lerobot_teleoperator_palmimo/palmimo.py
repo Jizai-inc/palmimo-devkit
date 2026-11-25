@@ -26,6 +26,7 @@ class PalmimoTeleop(Teleoperator):
     - W/S: Forward / Backward    A/D: Strafe Left / Right
     - Q/Z: Rotate Left / Right   E: Dance
     - O/L: Neck pitch up/down    N/M: Neck yaw left/right
+    - C: Neck back to center (a released neck key holds the pose)
     - 1-6/7-0, R/F/V/B, T/Y/U/I/G/H/J/K: IK calibration / debug poses
     - ESC: Quit
 
@@ -337,9 +338,14 @@ class PalmimoTeleop(Teleoperator):
     # ================================================================
 
     def _update_neck_from_keys(self, pressed: set[str]) -> None:
-        """Update neck position from held character keys (see config.teleop_keys)."""
+        """Update neck position from held character keys (see config.teleop_keys).
+
+        A released key leaves the neck where it is, so a recorded gaze can rest
+        off-center; only the held ``neck_center`` key walks it back.
+        """
         nk = self.config.teleop_keys
         center = self._neutral
+        recenter = nk["neck_center"] in pressed
         # Read the split knobs off the owned engine INSTANCE, not the class --
         # a caller who overrides self._engine.neck_pitch2_share/sign (same as
         # any other instance-overridable engine knob) must see this teleop's
@@ -372,14 +378,8 @@ class PalmimoTeleop(Teleoperator):
             self._neck_pitch_total = min(self._neck_pitch_total + self._neck_step, pitch_max_pos)
         elif nk["neck_pitch_down"] in pressed:
             self._neck_pitch_total = max(self._neck_pitch_total - self._neck_step, pitch_min_pos)
-        else:
-            current = self._neck_pitch_total
-            if abs(current - center) < self._neck_step:
-                self._neck_pitch_total = center
-            elif current > center:
-                self._neck_pitch_total -= self._neck_step
-            else:
-                self._neck_pitch_total += self._neck_step
+        elif recenter:
+            self._neck_pitch_total = self._step_toward_center(self._neck_pitch_total)
 
         total_offset = self._neck_pitch_total - center
         # Same split as MotionEngine._apply_neck: pitch1's own basis is always
@@ -407,14 +407,15 @@ class PalmimoTeleop(Teleoperator):
             self._neck_positions["neck_yaw"] = min(self._neck_positions["neck_yaw"] + self._neck_step, yaw_max_pos)
         elif nk["neck_yaw_right"] in pressed:
             self._neck_positions["neck_yaw"] = max(self._neck_positions["neck_yaw"] - self._neck_step, yaw_min_pos)
-        else:
-            current = self._neck_positions["neck_yaw"]
-            if abs(current - center) < self._neck_step:
-                self._neck_positions["neck_yaw"] = center
-            elif current > center:
-                self._neck_positions["neck_yaw"] -= self._neck_step
-            else:
-                self._neck_positions["neck_yaw"] += self._neck_step
+        elif recenter:
+            self._neck_positions["neck_yaw"] = self._step_toward_center(self._neck_positions["neck_yaw"])
+
+    def _step_toward_center(self, position: int) -> int:
+        """Move ``position`` one neck step toward center, landing on it exactly."""
+        center = self._neutral
+        if abs(position - center) <= self._neck_step:
+            return center
+        return position - self._neck_step if position > center else position + self._neck_step
 
     # ================================================================
     # INPUT HANDLING
