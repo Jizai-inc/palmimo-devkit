@@ -767,6 +767,21 @@ def _report_travel(servo_id: int, commanded_peak: int, worst_error: int, observe
     return False
 
 
+def _release_torque(ph: PacketHandler, port: PortHandler, servo_id: int, alert: _AlertLatch) -> bool:
+    """Disable torque and tell the operator whether the servo accepted it.
+
+    Returns:
+        Whether the joint is known to be limp. The operator decides whether to
+        let go of the robot from the line this prints, so a refusal is reported
+        rather than assumed away.
+    """
+    if _write_register(ph, port, servo_id, ADDR_TORQUE_ENABLE, 0, 1, "disable torque", alert):
+        print("Torque disabled.")
+        return True
+    print(f"WARNING: servo {servo_id} did not accept the torque release, so the joint may still be powered.")
+    return False
+
+
 def _release_torque_quietly(ph: PacketHandler, port: PortHandler, servo_id: int, alert: _AlertLatch) -> None:
     """Disable torque without ever raising, for use while another error propagates.
 
@@ -1029,6 +1044,8 @@ def oscillate_servo(servo_id: int, port: str, baudrate: int, duration: float) ->
         if not _write_register(
             packet_handler, port_handler, servo_id, ADDR_TORQUE_ENABLE, 1, 1, "enable torque", alert
         ):
+            # A failed reply does not mean the servo ignored the enable.
+            torque_enabled = not _release_torque(packet_handler, port_handler, servo_id, alert)
             return False
 
         profile_kind = "time-based" if time_based else "velocity-based"
@@ -1105,14 +1122,9 @@ def oscillate_servo(servo_id: int, port: str, baudrate: int, duration: float) ->
         if final is not None:
             print(f"Final position: {_s32(final)} (start: {present})")
 
-        if _write_register(packet_handler, port_handler, servo_id, ADDR_TORQUE_ENABLE, 0, 1, "disable torque", alert):
-            torque_enabled = False
-            print("Torque disabled.")
-        else:
-            # Reported, not assumed: the operator decides whether to let go of
-            # the robot based on this line.
+        torque_enabled = not _release_torque(packet_handler, port_handler, servo_id, alert)
+        if torque_enabled:
             swing_ok = False
-            print(f"WARNING: servo {servo_id} did not accept the torque release, so the joint may still be powered.")
 
         # Judged only on a swing that ran end to end. A run that broke off, or
         # one on a servo that latched mid-swing, has already been explained; a
