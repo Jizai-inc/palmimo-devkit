@@ -11,10 +11,7 @@ import argparse
 import sys
 import time
 
-from lerobot.motors.dynamixel import DynamixelMotorsBus, OperatingMode
-from lerobot.motors.motors_bus import MotorsBus
-
-from lerobot_robot_palmimo.motor_layout import build_palmimo_motors
+from lerobot_robot_palmimo.motor_layout import PalmimoMotorsBus, build_palmimo_motors
 from palmimo_sdk import SUPPORTED_MOTOR_MODELS, PortDetectionError, find_servo_port
 
 
@@ -29,23 +26,7 @@ POSITION_REACHED_TOLERANCE = 60
 ZERO_POSITION = 2048
 
 
-def _filter_bus_motors(bus: MotorsBus, found_ids: set[int]) -> tuple[int, int]:
-    """Shrink bus.motors to only those whose ID is in found_ids.
-
-    Rebuilds the derived id→model/name maps and invalidates the cached ids/models
-    properties so subsequent sync_read / sync_write only touch responding motors.
-    Returns (kept, skipped).
-    """
-    original = len(bus.motors)
-    bus.motors = {name: m for name, m in bus.motors.items() if m.id in found_ids}
-    bus._id_to_model_dict = {m.id: m.model for m in bus.motors.values()}
-    bus._id_to_name_dict = {m.id: name for name, m in bus.motors.items()}
-    for cached in ("ids", "models", "_has_different_ctrl_tables"):
-        bus.__dict__.pop(cached, None)
-    return len(bus.motors), original - len(bus.motors)
-
-
-def reset_initial_pose(bus: MotorsBus, velocity: int = 300, timeout: float = 15.0) -> bool:
+def reset_initial_pose(bus: PalmimoMotorsBus, velocity: int = 300, timeout: float = 15.0) -> bool:
     """Move every configured joint to its zero position.
 
     Args:
@@ -58,8 +39,7 @@ def reset_initial_pose(bus: MotorsBus, velocity: int = 300, timeout: float = 15.
     """
     # Operating mode is EEPROM-backed and must be changed with torque disabled.
     with bus.torque_disabled():
-        for motor in bus.motors:
-            bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
+        bus.set_operating_mode("position")
 
     # Limit velocity so the motors ease into the zero position instead of snapping there.
     bus.sync_write("Profile_Velocity", velocity, normalize=False)
@@ -79,7 +59,6 @@ def reset_initial_pose(bus: MotorsBus, velocity: int = 300, timeout: float = 15.
     time.sleep(0.2)
 
     while time.time() - start_time < timeout:
-        bus.port_handler.clearPort()
         current_positions = bus.sync_read("Present_Position", normalize=False, num_retry=3)
 
         all_reached = all(abs(pos - ZERO_POSITION) < POSITION_REACHED_TOLERANCE for pos in current_positions.values())
@@ -146,7 +125,8 @@ def main() -> None:
     print("=" * 50)
 
     # The shared layout, so this script and the plugin address the same motors.
-    bus = DynamixelMotorsBus(port=port, motors=build_palmimo_motors(args.motor_model), calibration=None)
+    motors = build_palmimo_motors(args.motor_model)
+    bus = PalmimoMotorsBus(port=port, motors=motors, calibration=None)
 
     try:
         if args.skip_missing:
@@ -154,12 +134,15 @@ def main() -> None:
             # so recovery can proceed when only part of the robot is reachable.
             print("Opening port and checking connectivity...")
             bus.connect(handshake=False)
-            found_map = bus.broadcast_ping(num_retry=3) or {}
-            kept, skipped = _filter_bus_motors(bus, set(found_map.keys()))
-            print(f"Detected: {kept} / Skipped: {skipped}")
-            if kept == 0:
+            found_ids = set(bus.broadcast_ping())
+            bus.disconnect(disable_torque=False)
+            responding = {name: m for name, m in motors.items() if m.id in found_ids}
+            print(f"Detected: {len(responding)} / Skipped: {len(motors) - len(responding)}")
+            if not responding:
                 print("NG No operable motors found")
                 sys.exit(1)
+            bus = PalmimoMotorsBus(port=port, motors=responding, calibration=None)
+            bus.connect(handshake=False)
         else:
             print("Connecting to the robot...")
             bus.connect()
@@ -179,7 +162,6 @@ def main() -> None:
 
         # Report final positions so partial failures are actionable.
         print("\nFinal positions:")
-        bus.port_handler.clearPort()
         final_positions = bus.sync_read("Present_Position", normalize=False, num_retry=3)
 
         for motor_name, pos in final_positions.items():

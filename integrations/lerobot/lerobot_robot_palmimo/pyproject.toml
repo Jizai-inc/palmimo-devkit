@@ -6,11 +6,10 @@ authors = [{ name = "Jizai Inc.", email = "noreply@jizai.ai" }]
 license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
-    # The dynamixel extra is what carries dynamixel-sdk, which
-    # lerobot.motors.dynamixel imports at DynamixelMotorsBus construction time.
-    # Plain "lerobot" resolves without it and every entry point here dies on the
-    # first bus object.
-    "lerobot[dynamixel]",
+    # The dynamixel extra is what carries rustypot, which SerialMotorsBus
+    # needs at construction time. Plain "lerobot" resolves without it and every
+    # script here dies on the first bus object.
+    "lerobot[dynamixel]>=0.7.0",
     # The same requirement one layer down: the SDK's own DynamixelDriver
     # reaches dynamixel_sdk from inside connect(), and [hardware] is the
     # extra that carries it.

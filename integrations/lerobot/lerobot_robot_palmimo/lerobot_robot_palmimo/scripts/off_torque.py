@@ -4,9 +4,7 @@
 import argparse
 import sys
 
-from lerobot.motors.dynamixel import DynamixelMotorsBus
-
-from lerobot_robot_palmimo.motor_layout import build_palmimo_motors
+from lerobot_robot_palmimo.motor_layout import PalmimoMotorsBus, build_palmimo_motors
 from palmimo_sdk import SUPPORTED_MOTOR_MODELS, PortDetectionError, find_servo_port
 
 
@@ -24,20 +22,19 @@ def off_torque(port: str, motor_model: str) -> bool:
     print(f"Target: {len(motors)} motor(s)\n")
 
     # This operation uses raw motor IDs and does not require calibration.
-    bus = DynamixelMotorsBus(port=port, motors=motors, calibration=None)
+    bus = PalmimoMotorsBus(port=port, motors=motors, calibration=None)
 
     try:
-        # Open the port without the full MotorsBus handshake.
-        bus.port_handler.openPort()
-        bus.port_handler.setBaudRate(bus.default_baudrate)
+        # Open the port without the handshake, which fails unless every motor answers.
+        bus.connect(handshake=False)
         print(f"Baud rate: {bus.default_baudrate}")
         print("-" * 50)
 
         # Detect motors before writing so missing IDs do not block recovery.
         print("Scanning for motors...")
-        found_motors = bus.broadcast_ping(num_retry=2)
+        found_motors = bus.broadcast_ping()
 
-        if found_motors is None:
+        if not found_motors:
             print("\nNG No motors found")
             print("   - Check that the power is on")
             print("   - Check the cable connection")
@@ -88,8 +85,8 @@ def off_torque(port: str, motor_model: str) -> bool:
         return False
 
     finally:
-        if bus.port_handler.is_open:
-            bus.port_handler.closePort()
+        # Leave torque as it is; only release the port.
+        bus.disconnect(disable_torque=False)
 
 
 def main() -> None:

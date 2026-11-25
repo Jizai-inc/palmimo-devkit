@@ -26,15 +26,17 @@ _HARDWARE_BACKENDS = frozenset(
     {
         "dynamixel_sdk",
         "serial",
+        "rustypot",
+        "lerobot.motors.SerialMotorsBus",
         "lerobot.motors.dynamixel",
         "lerobot.motors.motors_bus",
         "lerobot.motors.feetech",
     }
 )
 
-# The one module allowed to name a bus class: it copies XC330-M288 into LeRobot's
-# Dynamixel model tables, which means reaching for DynamixelMotorsBus as a table
-# holder. It never constructs one; other tooling imports it for that layout.
+# The one module allowed to name a bus class: it defines PalmimoMotorsBus so the
+# recovery scripts can resolve XC330-M288, which rustypot does not list. It never
+# constructs one; the scripts do, and nothing on the robot path imports it.
 _LAYOUT_MODULE = "motor_layout.py"
 
 _PLUGIN_PACKAGES = (
@@ -88,7 +90,7 @@ def test_no_plugin_module_imports_a_hardware_backend() -> None:
 
 
 def test_the_layout_module_names_a_bus_but_never_builds_one() -> None:
-    """The carve-out is a model-table lookup, not a bus the plugin can drive."""
+    """The carve-out defines a bus for the scripts, not one the plugin drives."""
     source = (_INTEGRATION_ROOT / _PLUGIN_PACKAGES[0] / _LAYOUT_MODULE).read_text(encoding="utf-8")
 
     constructed = {
@@ -97,7 +99,7 @@ def test_the_layout_module_names_a_bus_but_never_builds_one() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
 
-    assert "DynamixelMotorsBus" not in constructed
+    assert not constructed & {"SerialMotorsBus", "PalmimoMotorsBus"}
 
 
 def test_the_robot_plugin_reaches_hardware_through_the_sdk() -> None:
