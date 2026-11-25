@@ -1042,6 +1042,48 @@ axes. The counts restart whenever the motion or its arm leg changes, and on
 **Polling.** The clock is the one injected as `thermal_clock`. At most every
 1/30 s, `step()` makes one `read_telemetry()` call for all 18 leg axes.
 
+**Silent axes.** The bus reader stops at the first axis that does not answer and
+reports every axis behind it as unreached, so one dead servo would blind the guard
+to the rest of the bus on every sweep. An axis that is silent on
+`SILENT_SWEEPS_TO_SET_ASIDE` (3) sweeps in a row is therefore set aside: later
+`read_telemetry()` calls leave it out and the sweeps handed to the guards never
+contain it, so it stays unknown rather than healthy. Unreached axes are no
+evidence and are not counted. Every `RECHECK_INTERVAL_S` (1.5 s) one set-aside
+axis is added to a sweep to see if it answers; a re-check that stays silent
+leaves the axes behind it unreached for that one sweep. An axis that answers is
+watched again and its overload counts restart, and the next set-aside axis is
+tried on the very next sweep, so a bus that was unplugged and plugged back in is
+watched again within one sweep per axis instead of 1.5 s per axis. Each change is recorded as a
+`WatchChange` (frozen dataclass: `motor`, `guard`, `watched`, `at`) and logged as
+a warning, at most once every `WATCH_CHANGE_LOG_INTERVAL_S` (30 s) per axis so a
+flapping servo cannot flood the log. A reconnect records every set-aside axis as
+watched again, since the next sweep asks for it. One error is logged when 3 axes (or all of a guard's axes, if it watches
+fewer) are set aside, or when `EMPTY_READS_TO_BLIND` (3) reads in a row fail or
+carry no axis at all, as when the request never reaches the bus; one warning is
+logged when the guard can see again. Nothing is actuated. The neck guard sets aside its own
+silent axes the same way, so its judgement is held while one is set aside.
+
+**Re-arming.** A servo that went silent because it lost power for a moment
+reboots with torque off and its gain and profile at their power-on defaults. So
+when an axis answers again after going silent, the next `step()` (never a
+`wake()` / `sleep()` / `return_to_neutral()` glide) re-arms it: if no hardware
+error is latched on it, it gets back the gain the robot last gave it, its goal
+is set to where it is, its profile is restored, and its torque is turned on, as
+`connect()` does. Gesture tuning is then reapplied. Every write is idempotent,
+so a servo that never rebooted is left as it was. An axis is not re-armed when a
+hardware error is latched on it (the servo shut itself down; reboot or
+power-cycle it), when the overload guard cut its torque, or when a failed
+`limp()` exit left it limp. Each attempt is recorded as a `ReArm` (frozen
+dataclass: `motor`, `armed`, `reason`, `at`) and logged.
+
+| Member | Returns |
+|--------|---------|
+| `robot.drain_watch_changes()` | `list[WatchChange]` of the leg and neck guards, oldest first; the call empties the queues, which keep the newest 64 each |
+| `robot.unwatched_motors` | Axes currently set aside, as a tuple; empty when all are watched |
+| `robot.blind_guards` | Names of the guards that cannot see the bus (3 axes set aside, or 3 empty reads), as a tuple; empty when every guard can. A blind guard judges nothing |
+| `robot.drain_rearms()` | `list[ReArm]`, oldest first; the call empties the queue, which keeps the newest 64 |
+| `robot.unarmed_motors` | Axes that answered again but were not re-armed, mapped to why, as a `dict[str, str]`; cleared by `connect()` |
+
 **Reaction.**
 
 | Channel | On trip |
@@ -1083,10 +1125,17 @@ because it does not carry all 18 leg motors, disables this guard and the rail
 guard with one warning until the next `connect()`. Any other read failure is logged at most every 5 s,
 keeps the counts and does not stop the motion.
 
-**Scope.** The same as the neck guard: only `Palmimo.step()` callers are
-covered. `wake()`, `sleep()` and `return_to_neutral()` write the driver
-directly, and the LeRobot teleop integration drives the engine directly, so the
-guard does not watch them.
+**Scope.** Only `Palmimo.step()` callers are covered, plus the glides of
+`wake()`, `return_to_neutral(duration=...)` and `sleep()`, which write the
+driver directly. A glide is never stopped by a trip. The trip is recorded with
+the glide's name as its `motion` (`"wake"`, `"return_to_neutral"` or
+`"sleep"`) and nothing else happens. Every leg is judged on the leg channel
+during a glide, including a leg that was the raised arm: it lands and takes
+weight on the way to neutral, where the arm threshold would trip on ordinary
+load. An arm already softened by an earlier trip keeps its soft return until it
+is home, and `wake()` and `sleep()` ramp it from there. The LeRobot teleop
+integration drives the engine directly, so the guard does not watch it. The neck guard stays
+`Palmimo.step()` only.
 
 ## Rail Undervoltage Guard
 
@@ -1146,8 +1195,10 @@ land on the same sweep, both are recorded and the motion is stopped once.
 `motor` (the axis that read it), `threshold`, `samples` and `motion` (lowercase
 name). Each trip is also logged as one warning.
 
-**Scope.** The same as the overload guard: only `Palmimo.step()` callers are
-covered.
+**Scope.** The same as the overload guard: `Palmimo.step()` callers and the
+glides of `wake()`, `return_to_neutral(duration=...)` and `sleep()`, where a
+trip is only
+recorded.
 
 ## Servo Flight Recorder
 
@@ -1231,10 +1282,12 @@ not change signal handlers. The automatic flush inside `step()` uses the same
 SIGINT protection and also discards Ctrl+C during that write. Other termination
 signals are not covered.
 
-**Scope.** Only calls through `Palmimo.step()` are sampled, including facade
-methods that drive that loop. Direct wake/sleep glides have no samples, and
-LeRobot teleoperation that drives the engine and driver directly is outside
-this recorder's scope.
+**Scope.** Calls through `Palmimo.step()` are sampled, including facade
+methods that drive that loop, and so are the direct glides of `wake()`,
+`return_to_neutral(duration=...)` and `sleep()`: their leg sweeps are recorded
+with the glide's name as `motion`, and latched errors are polled on the same
+schedule. LeRobot teleoperation that drives the engine and driver directly is
+outside this recorder's scope.
 
 ### Files and header
 
@@ -1521,6 +1574,10 @@ named motors (every motor when `None`). Both are optional capabilities; the
 defaults raise `NotImplementedError`. On `DynamixelDriver`, switching torque on
 (which `connect()` also does) raises `RuntimeError` naming any servo that has a
 hardware error latched, because torque does not take on a servo that has shut down.
+`ServoDriver.arm(motors)` puts the named motors back to work as `connect()` leaves
+them: goal at the present position, default profile, torque on (the gain is the
+caller's to write). It is an optional capability too, and what
+[re-arming](#overload-guard) uses.
 
 `ServoDriver.read_hardware_errors(motors=None)` returns a `HardwareErrorRead`
 (`palmimo_sdk.io.base.HardwareErrorRead`) in one sweep; `None` selects all motors.
