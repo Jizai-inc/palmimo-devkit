@@ -1095,7 +1095,7 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'voice'", specifier = ">=1.24" },
     { name = "opencv-python", marker = "extra == 'vision'", specifier = ">=4" },
     { name = "palmimo-sdk", extras = ["agent"], marker = "extra == 'mcp'", editable = "../../packages/palmimo_sdk" },
-    { name = "piper-plus", marker = "extra == 'speech'" },
+    { name = "piper-plus", extras = ["cpu"], marker = "extra == 'speech'", specifier = ">=2.0.2,<3" },
     { name = "pydantic", marker = "extra == 'agent'", specifier = ">=2" },
     { name = "pyserial", specifier = ">=3.5" },
     { name = "pyserial", marker = "extra == 'face'" },
