@@ -574,7 +574,7 @@ that outlive their connect deadline retain reservations until late cleanup
 closes the orphaned handle. These paths log the delayed cleanup; another
 process remains blocked while the device is still owned.
 
-LeRobot plugin scripts open LeRobot's `DynamixelMotorsBus` directly and therefore do not participate in SDK reservations.
+LeRobot plugin scripts open LeRobot's `SerialMotorsBus` directly and therefore do not participate in SDK reservations.
 
 ### `robot.connect() -> Palmimo`
 Open whichever resources are attached and return `self`, in this order: the
