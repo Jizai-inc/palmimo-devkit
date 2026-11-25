@@ -99,6 +99,7 @@ class FakeBus:
                 "Present_Input_Voltage": 47,
                 "Present_Temperature": 30,
                 "Present_Position": tick if (tick := self.present.get(name)) is not None else NEUTRAL,
+                "Position_P_Gain": 900,
             }
             for name in MOTOR_NAMES
         }
@@ -1272,6 +1273,15 @@ def test_read_hardware_errors_separates_silent_and_unreached_motors() -> None:
     assert result.errors == {"leg_1_yaw": 0}
     assert result.silent == ("leg_1_pitch1",)
     assert result.unreached == tuple(MOTOR_NAMES[2:])
+
+
+def test_read_position_p_gain_keeps_every_answering_servo_when_some_are_silent() -> None:
+    driver, bus, _ = make_driver()
+    driver.connect()
+    silent = {"leg_5_pitch1", "leg_5_pitch2"}
+    for name in silent:
+        del bus.telemetry[name]
+    assert driver.read_position_p_gain() == {name: 900 for name in MOTOR_NAMES if name not in silent}
 
 
 def test_read_hardware_errors_reports_send_failure_as_unreached() -> None:
