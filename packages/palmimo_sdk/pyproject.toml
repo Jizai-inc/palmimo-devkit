@@ -39,7 +39,10 @@ hardware = ["dynamixel-sdk>=3.7.31"]
 face = ["pyserial"]
 # Speaker (piper-plus TTS). Opt-in so `import palmimo_sdk` stays dependency-free.
 # io/tts/piper.py imports nltk itself to fetch English phonemization data.
-speech = ["piper-plus", "nltk>=3.9"]
+# Bounded to one major because io/tts/piper.py imports piper-plus's module
+# paths and CLI name, which 2.0 renamed. The `cpu` extra is what installs
+# onnxruntime from 2.0 on.
+speech = ["piper-plus[cpu]>=2.0.2,<3", "nltk>=3.9"]
 # Mic streaming capture (MicStream) + GTCRN noise removal (sherpa-onnx
 # OnlineSpeechDenoiser). Lazy-imported, so `import palmimo_sdk` stays
 # dependency-free without it. sherpa-onnx-core is pinned separately because

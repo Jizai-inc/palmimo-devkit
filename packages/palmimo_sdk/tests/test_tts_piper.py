@@ -39,7 +39,7 @@ NLTK_RESOURCE_FILES = {
 
 def _touch_voice_model(data_dir: Path, name: str) -> None:
     """Create dummy files satisfying piper's standard voice-file naming
-    convention, so ``piper.download.find_voice`` resolves ``name`` locally
+    convention, so ``piper_plus.download.find_voice`` resolves ``name`` locally
     without any network access or real model content."""
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / f"{name}.onnx").write_bytes(b"")
@@ -149,33 +149,33 @@ def test_failure_hint_points_to_nltk_downloader_when_nltk_data_missing() -> None
 
 def test_failure_hint_points_to_download_model_when_voice_not_found() -> None:
     engine = PiperEngine(model_en="a_model")
-    hint = engine.failure_hint("piper.download.VoiceNotFoundError: a_model", "en")
-    assert "uv run piper --download-model a_model" in hint
+    hint = engine.failure_hint("piper_plus.download.VoiceNotFoundError: a_model", "en")
+    assert "uv run piper-plus --download-model a_model" in hint
 
 
 def test_failure_hint_download_dir_is_the_voices_own_directory() -> None:
     engine = PiperEngine(model_en="a_model", data_dir="/models")
-    hint = engine.failure_hint("piper.download.VoiceNotFoundError: a_model", "en")
+    hint = engine.failure_hint("piper_plus.download.VoiceNotFoundError: a_model", "en")
     assert f"--download-dir {Path('/models') / 'a_model'}" in hint
 
 
 def test_failure_hint_download_dir_is_the_shared_cache_when_data_dir_unset() -> None:
     engine = PiperEngine(model_en="a_model")
-    hint = engine.failure_hint("piper.download.VoiceNotFoundError: a_model", "en")
+    hint = engine.failure_hint("piper_plus.download.VoiceNotFoundError: a_model", "en")
     assert f"--download-dir {default_model_dir() / 'piper' / 'a_model'}" in hint
 
 
 def test_failure_hint_uses_the_model_for_the_failing_lang() -> None:
     engine = PiperEngine(model_en="en_model", model_ja="ja_model")
-    hint = engine.failure_hint("piper.download.VoiceNotFoundError: ja_model", "ja")
-    assert "uv run piper --download-model ja_model" in hint
+    hint = engine.failure_hint("piper_plus.download.VoiceNotFoundError: ja_model", "ja")
+    assert "uv run piper-plus --download-model ja_model" in hint
 
 
 def test_probe_failure_hint_helper_matches_engine_behavior() -> None:
     """The module-level helper PiperEngine.failure_hint delegates to."""
     assert _probe_failure_hint("some other error", "a_model", None) == ""
-    assert "uv run piper --download-model a_model" in _probe_failure_hint(
-        "piper.download.VoiceNotFoundError: a_model", "a_model", None
+    assert "uv run piper-plus --download-model a_model" in _probe_failure_hint(
+        "piper_plus.download.VoiceNotFoundError: a_model", "a_model", None
     )
 
 
@@ -396,7 +396,7 @@ def test_preflight_raises_with_an_offline_hint_when_the_download_fails(
 
     message = str(exc_info.value)
     assert "offline" in message
-    assert f"uv run piper --download-model {CATALOGUE_JA}" in message
+    assert f"uv run piper-plus --download-model {CATALOGUE_JA}" in message
 
 
 def test_preflight_raises_when_the_model_is_not_in_the_catalogue(tmp_path: Path, downloads: _FakeDownloads) -> None:
@@ -408,7 +408,7 @@ def test_preflight_raises_when_the_model_is_not_in_the_catalogue(tmp_path: Path,
         engine.preflight("en")
 
     assert downloads.calls == []
-    assert "uv run piper --download-model not_a_real_model" in str(exc_info.value)
+    assert "uv run piper-plus --download-model not_a_real_model" in str(exc_info.value)
 
 
 def test_ensure_refuses_a_non_https_download_url(
@@ -481,7 +481,7 @@ def test_ensure_refuses_a_repository_name_piper_would_reject(
 ) -> None:
     """`repo` is the one attacker-controllable component of a piper-plus URL,
     and piper-plus validates it before building the same URL."""
-    import piper.download as piper_download
+    import piper_plus.download as piper_download
 
     tampered = dict(piper_download.PIPER_PLUS_VOICES[CATALOGUE_JA])
     tampered["repo"] = "owner/../../evil"
@@ -493,6 +493,48 @@ def test_ensure_refuses_a_repository_name_piper_would_reject(
         ensure_piper_voice(CATALOGUE_JA, data_dir=str(tmp_path))
 
     assert downloads.calls == []
+
+
+def test_ensure_refuses_a_revision_piper_would_reject(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, downloads: _FakeDownloads
+) -> None:
+    import piper_plus.download as piper_download
+
+    tampered = dict(piper_download.PIPER_PLUS_VOICES[CATALOGUE_JA])
+    tampered["revision"] = "../evil"
+    monkeypatch.setattr(
+        piper_download, "PIPER_PLUS_VOICES", {**piper_download.PIPER_PLUS_VOICES, CATALOGUE_JA: tampered}
+    )
+
+    with pytest.raises(RuntimeError, match="unusable revision"):
+        ensure_piper_voice(CATALOGUE_JA, data_dir=str(tmp_path))
+
+    assert downloads.calls == []
+
+
+def test_voice_file_urls_keep_the_catalogue_path_and_pinned_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """piper-plus 2 catalogue files can sit in a subdirectory of their repo
+    and pin a revision; the URL has to carry both, as piper-plus's own does."""
+    import piper_plus.download as piper_download
+
+    from palmimo_sdk.io.tts.piper import _voice_file_urls
+
+    pinned = {
+        "source": "piper-plus",
+        "repo": "owner/voice",
+        "revision": "abc123",
+        "files": {"releases/v1/base.onnx": {}, "releases/v1/base.onnx.json": {}},
+    }
+    monkeypatch.setattr(piper_download, "PIPER_PLUS_VOICES", {"pinned": pinned})
+
+    urls = _voice_file_urls("pinned", tmp_path)
+
+    assert urls == {
+        "base.onnx": "https://huggingface.co/owner/voice/resolve/abc123/releases/v1/base.onnx",
+        "base.onnx.json": "https://huggingface.co/owner/voice/resolve/abc123/releases/v1/base.onnx.json",
+    }
 
 
 def test_preflight_is_a_noop_when_piper_plus_is_not_importable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -570,7 +612,7 @@ def test_load_voice_never_downloads(tmp_path: Path, downloads: _FakeDownloads) -
 
     assert downloads.calls == []
     assert loader.load_calls == []  # the voice loader must never have been called
-    assert f"uv run piper --download-model {CATALOGUE_JA}" in str(exc_info.value)
+    assert f"uv run piper-plus --download-model {CATALOGUE_JA}" in str(exc_info.value)
 
 
 def test_load_voice_resolves_the_correct_model_for_each_lang(tmp_path: Path) -> None:

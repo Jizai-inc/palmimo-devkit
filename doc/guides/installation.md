@@ -76,7 +76,7 @@ For an offline machine, fetch a voice on a networked one and copy its whole
 directory across, or pre-fetch it explicitly:
 
 ```bash
-uv run piper --download-model ja_JP-tsukuyomi-chan-medium \
+uv run piper-plus --download-model ja_JP-tsukuyomi-chan-medium \
   --download-dir ~/.cache/palmimo/models/piper/ja_JP-tsukuyomi-chan-medium
 ```
 

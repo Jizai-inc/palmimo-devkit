@@ -73,6 +73,10 @@ _DOWNLOAD_TIMEOUT_S = 30.0
 #: (its own ``_SAFE_REPO_RE``), restated because it is private to piper.
 _SAFE_REPO = re.compile(r"[a-zA-Z0-9._\-/]+")
 
+#: The characters piper-plus allows in a catalogue voice's pinned HuggingFace
+#: revision, restated for the same reason as :data:`_SAFE_REPO`.
+_SAFE_REVISION = re.compile(r"[a-zA-Z0-9._\-]+")
+
 
 def _voice_root(data_dir: str | None) -> Path:
     """Return the directory holding one subdirectory per piper voice.
@@ -239,10 +243,10 @@ def _check_model_name(model: str) -> None:
 
 
 def _download_model_hint(model: str, data_dir: str | None) -> str:
-    """Return the ``uv run piper --download-model`` command that fetches
+    """Return the ``uv run piper-plus --download-model`` command that fetches
     *model* by hand into the directory :func:`_voice_dir` resolves it from —
     the offline / manual counterpart of :func:`ensure_piper_voice`."""
-    return f"uv run piper --download-model {model} --download-dir {_voice_dir(model, data_dir)}"
+    return f"uv run piper-plus --download-model {model} --download-dir {_voice_dir(model, data_dir)}"
 
 
 def _probe_failure_hint(error_text: str, model: str, data_dir: str | None) -> str:
@@ -276,7 +280,7 @@ def _find_piper_find_voice() -> Callable[[str, Any], tuple[Path, Path]] | None:
     preflight" and let the later, real load raise instead.
     """
     try:
-        from piper.download import find_voice
+        from piper_plus.download import find_voice
     except ImportError:
         return None
     return find_voice
@@ -312,10 +316,10 @@ def _voice_file_urls(model: str, download_dir: Path) -> dict[str, str]:
     ``.onnx`` and its ``.json`` config are wanted; the catalogue's other
     entries (``MODEL_CARD``) are not files a voice loads.
 
-    ``repo`` is validated the way piper-plus validates it before building the
-    same URL: ``get_voices`` prefers a ``voices.json`` found in *download_dir*
-    over the ``voices.json`` shipped inside the library, so it is the one
-    component here that a file on disk can dictate. It cannot reach the two
+    ``repo`` and ``revision`` are validated the way piper-plus validates them
+    before building the same URL: ``get_voices`` prefers a ``voices.json``
+    found in *download_dir* over the ``voices.json`` shipped inside the
+    library, so they are the components here that a file on disk can dictate. It cannot reach the two
     voices this SDK defaults to — ``get_voices`` merges its hard-coded
     ``PIPER_PLUS_VOICES`` in last, so those entries always win — but it can
     reach any upstream catalogue voice a caller configures.
@@ -335,8 +339,8 @@ def _voice_file_urls(model: str, download_dir: Path) -> dict[str, str]:
         # Deliberately broad, and deliberately around the whole read rather
         # than the parse alone: this is the boundary where a third-party
         # library hands back a structure we do not control (get_voices prefers
-        # a voices.json found in download_dir over its own), and where an
-        # unpinned piper-plus could rename what is imported. A catalogue that
+        # a voices.json found in download_dir over its own), and where a
+        # piper-plus upgrade could rename what is imported. A catalogue that
         # parses but is shaped wrong surfaces as AttributeError or TypeError
         # from any of the field accesses, not just the first, and an upstream
         # rename as ImportError -- none of them a RuntimeError, which is the
@@ -348,7 +352,7 @@ def _voice_file_urls(model: str, download_dir: Path) -> dict[str, str]:
 def _read_voice_file_urls(model: str, download_dir: Path) -> dict[str, str]:
     """The body of :func:`_voice_file_urls`, split out so every field access
     on the catalogue sits inside that function's guard."""
-    from piper.download import PIPER_PLUS_URL_FORMAT, URL_FORMAT, get_voices
+    from piper_plus.download import PIPER_PLUS_URL_FORMAT, URL_FORMAT, get_voices
 
     voice_info = get_voices(download_dir).get(model)
     if voice_info is None:
@@ -362,7 +366,11 @@ def _read_voice_file_urls(model: str, download_dir: Path) -> dict[str, str]:
             repo = voice_info.get("repo", "")
             if not isinstance(repo, str) or not _SAFE_REPO.fullmatch(repo) or ".." in repo:
                 raise RuntimeError(f"piper-plus's catalogue gives {model!r} an unusable repository: {repo!r}")
-            urls[name] = PIPER_PLUS_URL_FORMAT.format(repo=repo, file=name)
+            revision = voice_info.get("revision", "main")
+            if not isinstance(revision, str) or not _SAFE_REVISION.fullmatch(revision) or ".." in revision:
+                raise RuntimeError(f"piper-plus's catalogue gives {model!r} an unusable revision: {revision!r}")
+            url = PIPER_PLUS_URL_FORMAT.format(repo=repo, file=file_path)
+            urls[name] = url.replace("/resolve/main/", f"/resolve/{revision}/")
         else:
             urls[name] = URL_FORMAT.format(file=file_path)
     return urls
@@ -458,7 +466,7 @@ def _default_voice_loader(onnx_path: Path, config_path: Path) -> Any:
     (ONNX Runtime session creation + warmup) that :meth:`PiperEngine.load_voice`
     pays once per language, not once per utterance.
     """
-    from piper import PiperVoice  # lazy: keeps `import palmimo_sdk` dependency-free
+    from piper_plus import PiperVoice  # lazy: keeps `import palmimo_sdk` dependency-free
 
     return PiperVoice.load(onnx_path, config_path)
 

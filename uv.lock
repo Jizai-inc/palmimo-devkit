@@ -438,20 +438,6 @@ wheels = [
 ]
 
 [[package]]
-name = "g2p-en"
-version = "2.1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "inflect" },
-    { name = "nltk" },
-    { name = "numpy" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/22/2c7acbe6164ed6cfd4301e9ad2dbde69c68d22268a0f9b5b0ee6052ed3ab/g2p_en-2.1.0.tar.gz", hash = "sha256:32ecb119827a3b10ea8c1197276f4ea4f44070ae56cbbd01f0f261875f556a58", size = 3116166, upload-time = "2019-12-31T01:16:12.753Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/d9/b77dc634a7a0c0c97716ba97dd0a28cbfa6267c96f359c4f27ed71cbd284/g2p_en-2.1.0-py3-none-any.whl", hash = "sha256:2a7aabf1fc7f270fcc3349881407988c9245173c2413debbe5432f4a4f31319f", size = 3117464, upload-time = "2019-12-31T01:16:03.286Z" },
-]
-
-[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1039,7 +1025,7 @@ mcp = [
 ]
 speech = [
     { name = "nltk" },
-    { name = "piper-plus" },
+    { name = "piper-plus", extra = ["cpu"] },
 ]
 vision = [
     { name = "opencv-python" },
@@ -1063,7 +1049,7 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'voice'", specifier = ">=1.24" },
     { name = "opencv-python", marker = "extra == 'vision'", specifier = ">=4" },
     { name = "palmimo-sdk", extras = ["agent"], marker = "extra == 'mcp'", editable = "packages/palmimo_sdk" },
-    { name = "piper-plus", marker = "extra == 'speech'" },
+    { name = "piper-plus", extras = ["cpu"], marker = "extra == 'speech'", specifier = ">=2.0.2,<3" },
     { name = "pydantic", marker = "extra == 'agent'", specifier = ">=2" },
     { name = "pyserial", specifier = ">=3.5" },
     { name = "pyserial", marker = "extra == 'face'" },
@@ -1086,19 +1072,23 @@ wheels = [
 
 [[package]]
 name = "piper-plus"
-version = "1.13.0"
+version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "g2p-en" },
+    { name = "inflect" },
     { name = "joblib" },
     { name = "nltk" },
     { name = "numpy" },
-    { name = "onnxruntime" },
     { name = "pyopenjtalk-plus" },
     { name = "pypinyin" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5f/f6/0d26f3e7b3aa886704abc2644a4e89db10de833aaa3d14a1f677cbbe145c/piper_plus-1.13.0-py3-none-any.whl", hash = "sha256:32596e03e573a72b01daadfa0d37ec787dda6956a5be3648fbb85db2503a0ff6", size = 128166, upload-time = "2026-06-14T16:59:06.979Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/0f/87148a763394303e89ae2d14b160f85b700f0d0cbe261cfe9d7201e3eb11/piper_plus-2.1.0-py3-none-any.whl", hash = "sha256:4cf8e636e9e47fd0220a8b9551904bcd5207b4eb56f4b579435fb126d6ac22f6", size = 3287658, upload-time = "2026-11-13T13:34:06.953Z" },
+]
+
+[package.optional-dependencies]
+cpu = [
+    { name = "onnxruntime" },
 ]
 
 [[package]]

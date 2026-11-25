@@ -15,7 +15,7 @@ def test_tts_types_are_exported_from_package_root() -> None:
     ``palmimo_sdk`` directly, matching how ``Speaker``/``SpeakerConfig`` are
     exported, so ``Speaker(engine=PiperEngine())`` never requires reaching
     into ``palmimo_sdk.io``. This import must succeed with no dependency on
-    ``piper-plus`` being installed: ``PiperEngine`` only imports ``piper``
+    ``piper-plus`` being installed: ``PiperEngine`` only imports ``piper_plus``
     lazily, inside the methods that actually synthesize speech (see
     ``palmimo_sdk/io/tts/piper.py``), so merely importing the class -- like
     importing ``palmimo_sdk`` itself -- stays dependency-free."""
