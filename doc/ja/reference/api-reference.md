@@ -801,7 +801,7 @@ from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK
 
 `ServoDriver.read_positions()` は現在のサーボ位置を読みますが、読み取り失敗を安全な代替値（バッチ全体の失敗なら `{}`、単一モーターの欠落なら `NEUTRAL`）に置き換えるため、呼び出し元は欠落と実際の `NEUTRAL` 読み取りを区別できません。 `ServoDriver.read_positions_span(motors=None)` は、同じ信号を代替値なしで読みます。返すのは `ServoPositions`（`palmimo_sdk.io.base.ServoPositions`）で、`positions` のマッピングには応答したモーターだけを含めます。併せて `silent`（問い合わせたが無応答）と `unreached`（走査がすでに停止したため、問い合わせていない）を持ちます。後述の `ServoTelemetry` と同じ構造です。読み取りの欠落を実際の関節位置と取り違えてはいけない呼び出し元（固定の制御レートで動くポリシーループなど）は、 `read_positions()` の代わりにこちらを使います。任意の機能で、デフォルトは `NotImplementedError` を送出します。
 
-`ServoDriver.read_telemetry(motors=None)` は、1 回の走査で `current`（符号付きの生の値）、 `voltage`（V）、`temperature`（°C）、`position`（生の tick）を持つ `ServoTelemetry` を返し、同じ `silent` / `unreached` の管理情報を持ちます。[電源レールの低電圧ガード](#電源レールの低電圧ガード)は `voltage` を読みます。 `ServoDriver.set_torque_enabled(enabled, motors=None)` は、指定したモーターのトルクを切り替えます（`None` なら全モーター）。どちらも任意の機能で、デフォルトは `NotImplementedError` を送出します。 `DynamixelDriver` でトルクを入れる操作（`connect()` も行います）は、ハードウェアエラーがラッチされたサーボがあると、そのサーボ名を示して `RuntimeError` を送出します。シャットダウンしたサーボにはトルクが入らないためです。
+`ServoDriver.read_telemetry(motors=None)` は、1 回の走査で `current`（符号付きの生の値）、 `voltage`（V）、`temperature`（°C）、`position`（生の tick）を持つ `ServoTelemetry` を返し、同じ `silent` / `unreached` の管理情報を持ちます。[電源レールの低電圧ガード](#電源レールの低電圧ガード)は `voltage` を読みます。 `ServoDriver.set_torque_enabled(enabled, motors=None)` は、指定したモーターのトルクを切り替えます（`None` なら全モーター）。どちらも任意の機能で、デフォルトは `NotImplementedError` を送出します。
 
 `ServoDriver.read_hardware_errors(motors=None)` は、1 回の走査で `HardwareErrorRead`（`palmimo_sdk.io.base.HardwareErrorRead`）を返します。`None` なら全モーターを選びます。読み取り専用の `errors` のマッピングには、応答したすべてのモーターについて、生の符号なしの Hardware Error Status（レジスター 70、1 バイト）を含めます。**ゼロも含みます。** 含まれないモーターは、正常なのではなく不明です。`silent` は問い合わせたが応答しなかったモーター、`unreached` は走査が到達しなかったモーター（送信に失敗した場合は要求したすべてのモーター）の一覧です。`latched` プロパティは、ゼロでないエントリーだけの dict を返します。`silent` または `unreached` が空でなければ、`latched` が空の dict でも、すべてのモーターが正常だとは言えません。モーターごとに `errors` で判断してください。
 
@@ -824,6 +824,8 @@ from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK
 - `connect_timeout` は接続処理全体の上限です（後述の `DynamixelConnectTimeoutError` を参照）。
 
 `connect()` は、トルクを有効にする前に、各モーターの現在位置を Goal_Position に書き込みます。4 回試しても位置を読み取れないモーターがあれば、`connect()` はそのモーター名を示す `ConnectionError` を送出し、トルクは OFF のままです。
+
+トルクを入れる操作（`connect()` も行います）は、ハードウェアエラーがラッチされたサーボがあると、そのサーボ名を示して `RuntimeError` を送出します。シャットダウンしたサーボにはトルクが入らないためです。
 
 ```python
 from palmimo_sdk import SUPPORTED_MOTOR_MODELS, palmimo_motor_ids
