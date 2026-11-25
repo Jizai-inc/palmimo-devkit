@@ -45,6 +45,7 @@ CONTROL_TABLE: dict[str, tuple[int, int]] = {
     "Operating_Mode": (11, 1),
     "Torque_Enable": (64, 1),
     "Hardware_Error_Status": (70, 1),
+    "Position_I_Gain": (82, 2),
     "Position_P_Gain": (84, 2),
     "Profile_Acceleration": (108, 4),
     "Profile_Velocity": (112, 4),
