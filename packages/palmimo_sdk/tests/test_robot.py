@@ -2439,9 +2439,12 @@ class _OverloadDriver(ServoDriver):
         self.torque_calls: list[tuple[bool, tuple[str, ...] | None]] = []
         self.gain_raises = gain_raises
         self.torque_supported = torque_supported
-        self.profile_velocity = 300
         self.telemetry_error: Exception | None = None
         self._connected = True
+
+    @property
+    def profile_velocity(self) -> int:
+        return 300
 
     @property
     def is_connected(self) -> bool:

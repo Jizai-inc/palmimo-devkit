@@ -87,6 +87,7 @@ from .io import (
     find_servo_port,
     palmimo_motor_ids,
     resolve_alsa_device,
+    supports,
 )
 from .keyframes import MAX_JOINT_SPEED_DEG_S, Keyframe, load_keyframes, save_keyframes
 from .name_match import PALMIMO_NAMES, NameMatch, NameMatcher, name_skeleton
@@ -178,4 +179,5 @@ __all__ = [
     "resolve_alsa_device",
     "save_keyframes",
     "shutdown",
+    "supports",
 ]

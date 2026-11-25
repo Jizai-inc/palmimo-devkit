@@ -68,14 +68,14 @@ import time
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from ._flight_recorder import CodeVersion, ServoFlightRecorder, default_incident_dir
 from ._flight_ride import FlightRide
 from ._leg_safety import LegSafety
 from ._signals import signals_ignored
 from .engine import NECK_GESTURES, Motion, MotionEngine
-from .io import FaceDisplay, HeadCamera, Microphone, MicStream, ServoDriver, Speaker, SpeechHandle
+from .io import FaceDisplay, HeadCamera, Microphone, MicStream, ServoDriver, Speaker, SpeechHandle, supports
 from .io.base import SAFE_MAX_TICK, SAFE_MIN_TICK
 from .keyframes import JOINTS, Keyframe, KeyframeTrack, tick_to_degrees
 from .kinematics import ALL_LEGS, leg_motors
@@ -1064,7 +1064,7 @@ class Palmimo:
                 + ". Nothing was written; check the bus and power, then retry."
             )
         current = pose.positions
-        has_gain = hasattr(driver, "set_position_p_gain")
+        has_gain = supports(driver, "set_position_p_gain")
         # Only the legs ramp up from the soft start_gain — the neck must stay
         # firm the whole time, or the head sags the moment we soften it (the
         # neck can't hold the head's weight at low P-gain). Keeping the neck at
@@ -1165,7 +1165,7 @@ class Palmimo:
                 logger.warning("sleep() skips the glide; no position read from: %s", ", ".join(pose.unread))
             else:
                 current = pose.positions
-        has_gain = hasattr(driver, "set_position_p_gain")
+        has_gain = supports(driver, "set_position_p_gain")
         # Legs only, exactly as wake() does: the neck is softened afterwards by
         # _park_neck's own ramp, which is shaped to let the head down gently.
         # Softening it on this ramp instead would drop the head mid-glide.
@@ -1228,7 +1228,7 @@ class Palmimo:
         back to the default gain when the driver cannot read it back.
         """
         driver = self._driver
-        if driver is None or not hasattr(driver, "read_position_p_gain"):
+        if driver is None or not supports(driver, "read_position_p_gain"):
             return _WAKE_FULL_GAIN
         try:
             live = driver.read_position_p_gain()
@@ -1277,7 +1277,7 @@ class Palmimo:
             capability gap, not a fault.
         """
         wanted = list(self._engine.get_positions() if motors is None else motors)
-        if hasattr(driver, "read_positions_span"):  # optional: duck-typed drivers may lack it
+        if supports(driver, "read_positions_span"):
             try:
                 positions = _read_answered_on(driver, wanted)
             except NotImplementedError:
@@ -1359,7 +1359,7 @@ class Palmimo:
         after, so nothing is left to act on it.
         """
         driver = self._driver
-        if driver is None or not driver.is_connected or not hasattr(driver, "set_position_p_gain"):
+        if driver is None or not driver.is_connected or not supports(driver, "set_position_p_gain"):
             return
         # A neck axis limp() left at zero gain holds a stale goal, and the ramp's
         # first step would snap it there. Re-read it now: if it answers, hold it
@@ -2031,7 +2031,7 @@ class Palmimo:
         No-op when running compute-only (no driver) or the driver does not
         support it. Raising the gain tightens tracking of the quick wave strokes.
         """
-        if self._driver is not None and hasattr(self._driver, "set_position_p_gain"):
+        if self._driver is not None and supports(self._driver, "set_position_p_gain"):
             self._write_gain(self._driver, value)
 
     def set_iir(self, enabled: bool, alpha: float | None = None) -> None:
@@ -2040,19 +2040,19 @@ class Palmimo:
         No-op when running compute-only (no driver) or unsupported. *alpha* in
         (0, 1]: smaller = heavier smoothing.
         """
-        if self._driver is not None and hasattr(self._driver, "set_iir"):
+        if self._driver is not None and supports(self._driver, "set_iir"):
             self._driver.set_iir(enabled, alpha)
 
     @property
     def p_gain(self) -> int | None:
         """Current Position_P_Gain (None if no driver / unknown)."""
         d = self._driver
-        return getattr(d, "position_p_gain", None) if d is not None else None
+        return d.position_p_gain if d is not None and supports(d, "position_p_gain") else None
 
     def read_p_gain(self) -> dict[str, int] | None:
         """Read live Position_P_Gain back from the servos (None if no driver)."""
         d = self._driver
-        if d is None or not hasattr(d, "read_position_p_gain"):
+        if d is None or not supports(d, "read_position_p_gain"):
             return None
         return d.read_position_p_gain()
 
@@ -2060,7 +2060,7 @@ class Palmimo:
     def iir(self) -> tuple[bool, float] | None:
         """Current IIR (enabled, alpha), or None if no driver / unsupported."""
         d = self._driver
-        if d is None or not (hasattr(d, "iir_enabled") and hasattr(d, "iir_alpha")):
+        if d is None or not (supports(d, "iir_enabled") and supports(d, "iir_alpha")):
             return None
         return (d.iir_enabled, d.iir_alpha)
 
@@ -2465,11 +2465,9 @@ class Palmimo:
         driver = self._driver
         if driver is None:
             return
-        has_pv = hasattr(driver, "set_profile_velocity_units")
-        has_gain = hasattr(driver, "set_position_p_gain")
-        has_iir = hasattr(driver, "set_iir")
-        # The RAM-tuning methods are optional capabilities probed with hasattr above.
-        tuner: Any = driver
+        has_pv = supports(driver, "set_profile_velocity_units")
+        has_gain = supports(driver, "set_position_p_gain")
+        has_iir = supports(driver, "set_iir")
 
         motion = self._engine.motion
         arm_legs = self._wave_arm_legs(motion)
@@ -2496,7 +2494,7 @@ class Palmimo:
         if want == self._gesture_tuned:
             return  # nothing changed
 
-        default_pv = getattr(driver, "profile_velocity", None)
+        default_pv = driver.profile_velocity if supports(driver, "profile_velocity") else None
         if default_pv is None:
             default_pv = _WAVE_LEG_PV
 
@@ -2505,33 +2503,33 @@ class Palmimo:
             with contextlib.suppress(Exception):
                 kind = self._gesture_tuned[0]
                 if kind == "soft_return":
-                    self._write_gain(tuner, None, motors=list(self._gesture_tuned[1]))
+                    self._write_gain(driver, None, motors=list(self._gesture_tuned[1]))
                 else:
                     if kind == "wave":
                         if has_iir:
-                            tuner.set_iir(False)
-                        self._write_gain(tuner, None)  # restore captured defaults
-                    tuner.set_profile_velocity_units(default_pv)
+                            driver.set_iir(False)
+                        self._write_gain(driver, None)  # restore captured defaults
+                    driver.set_profile_velocity_units(default_pv)
 
         # Apply the new gesture's tuning.
         if want is not None and want[0] == "wave":
             legs, arm_iir = want[1], want[2]
             arm = list(leg_motors(legs))
             with contextlib.suppress(Exception):
-                tuner.set_profile_velocity_units(default_pv)  # legs smooth
-                tuner.set_profile_velocity_units(_WAVE_ARM_PV, motors=arm)  # arm crisp
-                self._write_gain(tuner, _WAVE_GAIN)
+                driver.set_profile_velocity_units(default_pv)  # legs smooth
+                driver.set_profile_velocity_units(_WAVE_ARM_PV, motors=arm)  # arm crisp
+                self._write_gain(driver, _WAVE_GAIN)
                 if has_iir:
-                    tuner.set_iir(True, arm_iir, motors=arm)
+                    driver.set_iir(True, arm_iir, motors=arm)
         elif want is not None and want[0] == "soft_return":
             try:
-                self._write_gain(tuner, SOFT_RETURN_GAIN, motors=list(want[1]))
+                self._write_gain(driver, SOFT_RETURN_GAIN, motors=list(want[1]))
             except Exception as exc:
                 self._cut_arm_torque(driver, want[1], f"setting Position_P_Gain failed ({exc})")
                 want = None
         elif want is not None:
             with contextlib.suppress(Exception):
-                tuner.set_profile_velocity_units(_STRETCH_LEG_PV)
+                driver.set_profile_velocity_units(_STRETCH_LEG_PV)
 
         self._gesture_tuned = want
 
@@ -2545,14 +2543,16 @@ class Palmimo:
         (compute-only, or a non-Dynamixel backend) simply no-op.
         """
         driver = self._driver
-        if driver is None or not hasattr(driver, "set_profile_velocity_units"):
+        if driver is None or not supports(driver, "set_profile_velocity_units"):
             return
         active = self._engine.motion in NECK_GESTURES
         if active == self._neck_gesture_tuned:
             return  # nothing changed
         # Restore to the driver's OWN default profile, not a baked constant —
         # the driver may have been constructed with a non-default one.
-        restore_pv = getattr(driver, "profile_velocity", _NECK_GESTURE_RESTORE_PV_FALLBACK)
+        restore_pv = driver.profile_velocity if supports(driver, "profile_velocity") else None
+        if restore_pv is None:
+            restore_pv = _NECK_GESTURE_RESTORE_PV_FALLBACK
         with contextlib.suppress(Exception):
             driver.set_profile_velocity_units(
                 _NECK_GESTURE_PV if active else restore_pv,
@@ -2776,8 +2776,8 @@ class Palmimo:
         can_freeze = (
             driver is not None
             and driver.is_connected
-            and hasattr(driver, "read_positions")
-            and hasattr(driver, "set_position_p_gain")
+            and (supports(driver, "read_positions") or supports(driver, "read_positions_span"))
+            and supports(driver, "set_position_p_gain")
         )
         if not can_freeze:
             self._sleep_cancellable(seconds, cancel_snapshot)
@@ -3190,7 +3190,7 @@ class Palmimo:
             raise RuntimeError(f"No position read from {lost} after a sweep and {_POSE_READ_ATTEMPTS} retries.")
         return present
 
-    def _write_gain(self, driver: Any, value: int | None, motors: Sequence[str] | None = None) -> None:
+    def _write_gain(self, driver: ServoDriver, value: int | None, motors: Sequence[str] | None = None) -> None:
         """Write Position_P_Gain, skipping joints a failed :meth:`limp` exit left at zero gain.
 
         Stiffening such a joint would drive it to the goal written before it
@@ -3217,16 +3217,17 @@ class Palmimo:
         position; the driver's own profile is restored afterwards.
         """
         motors = list(present)
-        default_pv = getattr(driver, "profile_velocity", None)
-        # The profile write is an optional capability probed with hasattr.
-        tuner: Any = driver
         # Set before the write: it goes motor by motor, so a bus error part-way
         # leaves some at 0, and those must get the profile back too.
-        profile_off = default_pv is not None and hasattr(tuner, "set_profile_velocity_units")
+        default_pv = (
+            driver.profile_velocity
+            if supports(driver, "profile_velocity") and supports(driver, "set_profile_velocity_units")
+            else None
+        )
         try:
-            if profile_off:
+            if default_pv is not None:
                 try:
-                    tuner.set_profile_velocity_units(0, motors)
+                    driver.set_profile_velocity_units(0, motors)
                 except Exception as exc:
                     # Holding with the profile still on sweeps the joint back.
                     raise RuntimeError(f"Could not turn the profile off on {motors}; left limp at zero gain.") from exc
@@ -3234,9 +3235,9 @@ class Palmimo:
             if restore_gain:
                 driver.set_position_p_gain(None, motors)  # raw: limp owns it
         finally:
-            if profile_off:
+            if default_pv is not None:
                 try:
-                    tuner.set_profile_velocity_units(default_pv, motors)
+                    driver.set_profile_velocity_units(default_pv, motors)
                 except Exception:
                     logger.warning("limp(): could not restore Profile_Velocity on %s; they move unprofiled.", motors)
 
@@ -3267,16 +3268,15 @@ class Palmimo:
         goal.update(present)
         # A command-side IIR would blend the hold with its pre-limp state; write
         # it unfiltered, then resume the filter from the held pose.
-        tuner: Any = driver
-        iir_on = bool(getattr(tuner, "iir_enabled", False))
+        iir_on = supports(driver, "iir_enabled") and driver.iir_enabled
         if iir_on:
-            alpha, motors = tuner.iir_alpha, getattr(tuner, "_iir_motors", None)
-            tuner.set_iir(False)
+            alpha, motors = driver.iir_alpha, getattr(driver, "_iir_motors", None)
+            driver.set_iir(False)
         try:
             self._write_goal(driver, goal)
         finally:
             if iir_on:
-                tuner.set_iir(True, alpha, sorted(motors) if motors else None)
+                driver.set_iir(True, alpha, sorted(motors) if motors else None)
         self._engine.set_leg_positions(goal)
         self._engine.set_neck_positions(goal)
 

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, Palmimo, ServoDriver
+from palmimo_sdk import SAFE_MAX_TICK, SAFE_MIN_TICK, DynamixelDriver, Palmimo, ServoDriver, supports
 from palmimo_sdk.engine import MotionEngine
 
 
@@ -141,10 +141,15 @@ class TuningRecordingDriver(RecordingDriver):
     def __init__(self) -> None:
         super().__init__()
         self.tuning: list[tuple[Any, ...]] = []
-        # Not part of ServoDriver's contract -- a test-only knob some tests
-        # set directly (mirroring a driver-configured default PV) to verify
-        # release restores that value rather than a hardcoded one.
-        self.profile_velocity: int | None = None
+        self._profile_velocity: int | None = None
+
+    @property
+    def profile_velocity(self) -> int | None:
+        return self._profile_velocity
+
+    @profile_velocity.setter
+    def profile_velocity(self, value: int | None) -> None:
+        self._profile_velocity = value
 
     def set_profile_velocity_units(self, value: int, motors: list[str] | None = None) -> None:
         self.tuning.append(("pv", value, tuple(motors) if motors else None))
@@ -379,3 +384,28 @@ def test_read_hardware_errors_is_optional() -> None:
     driver = RecordingDriver()
     with pytest.raises(NotImplementedError, match="RecordingDriver"):
         driver.read_hardware_errors()
+
+
+def test_servo_driver_declares_every_public_dynamixel_driver_member() -> None:
+    """A capability the bundled driver offers is part of the ServoDriver contract."""
+    public = {name for name in dir(DynamixelDriver) if not name.startswith("_")}
+    assert sorted(public - set(dir(ServoDriver))) == []
+
+
+def test_supports_counts_only_what_a_driver_overrides() -> None:
+    """The ServoDriver defaults are not a capability; overrides and instance attributes are."""
+
+    class RaisingGetterDriver(RecordingDriver):
+        @property
+        def position_p_gain(self) -> int | None:
+            raise RuntimeError("getter ran")
+
+    plain = RecordingDriver()
+    assert not supports(plain, "set_iir")
+    assert not supports(plain, "profile_velocity")
+    assert supports(TuningRecordingDriver(), "set_iir")
+    assert supports(TuningRecordingDriver(), "profile_velocity")
+    assert supports(RaisingGetterDriver(), "position_p_gain")
+    plain.set_iir = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    assert supports(plain, "set_iir")
+    assert not supports(object(), "set_iir")
