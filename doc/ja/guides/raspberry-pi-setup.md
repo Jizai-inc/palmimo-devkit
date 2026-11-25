@@ -93,7 +93,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 | アプリと依存関係 | 録音 / 撮影に使うもの | OS の依存関係 |
 |---|---|---|
 | SDK の `HeadCamera` | `opencv-python` | `v4l-utils` |
-| SDK の TTS（`palmimo_sdk.io.speaker`） | `piper` バイナリ | 音声モデル以外は不要 |
+| SDK の TTS（`palmimo_sdk.io.speaker`） | `piper-plus` パッケージ | 音声モデル以外は不要 |
 | SDK の `MicStream` / ウェイクワードエージェントのサンプル | `sounddevice` | `libportaudio2` |
 
 カメラを使うすべてのアプリは、同じカメラ処理を共有します。`opencv-python` には V4L2 ドライバー、`/dev/video<id>` の読み取り権限、そして Lite イメージでは wheel がリンクする OpenGL ランタイムが必要です。`libgl1` がないとインポート自体が `ImportError: libGL.so.1: cannot open shared object file` で失敗します。その結果、 MCP サーバーの `capture` ツールが無効になり、コンパニオンエージェントは起動できなくなります。

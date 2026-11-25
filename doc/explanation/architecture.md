@@ -84,7 +84,7 @@ public controls and file format.
   `FaceDisplay`. Upper layers only *consume*
   these; they never open a backend themselves. `palmimo_sdk.io` is an internal layer —
   consumers import from the `palmimo_sdk` root (direct reach-in is blocked by ruff
-  TID251). Heavy backends (`dynamixel_sdk` / `cv2` / `piper` / `pyserial` /
+  TID251). Heavy backends (`dynamixel_sdk` / `cv2` / `piper_plus` / `pyserial` /
   `sounddevice`) are imported lazily, so importing the module itself stays
   hardware-independent. This avoids duplicating the same capture logic across
   consumers (vision *processing* lives in the app, *capture* lives in the SDK).

@@ -57,7 +57,7 @@ def test_gitignore_covers_downloaded_voice_models() -> None:
     ]
 
     assert missing == [], (
-        f"The SDK caches voice models outside this tree, but `piper --download-model` run by hand "
+        f"The SDK caches voice models outside this tree, but `piper-plus --download-model` run by hand "
         f"still defaults to the current directory: it drops a large .onnx into the repository root, "
         f"plus its config as either config.json or <name>.onnx.json depending on the catalogue it "
         f"came from, and loading it there adds piper's optimized copy and its .ok sentinel; keep "

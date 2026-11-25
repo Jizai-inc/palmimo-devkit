@@ -139,7 +139,7 @@ dependency sync does not install. Which ones you need depends on the app:
 | App and dependency | Records / captures via | OS dependency |
 |---|---|---|
 | the SDK's `HeadCamera` | `opencv-python` | `v4l-utils` |
-| the SDK's TTS (`palmimo_sdk.io.speaker`) | the `piper` binary | none beyond the voice models |
+| the SDK's TTS (`palmimo_sdk.io.speaker`) | the `piper-plus` package | none beyond the voice models |
 | the SDK's `MicStream` / the wake-word agent example | `sounddevice` | `libportaudio2` |
 
 The camera path is the one every camera-using app shares. `opencv-python` needs a

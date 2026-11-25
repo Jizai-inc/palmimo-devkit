@@ -49,7 +49,7 @@ uv run python -m nltk.downloader \
 オフラインのマシンでは、ネットワークに接続されたマシンで音声を取得してディレクトリ全体をコピーするか、次のように明示的に事前取得してください。
 
 ```bash
-uv run piper --download-model ja_JP-tsukuyomi-chan-medium \
+uv run piper-plus --download-model ja_JP-tsukuyomi-chan-medium \
   --download-dir ~/.cache/palmimo/models/piper/ja_JP-tsukuyomi-chan-medium
 ```
 
