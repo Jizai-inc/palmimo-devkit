@@ -512,6 +512,21 @@ def test_ensure_refuses_a_revision_piper_would_reject(
     assert downloads.calls == []
 
 
+@pytest.mark.parametrize("file_path", ["../../../evil/repo/resolve/main/x.onnx", "/abs/x.onnx", "a//x.onnx"])
+def test_voice_file_urls_refuse_a_file_path_that_leaves_the_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, file_path: str
+) -> None:
+    import piper_plus.download as piper_download
+
+    from palmimo_sdk.io.tts.piper import _voice_file_urls
+
+    planted = {"source": "piper-plus", "repo": "owner/voice", "files": {file_path: {}}}
+    monkeypatch.setattr(piper_download, "PIPER_PLUS_VOICES", {"planted": planted})
+
+    with pytest.raises(RuntimeError, match="unusable file path"):
+        _voice_file_urls("planted", tmp_path)
+
+
 def test_voice_file_urls_keep_the_catalogue_path_and_pinned_revision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

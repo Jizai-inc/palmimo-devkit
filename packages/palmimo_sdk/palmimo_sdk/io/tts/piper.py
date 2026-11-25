@@ -316,10 +316,10 @@ def _voice_file_urls(model: str, download_dir: Path) -> dict[str, str]:
     ``.onnx`` and its ``.json`` config are wanted; the catalogue's other
     entries (``MODEL_CARD``) are not files a voice loads.
 
-    ``repo`` and ``revision`` are validated the way piper-plus validates them
-    before building the same URL: ``get_voices`` prefers a ``voices.json``
-    found in *download_dir* over the ``voices.json`` shipped inside the
-    library, so they are the components here that a file on disk can dictate. It cannot reach the two
+    ``repo``, ``revision`` and each file path are validated before building
+    the URL: ``get_voices`` prefers a ``voices.json`` found in *download_dir*
+    over the ``voices.json`` shipped inside the library, so they are the
+    components here that a file on disk can dictate. They cannot reach the two
     voices this SDK defaults to — ``get_voices`` merges its hard-coded
     ``PIPER_PLUS_VOICES`` in last, so those entries always win — but it can
     reach any upstream catalogue voice a caller configures.
@@ -369,6 +369,12 @@ def _read_voice_file_urls(model: str, download_dir: Path) -> dict[str, str]:
             revision = voice_info.get("revision", "main")
             if not isinstance(revision, str) or not _SAFE_REVISION.fullmatch(revision) or ".." in revision:
                 raise RuntimeError(f"piper-plus's catalogue gives {model!r} an unusable revision: {revision!r}")
+            if (
+                not isinstance(file_path, str)
+                or not _SAFE_REPO.fullmatch(file_path)
+                or any(part in ("", ".", "..") for part in file_path.split("/"))
+            ):
+                raise RuntimeError(f"piper-plus's catalogue gives {model!r} an unusable file path: {file_path!r}")
             url = PIPER_PLUS_URL_FORMAT.format(repo=repo, file=file_path)
             urls[name] = url.replace("/resolve/main/", f"/resolve/{revision}/")
         else:
