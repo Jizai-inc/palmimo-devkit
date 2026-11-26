@@ -775,8 +775,8 @@ class LookTool(Expressive):
 
     name: ClassVar[str] = "look"
     # Sign semantics follow the hardware-verified facade contract (2026-07):
-    # positive pitch tips the chin DOWN; the yaw sign-to-direction mapping is
-    # not yet verified on hardware, so the description makes no direction claim.
+    # positive pitch tips the chin DOWN (2026-07); positive yaw turns the head to the
+    # robot's own right (2026-11).
     description: ClassVar[str] = (
         "Aim the head/gaze in a direction. Use to look toward a person, object, or direction "
         "without moving the body. Positive pitch tips the chin down (looks down); the chin-up "
@@ -804,7 +804,7 @@ class LookTool(Expressive):
         default=0.0,
         ge=-_LOOK_YAW_MAX_DEG,
         le=_LOOK_YAW_MAX_DEG,
-        description="Horizontal look angle in degrees.",
+        description="Horizontal look angle in degrees. Positive = the robot's own right, negative = its left.",
     )
 
     def _act(self, robot: PalmimoLike) -> ToolResult:

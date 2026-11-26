@@ -402,11 +402,11 @@ class PalmimoTeleop(Teleoperator):
             p2_offset = 0
         self._neck_positions["neck_pitch2"] = center + p2_offset
 
-        # Yaw control (left/right)
+        # Yaw control: ticks above center turn the head to the robot's own right.
         if nk["neck_yaw_left"] in pressed:
-            self._neck_positions["neck_yaw"] = min(self._neck_positions["neck_yaw"] + self._neck_step, yaw_max_pos)
-        elif nk["neck_yaw_right"] in pressed:
             self._neck_positions["neck_yaw"] = max(self._neck_positions["neck_yaw"] - self._neck_step, yaw_min_pos)
+        elif nk["neck_yaw_right"] in pressed:
+            self._neck_positions["neck_yaw"] = min(self._neck_positions["neck_yaw"] + self._neck_step, yaw_max_pos)
         elif recenter:
             self._neck_positions["neck_yaw"] = self._step_toward_center(self._neck_positions["neck_yaw"])
 

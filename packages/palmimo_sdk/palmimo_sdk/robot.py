@@ -2115,8 +2115,8 @@ class Palmimo:
 
         Args:
             pitch (float | NeckPitchDegrees | NeckPitchNormalized): Vertical look target. Positive tips the chin down.
-            yaw (float | NeckYawDegrees | NeckYawNormalized): Horizontal look target. The sign-to-direction mapping is
-                unspecified.
+            yaw (float | NeckYawDegrees | NeckYawNormalized): Horizontal look target. Positive turns the head to
+                the robot's own right (as seen from behind the robot).
         """
         if self._thermal.neck_lock_active:
             return False

@@ -113,11 +113,11 @@ def test_neck_char_keys_move_neck() -> None:
 
     t = _teleop()
     t._update_neck_from_keys({keys["neck_yaw_left"]})
-    assert t._neck_positions["neck_yaw"] > center
+    assert t._neck_positions["neck_yaw"] < center
 
     t = _teleop()
     t._update_neck_from_keys({keys["neck_yaw_right"]})
-    assert t._neck_positions["neck_yaw"] < center
+    assert t._neck_positions["neck_yaw"] > center
 
 
 def test_neck_holds_its_pose_when_the_keys_are_released() -> None:
@@ -143,7 +143,7 @@ def test_neck_center_key_walks_the_neck_back_to_center_one_step_per_frame() -> N
     yaw_before = t._neck_positions["neck_yaw"]
 
     t._update_neck_from_keys({keys["neck_center"]})
-    assert t._neck_positions["neck_yaw"] == yaw_before - t._neck_step
+    assert t._neck_positions["neck_yaw"] == yaw_before + t._neck_step
 
     for _ in range(10):
         t._update_neck_from_keys({keys["neck_center"]})
@@ -242,14 +242,14 @@ def test_neck_yaw_does_not_borrow_pitchs_chin_up_extended_floor() -> None:
     pitch2's own look-only wide band (see MotionEngine._apply_neck), not yaw.
 
     Before this, yaw shared its floor with pitch's extended chin-up ``min_pos``,
-    so a held neck_yaw_right key could walk yaw down to center-600 at the
+    so a held key lowering yaw could walk it down to center-600 at the
     default share -- twice as far as MotionEngine.look(yaw=-1) itself ever
     reaches (+-amplitude, 300 ticks).
     """
     t = _teleop()
     keys = t.config.teleop_keys
     for _ in range(2 * 2 * t._neck_amplitude // t._neck_step + 2):  # would saturate the extended floor
-        t._update_neck_from_keys({keys["neck_yaw_right"]})
+        t._update_neck_from_keys({keys["neck_yaw_left"]})
     assert t._neck_positions["neck_yaw"] == t._neutral - t._neck_amplitude
 
 

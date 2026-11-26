@@ -116,7 +116,7 @@ t.join()                 # the worker thread's run() raised MotionCancelled
 `cancel_checkpoint()` で得た *checkpoint* 以降に `cancel()` が実行されていれば、 `MotionCancelled` を送出します。
 
 ### `robot.look(pitch: float | NeckPitchDegrees | NeckPitchNormalized = 0.0, yaw: float | NeckYawDegrees | NeckYawNormalized = 0.0) -> bool`
-首を制御します。`robot.neck_lock_active` が `True` の間は、首の目標値を変えずに `False` を返します（[首のサーマルガード（過熱保護）](#首のサーマルガード過熱保護)を参照）。それ以外は `True` を返します。脚のどのモーション中でも呼べます。ピッチが正なら顎が下がります（2026-07 に実機で検証済み）。ヨーは、符号と回転方向の対応がまだ実機で検証されていません。各軸は 3 種類の形式を受け付けます。ピッチとヨーにはそれぞれ専用の値オブジェクト型があり、ヨーの値を `pitch=` に渡すと、黙って受け入れるのではなく `TypeError` を送出します。
+首を制御します。`robot.neck_lock_active` が `True` の間は、首の目標値を変えずに `False` を返します（[首のサーマルガード（過熱保護）](#首のサーマルガード過熱保護)を参照）。それ以外は `True` を返します。脚のどのモーション中でも呼べます。ピッチが正なら顎が下がります（2026-07 に実機で検証済み）。ヨーが正なら、頭はロボット自身から見て右（ロボットの後ろから見て右）を向きます（2026-11 に実機で検証済み）。各軸は 3 種類の形式を受け付けます。ピッチとヨーにはそれぞれ専用の値オブジェクト型があり、ヨーの値を `pitch=` に渡すと、黙って受け入れるのではなく `TypeError` を送出します。
 
 - 通常の `float`/`int` — 正規化された [-1, 1] の値です。後方互換性のために維持している従来の契約です。範囲外の値は従来どおりエンジンがクランプします。
 - `NeckPitchNormalized(value)` / `NeckYawNormalized(value)` — 同じ正規化された [-1, 1] の値で、その軸の首の機械的可動域に対する割合を明示します。自己検証し、[-1, 1] の範囲外では構築時に `ValueError` を送出します。
