@@ -261,6 +261,34 @@ Wake from limp: glide to neutral while ramping leg Position_P_Gain from
 of snapping. The neck is held at full gain the whole time so the head can't drop.
 Falls back to a plain glide if the driver can't ramp gain.
 
+When `neck_pitch1` reads more than 200 ticks below its target, the head may be
+resting with its shade caught on the torso plate edge, and gliding every joint
+together would push it into the edge until the neck latches Overload. The neck
+then rises first and alone, while the legs hold where they lie at *start_gain*:
+
+1. `neck_pitch2` pushes the head forward, `neck_pitch1` held: its goal eases
+   400 ticks ahead (1.5 s), and the push holds until `neck_pitch2` reads 250
+   ticks past where it started. The servo trails its goal by up to a second
+   under the head's weight, so this step waits on the read position.
+2. The three neck joints glide in a straight line from there to their targets
+   (1.6 s), then hold for 0.2 s.
+
+The legs then glide as usual, so waking from a drooped pose takes about 3-4 s
+longer. `wake()` stops instead, rewriting every goal to the pose read at that
+moment and raising `WakeAbortedError` with the legs not risen, when any of:
+
+- **The head could not get forward.** `neck_pitch2` has not read 250 ticks
+  past its start 3 s after the push began.
+- **The head did not clear the plate.** After the hold, `neck_pitch1` still
+  reads more than 200 ticks below its target.
+- In both cases `latched` is empty; free the head by hand and call `wake()`
+  again.
+- **A neck servo latched an error.** When the driver supports
+  `read_hardware_errors()`, the neck is read every 6 frames during these steps
+  (about ten times a second at the default `fps=60`). A bit that was not set at
+  the first read stops the wake, with the new bits in `latched`. Power-cycle the
+  robot to clear a latched error.
+
 Reads the starting pose per motor, re-asking each motor the
 first sweep missed up to three times. If some still do not answer, `wake()` raises `RuntimeError`
 naming them and writes nothing to the driver, not even a gain: gliding from a
