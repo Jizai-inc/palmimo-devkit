@@ -80,8 +80,8 @@ class SettleFailedError(RuntimeError):
 
 
 #: Sign applied to the pilot's raw stick value before `Palmimo.look()`.
-#: `Palmimo.look`'s sign-to-direction mapping is itself unspecified (see its
-#: docstring); on a real neck both axes track the stick as-is.
+#: `Palmimo.look` takes positive pitch as chin down and positive yaw as the
+#: robot's own right; on a real neck both axes track the stick as-is.
 NECK_PITCH_SIGN: float = 1.0
 NECK_YAW_SIGN: float = 1.0
 

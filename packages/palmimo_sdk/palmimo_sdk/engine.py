@@ -449,8 +449,8 @@ class MotionEngine:
 
         Args:
             pitch (float): Normalized pitch in [-1, 1]. Positive tips the chin down.
-            yaw (float): Normalized yaw in [-1, 1]. The sign-to-direction mapping is
-                unspecified.
+            yaw (float): Normalized yaw in [-1, 1]. Positive turns the head to the
+                robot's own right (as seen from behind the robot).
         """
         self._set_neck_pitch_target(max(-1.0, min(1.0, pitch)), look_sourced=True)
         self._neck_target_yaw = max(-1.0, min(1.0, yaw))

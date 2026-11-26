@@ -201,8 +201,8 @@ Raise `MotionCancelled` if `cancel()` ran since *checkpoint* (from
 Control neck. Returns `False` (without changing the neck target) while
 `robot.neck_lock_active` is `True` (see [Neck Thermal Guard](#neck-thermal-guard));
 `True` otherwise. Can be called during any leg motion. Positive pitch tips the chin
-DOWN (verified on hardware 2026-07); for yaw, which sign turns which way is not
-yet verified on hardware. Each axis accepts three forms, and pitch/yaw each have
+DOWN (verified on hardware 2026-07); positive yaw turns the head to the robot's
+own right, as seen from behind the robot (verified on hardware 2026-11). Each axis accepts three forms, and pitch/yaw each have
 their own dedicated value-object types (so passing a yaw value as `pitch=`
 raises `TypeError` instead of being silently accepted):
 

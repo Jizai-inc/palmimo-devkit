@@ -49,8 +49,8 @@ overridden.
 |-----|--------|-------------|
 | `O` | Look Up | Increase neck pitch |
 | `L` | Look Down | Decrease neck pitch |
-| `N` | Look Left | Increase neck yaw |
-| `M` | Look Right | Decrease neck yaw |
+| `N` | Look Left | Decrease neck yaw |
+| `M` | Look Right | Increase neck yaw |
 
 ### System
 
