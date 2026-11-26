@@ -1,0 +1,588 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "name": "tags: ascii kept, key lowercased",
+      "input": {
+        "tags": [
+          "Dance"
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "tags": [
+          "Dance"
+        ],
+        "tag_keys": [
+          "dance"
+        ]
+      }
+    },
+    {
+      "name": "tags: surrounding spaces trimmed",
+      "input": {
+        "tags": [
+          "  ダンス  "
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "tags": [
+          "ダンス"
+        ],
+        "tag_keys": [
+          "ダンス"
+        ]
+      }
+    },
+    {
+      "name": "tags: NFKC folds fullwidth letters",
+      "input": {
+        "tags": [
+          "ＡＢＣ"
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "tags": [
+          "ABC"
+        ],
+        "tag_keys": [
+          "abc"
+        ]
+      }
+    },
+    {
+      "name": "tags: ideographic space becomes one space",
+      "input": {
+        "tags": [
+          "music　box"
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "tags": [
+          "music box"
+        ],
+        "tag_keys": [
+          "music box"
+        ]
+      }
+    },
+    {
+      "name": "tags: runs of spaces collapse",
+      "input": {
+        "tags": [
+          "a    b"
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "tags": [
+          "a b"
+        ],
+        "tag_keys": [
+          "a b"
+        ]
+      }
+    },
+    {
+      "name": "tags: tab is a control character",
+      "input": {
+        "tags": [
+          "a\tb"
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "path": "tags"
+      }
+    },
+    {
+      "name": "tags: zero width space rejected",
+      "input": {
+        "tags": [
+          "zero​width"
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "path": "tags"
+      }
+    },
+    {
+      "name": "tags: bidi override rejected",
+      "input": {
+        "tags": [
+          "‮abc"
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "path": "tags"
+      }
+    },
+    {
+      "name": "tags: fullwidth full stop becomes a dot",
+      "input": {
+        "tags": [
+          "v１．０"
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "path": "tags"
+      }
+    },
+    {
+      "name": "tags: emoji allowed",
+      "input": {
+        "tags": [
+          "🐶"
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "tags": [
+          "🐶"
+        ],
+        "tag_keys": [
+          "🐶"
+        ]
+      }
+    },
+    {
+      "name": "tags: 32 code points allowed",
+      "input": {
+        "tags": [
+          "ああああああああああああああああああああああああああああああああ"
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "tags": [
+          "ああああああああああああああああああああああああああああああああ"
+        ],
+        "tag_keys": [
+          "ああああああああああああああああああああああああああああああああ"
+        ]
+      }
+    },
+    {
+      "name": "tags: 33 code points rejected",
+      "input": {
+        "tags": [
+          "あああああああああああああああああああああああああああああああああ"
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "path": "tags"
+      }
+    },
+    {
+      "name": "tags: astral characters count as one each",
+      "input": {
+        "tags": [
+          "🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶"
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "tags": [
+          "🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶"
+        ],
+        "tag_keys": [
+          "🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶🐶"
+        ]
+      }
+    },
+    {
+      "name": "tags: ASCII case duplicates merge, first spelling wins",
+      "input": {
+        "tags": [
+          "Dance",
+          "dance",
+          "DANCE"
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "tags": [
+          "Dance"
+        ],
+        "tag_keys": [
+          "dance"
+        ]
+      }
+    },
+    {
+      "name": "tags: non-ASCII case is not folded",
+      "input": {
+        "tags": [
+          "Ärger",
+          "ärger"
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "tags": [
+          "Ärger",
+          "ärger"
+        ],
+        "tag_keys": [
+          "Ärger",
+          "ärger"
+        ]
+      }
+    },
+    {
+      "name": "tags: 8 after merging allowed",
+      "input": {
+        "tags": [
+          "t0",
+          "t1",
+          "t2",
+          "t3",
+          "t4",
+          "t5",
+          "t6",
+          "t7",
+          "T0"
+        ]
+      },
+      "expected": {
+        "ok": true,
+        "tags": [
+          "t0",
+          "t1",
+          "t2",
+          "t3",
+          "t4",
+          "t5",
+          "t6",
+          "t7"
+        ],
+        "tag_keys": [
+          "t0",
+          "t1",
+          "t2",
+          "t3",
+          "t4",
+          "t5",
+          "t6",
+          "t7"
+        ]
+      }
+    },
+    {
+      "name": "tags: 9 distinct rejected",
+      "input": {
+        "tags": [
+          "t0",
+          "t1",
+          "t2",
+          "t3",
+          "t4",
+          "t5",
+          "t6",
+          "t7",
+          "t8"
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "path": "tags"
+      }
+    },
+    {
+      "name": "tags: empty string rejected",
+      "input": {
+        "tags": [
+          ""
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "path": "tags"
+      }
+    },
+    {
+      "name": "tags: spaces only rejected",
+      "input": {
+        "tags": [
+          "   "
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "path": "tags"
+      }
+    },
+    {
+      "name": "tags: not a list",
+      "input": {
+        "tags": "dance"
+      },
+      "expected": {
+        "ok": false,
+        "path": "tags"
+      }
+    },
+    {
+      "name": "tags: element not a string",
+      "input": {
+        "tags": [
+          1
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "path": "tags"
+      }
+    },
+    {
+      "name": "tags: empty list allowed",
+      "input": {
+        "tags": []
+      },
+      "expected": {
+        "ok": true,
+        "tags": [],
+        "tag_keys": []
+      }
+    },
+    {
+      "name": "thumbnail: single emoji",
+      "input": {
+        "thumbnail": "💃"
+      },
+      "expected": {
+        "ok": true,
+        "thumbnail": {
+          "emoji": "💃"
+        }
+      }
+    },
+    {
+      "name": "thumbnail: ZWJ sequence",
+      "input": {
+        "thumbnail": "👩‍💻"
+      },
+      "expected": {
+        "ok": true,
+        "thumbnail": {
+          "emoji": "👩‍💻"
+        }
+      }
+    },
+    {
+      "name": "thumbnail: variation selector",
+      "input": {
+        "thumbnail": "❤️"
+      },
+      "expected": {
+        "ok": true,
+        "thumbnail": {
+          "emoji": "❤️"
+        }
+      }
+    },
+    {
+      "name": "thumbnail: keycap contains ASCII",
+      "input": {
+        "thumbnail": "1️⃣"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: subdivision flag uses tag characters",
+      "input": {
+        "thumbnail": "🏴󠁧󠁢󠁥󠁮󠁧󠁿"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: 17 code points rejected",
+      "input": {
+        "thumbnail": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: plain word rejected",
+      "input": {
+        "thumbnail": "abc"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: svg is not an image extension",
+      "input": {
+        "thumbnail": "icon.svg"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: image path, extension case-insensitive",
+      "input": {
+        "thumbnail": "assets/thumb.PNG"
+      },
+      "expected": {
+        "ok": true,
+        "thumbnail": {
+          "path": "assets/thumb.PNG"
+        }
+      }
+    },
+    {
+      "name": "thumbnail: webp path",
+      "input": {
+        "thumbnail": "thumb.webp"
+      },
+      "expected": {
+        "ok": true,
+        "thumbnail": {
+          "path": "thumb.webp"
+        }
+      }
+    },
+    {
+      "name": "thumbnail: absolute path",
+      "input": {
+        "thumbnail": "/thumb.png"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: parent segment",
+      "input": {
+        "thumbnail": "../thumb.png"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: dot segment",
+      "input": {
+        "thumbnail": "a/./thumb.png"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: empty segment",
+      "input": {
+        "thumbnail": "a//thumb.png"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: backslash",
+      "input": {
+        "thumbnail": "a\\thumb.png"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: colon",
+      "input": {
+        "thumbnail": "c:/thumb.png"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: leading space",
+      "input": {
+        "thumbnail": " thumb.png"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: empty",
+      "input": {
+        "thumbnail": ""
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: 257 characters",
+      "input": {
+        "thumbnail": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "thumbnail: 256 characters",
+      "input": {
+        "thumbnail": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+      },
+      "expected": {
+        "ok": true,
+        "thumbnail": {
+          "path": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png"
+        }
+      }
+    },
+    {
+      "name": "thumbnail: not a string",
+      "input": {
+        "thumbnail": 1
+      },
+      "expected": {
+        "ok": false,
+        "path": "thumbnail"
+      }
+    },
+    {
+      "name": "neither key: nothing added",
+      "input": {},
+      "expected": {
+        "ok": true,
+        "tags": [],
+        "tag_keys": [],
+        "thumbnail": null
+      }
+    }
+  ]
+}

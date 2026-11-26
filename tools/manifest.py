@@ -11,10 +11,11 @@ from __future__ import annotations
 import math
 import re
 import tomllib
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tools.manifest_translations import load_translations
+from tools.manifest_translations import load_translations, normalize_tag, tag_key
 
 
 #: Matches `palmimo.toml` (the default manifest) or `palmimo.<variant>.toml`,
@@ -33,7 +34,9 @@ RESERVED_PLACEHOLDERS = frozenset({"host", "app_dir"})
 DESCRIPTION_MAX_LENGTH = 200
 DEFAULT_MAX_LENGTH = 256
 PATTERN_MAX_LENGTH = 256
-TOP_LEVEL_KEYS = frozenset({"schema", "name", "description", "command", "url", "devices", "env", "params"})
+TOP_LEVEL_KEYS = frozenset(
+    {"schema", "name", "description", "command", "url", "devices", "env", "params", "thumbnail", "tags"}
+)
 ENV_TABLE_KEYS = frozenset({"required", "description", "help_url"})
 # Extra keys each param type accepts beyond {type, default, description} (both
 # always allowed: default is optional-required by every type, description is
@@ -157,6 +160,12 @@ class Param:
 
 
 @dataclass(frozen=True)
+class Thumbnail:
+    emoji: str | None = None
+    path: str | None = None
+
+
+@dataclass(frozen=True)
 class AppManifest:
     name: str
     description: str
@@ -166,6 +175,13 @@ class AppManifest:
     env: dict[str, EnvVar]
     params: dict[str, Param]
     translations: dict[str, dict[str, str]] = field(default_factory=dict)
+    tags: tuple[str, ...] = ()
+    thumbnail: Thumbnail | None = None
+
+    @property
+    def tag_keys(self) -> tuple[str, ...]:
+        """Return comparison keys in display order."""
+        return tuple(tag_key(tag) for tag in self.tags)
 
 
 def is_manifest_filename(name: str) -> bool:
@@ -199,6 +215,8 @@ def load_manifest(path: Path) -> AppManifest:
     description = raw.get("description")
     if not isinstance(description, str) or not (1 <= len(description) <= DESCRIPTION_MAX_LENGTH):
         errors.append("'description' must be a string of 1-200 characters")
+    tags = _check_tags(raw, errors)
+    thumbnail = _check_thumbnail(raw, errors)
     command = _check_command(raw, errors)
     devices = _check_devices(raw, errors)
     env = _check_env(raw, errors)
@@ -224,8 +242,53 @@ def load_manifest(path: Path) -> AppManifest:
         devices=tuple(devices),
         env=env,
         params=params,
-        translations=load_translations(path, set(env), set(params)),
+        translations=load_translations(path, set(env), set(params), tags),
+        tags=tags,
+        thumbnail=thumbnail,
     )
+
+
+def _check_tags(raw: dict, errors: list[str]) -> tuple[str, ...]:
+    tags = raw.get("tags", [])
+    if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+        errors.append("'tags' must be an array of strings")
+        return ()
+    result: dict[str, str] = {}
+    for tag in tags:
+        try:
+            normalized = normalize_tag(tag)
+        except ValueError as error:
+            errors.append(f"'tags': {error}")
+            continue
+        result.setdefault(tag_key(normalized), normalized)
+    if len(result) > 8:
+        errors.append("'tags' must contain at most 8 distinct tags")
+    return tuple(result.values())
+
+
+def _check_thumbnail(raw: dict, errors: list[str]) -> Thumbnail | None:
+    if "thumbnail" not in raw:
+        return None
+    value = raw["thumbnail"]
+    if isinstance(value, str):
+        if value.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+            if (
+                1 <= len(value) <= 256
+                and not value.startswith("/")
+                and value == value.strip()
+                and not any(segment in {"", ".", ".."} for segment in value.split("/"))
+                and not any(c in "\\:" or unicodedata.category(c) in {"Cc", "Cf", "Zl", "Zp"} for c in value)
+            ):
+                return Thumbnail(path=value)
+        elif 1 <= len(value) <= 16 and all(
+            ord(c) > 127
+            and unicodedata.category(c) not in {"Cc", "Zs", "Zl", "Zp"}
+            and (unicodedata.category(c) != "Cf" or c == "\u200d")
+            for c in value
+        ):
+            return Thumbnail(emoji=value)
+    errors.append("'thumbnail' must be an emoji or a relative image path (.png / .jpg / .jpeg / .webp)")
+    return None
 
 
 def _check_top_level_keys(raw: dict, errors: list[str]) -> None:

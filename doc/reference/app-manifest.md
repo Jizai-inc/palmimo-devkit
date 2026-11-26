@@ -65,8 +65,11 @@ hosts ignore the companion, retaining the original descriptions.
 }
 ```
 
-Message keys are `description`, `env.<NAME>`, or `params.<name>` and must
-refer to fields declared by that manifest. Each value is a nonblank string
+Message keys are `description`, `env.<NAME>`, `params.<name>`, or `tags.<tag>` and must
+refer to fields declared by that manifest. The `<tag>` suffix follows the
+[tag normalization rules](#tags) and is matched by `tag_key`; returned keys
+use `tags.<tag_key>`. Undeclared tags are rejected by the reference validator.
+Thumbnails are not translated. Each value is a nonblank string
 of at most 200 characters. A file is at most 64 KiB, is not a symlink, and
 contains 1–32 locale objects. Locale tags use lowercase language codes with
 optional hyphenated subtags, such as `ja`, `en`, and `ja-jp`.
@@ -104,13 +107,56 @@ namespace already carries the organization or vendor, avoid putting one in
 | `description` | string | yes | 1-200 characters. The catalog's one-line summary |
 | `command` | array of strings | yes | The argv to execute. An array, not a shell string, so no shell ever parses it; an element may contain one or more `{param}` placeholders |
 | `url` | string | no | A page to open once the app is running. May contain `{host}` and param placeholders. Must start with `http://` or `https://` (`javascript:` and similar are rejected) |
+| `thumbnail` | string | no | An emoji or a relative image path — see [Thumbnail](#thumbnail) |
+| `tags` | array of strings | no | Up to 8 distinct normalized display tags — see [Tags](#tags) |
 | `devices` | array of strings | no | A subset of `camera`, `audio`, `motor_display`. Omitted (or empty) opens no device at all |
 | `[env.<NAME>]` | table | no | One table per environment variable the app reads — see [Environment variables](#environment-variables) |
 | `[params.<name>]` | table | no | One table per launch-time parameter — see [Parameters](#parameters) |
 
-Every top-level key not in this table is a validation error — an unrecognized
-key is far more likely to be a typo silently doing nothing than a
-deliberately unused extension.
+The reference validator rejects top-level keys not in this table to catch
+author typos. Newer Portal releases ignore unknown keys for forward compatibility;
+older Portal releases that reject unknown keys cannot install apps declaring
+`thumbnail` or `tags`. If installation fails, update Portal.
+
+## Thumbnail
+
+`thumbnail` is optional. If its lowercase value ends in `.png`, `.jpg`, `.jpeg`,
+or `.webp`, it is an image path; otherwise it is validated as an emoji.
+
+An image path is a relative POSIX path from the manifest's directory, 1–256
+code points long. A leading `/`, empty segments, `.` or `..` segments, `\`,
+`:`, Unicode categories Cc, Cf, Zl, Zp, and leading or trailing whitespace
+are forbidden. The spelling is preserved.
+
+An emoji is 1–16 code points with no ASCII characters or characters in Unicode
+categories Cc, Zs, Zl, or Zp. Cf characters are forbidden except U+200D (ZWJ);
+U+FE0E and U+FE0F variation selectors (Mn) are allowed. This rule supports ZWJ
+sequences, but excludes keycaps containing ASCII, such as `1️⃣` and `#️⃣`,
+and subdivision flags containing Cf tag characters. Unsupported image
+extensions such as `.svg` or `.gif` fail emoji validation.
+
+The site checks image files on import: PNG, JPEG, or WebP by byte signature,
+at most 256 KiB; a 512×512 square is recommended. Symlinks, Git LFS pointers,
+and directories are rejected. The reference validator checks only the value's
+shape, without checking file existence or contents.
+
+## Tags
+
+`tags` is an optional array of strings, defaulting to empty. Each tag follows
+these rules in order:
+
+1. Apply Unicode NFKC normalization.
+2. Collapse runs of Unicode Zs characters to one U+0020 space and trim U+0020
+   from both ends.
+3. Reject empty values, dots (`.`), and Unicode categories Cc, Cf, Zl, Zp,
+   Cs, and Co. Tabs are rejected rather than collapsed.
+4. Require 1–32 code points, counting astral characters as one each.
+5. Derive `tag_key` by lowercasing only ASCII A–Z. Merge identical keys,
+   keeping the first normalized spelling and order. Non-ASCII case is preserved.
+6. Reject more than 8 tags after merging.
+
+Display uses the retained spelling; comparison, filtering, and translation
+keys use `tag_key`.
 
 ## Environment variables
 
@@ -155,17 +201,17 @@ Two placeholder names are reserved and never declared as params: `{host}`
 (the device's hostname) and `{app_dir}` (the app's own directory, as an
 absolute path). Every other placeholder used in `command` or `url` must name
 a declared param — an undefined one is a validation error, the same way an
-unrecognized top-level key is: a typo in a placeholder name should not
+unrecognized top-level key in the reference validator is: a typo in a placeholder name should not
 silently pass the literal `{typo}` through to argv instead of a real value.
 
 ## Validation rules
 
-A manifest fails validation — and the app cannot be listed or launched —
-if any of the following holds:
+The reference validator rejects a manifest if any of the following holds:
 
 - `schema` is not `1`
 - an unrecognized top-level key is present
 - `name` does not match its pattern
+- `thumbnail` or `tags` violates the rules above
 - `command` is empty
 - a placeholder in `command` or `url` names neither a reserved placeholder
   nor a declared param — this includes a placeholder whose name doesn't even
