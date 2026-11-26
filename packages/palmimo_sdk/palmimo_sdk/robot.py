@@ -1244,10 +1244,14 @@ class Palmimo:
         latched = watch.new_latches()
         if not latched:
             return
+        relief = dict(last)
         with contextlib.suppress(Exception):
             pose = self._read_pose(driver)
             present = {} if pose is None else pose.positions
-            self._write_goal(driver, {name: present.get(name, tick) for name, tick in last.items()})
+            relief = {name: present.get(name, tick) for name, tick in last.items()}
+            self._write_goal(driver, relief)
+        # The next step() then moves from the relieved pose instead of snapping from a stale one.
+        self._seed_engine_pose(relief)
         raise WakeAbortedError(latched)
 
     def _sleep_thermal_locked(self, driver: ServoDriver) -> None:

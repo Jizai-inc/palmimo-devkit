@@ -273,8 +273,8 @@ then rises first and alone, while the legs hold where they lie at *start_gain*:
 
 The legs then glide as usual, so waking from a drooped pose takes about 2.8 s
 longer and the head dips once. When the driver supports
-`read_hardware_errors()`, the neck is read about ten times a second during
-these steps. If a neck servo latches a bit that was not set at the first read,
+`read_hardware_errors()`, the neck is read every 6 frames during these steps
+(about ten times a second at the default `fps=60`). If a neck servo latches a bit that was not set at the first read,
 every goal is rewritten to the pose read at that moment, the legs do not rise,
 and `wake()` raises `WakeAbortedError` with the new bits in `latched`.
 Power-cycle the robot to clear a latched error.

@@ -1054,6 +1054,7 @@ def test_wake_relieves_the_goals_and_raises_when_the_neck_latches(monkeypatch: p
     assert excinfo.value.latched == {"neck_pitch1": 0x20}
     assert driver.writes[-1] == driver.read_positions()
     assert all(w["leg_1_pitch1"] == 1800 for w in driver.writes)
+    assert robot.positions == driver.read_positions()
 
 
 def test_wake_lifts_past_a_latch_that_predates_it(monkeypatch: pytest.MonkeyPatch) -> None:
