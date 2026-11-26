@@ -128,11 +128,15 @@ _WAKE_FULL_GAIN = 900
 # Neck unhook before wake's glide. A limp head can rest with its shade caught
 # on the torso plate edge; gliding every joint at once pushes the head into
 # the edge until neck_pitch1 latches Overload. Calibrated by freeing wedged
-# heads by hand, torque off, and recording the neck (neck_pitch2 rose 81-96
-# ticks before the head came free).
+# heads by hand, torque off, and recording the neck: neck_pitch2 goes forward
+# first (+80 from a shallow wedge, +420 from a deep one) while neck_pitch1
+# holds, then both fall together. The servo trails its goal by 0.5-1 s under
+# that load, so the push waits on the read position rather than a clock.
 _NECK_UNHOOK_MIN_DROOP = 200  # neck_pitch1 ticks below its target that count as drooping
-_NECK_UNHOOK_TICKS = 90  # neck_pitch2 raise that lifts the shade off the edge
-_NECK_UNHOOK_S = 0.5
+_NECK_UNHOOK_TICKS = 400  # neck_pitch2 goal ahead of its start that pushes the head forward
+_NECK_UNHOOK_CLEAR = 250  # neck_pitch2 rise, as read, at which the shade is off the edge
+_NECK_UNHOOK_S = 1.5
+_NECK_UNHOOK_TIMEOUT_S = 3.0  # from the start of the push until neck_pitch2 must have cleared
 _NECK_LIFT_S = 1.6
 _NECK_LIFT_HOLD_S = 0.2  # hold at the target before judging whether the head cleared
 _NECK_UNHOOK_GUARD_FRAMES = 6  # frames between hardware-error reads (~10 Hz at 60 fps)
@@ -1103,11 +1107,12 @@ class Palmimo:
         its target, its shade may be caught on the torso plate edge, and
         gliding every joint together would push it into the edge until the
         neck latches Overload. The neck then rises first and alone, the legs
-        held where they lie at *start_gain*: ``neck_pitch2`` rises to lift the
-        shade off the edge, then the neck glides straight to its targets. This
-        adds about 2.3 s before the glide. If ``neck_pitch1`` still droops past
-        ``_NECK_UNHOOK_MIN_DROOP`` after that, the head did not clear the
-        plate, and the wake stops before the legs rise.
+        held where they lie at *start_gain*: ``neck_pitch2`` pushes the head
+        forward until it reads clear of the edge, then the neck glides straight
+        to its targets. This adds about 3-4 s before the glide. If
+        ``neck_pitch2`` cannot get forward, or ``neck_pitch1`` still droops
+        past ``_NECK_UNHOOK_MIN_DROOP`` after the lift, the head did not clear
+        the plate, and the wake stops before the legs rise.
 
         Falls back to a plain glide if the driver can't ramp gain, and to a single
         neutral command if it can't sense position.
@@ -1126,7 +1131,7 @@ class Palmimo:
         outside the neck thermal guard's reach (see :attr:`neck_lock_active`).
         That is safe here: the guard exists to stop the neck being commanded
         to a held-out pose while hot, and this glide moves the neck toward
-        center, apart from the brief ``neck_pitch2`` raise that unhooks it.
+        center, apart from the brief forward push that unhooks it.
         """
         driver = self._driver
         if driver is None or not driver.is_connected:
@@ -1192,7 +1197,8 @@ class Palmimo:
     def _unhook_neck(self, driver: ServoDriver, current: dict[str, int], targets: dict[str, int]) -> dict[str, int]:
         """Lift the neck alone while the legs hold, then check that the head cleared the plate.
 
-        1. Raise ``neck_pitch2`` by ``_NECK_UNHOOK_TICKS``, lifting the shade off the edge.
+        1. Push ``neck_pitch2`` forward, ``neck_pitch1`` held, until it reads
+           ``_NECK_UNHOOK_CLEAR`` ticks past its start: the shade is then off the edge.
         2. Glide the neck straight from there to its targets, and hold.
 
         Returns:
@@ -1200,8 +1206,10 @@ class Palmimo:
             the leg glide then starts from.
 
         Raises:
-            WakeAbortedError: A neck servo latched a new hardware error, or
-                ``neck_pitch1`` still droops after the lift.
+            WakeAbortedError: A neck servo latched a new hardware error,
+                ``neck_pitch2`` did not get forward within
+                ``_NECK_UNHOOK_TIMEOUT_S``, or ``neck_pitch1`` still droops
+                after the lift.
         """
         watch = _NeckLatchWatch(driver)
         last = dict(current)
@@ -1218,10 +1226,28 @@ class Palmimo:
             time.sleep(1.0 / self._fps)
 
         start = {name: current[name] for name in _NECK_MOTORS}
-        unhooked = {**start, "neck_pitch2": start["neck_pitch2"] + _NECK_UNHOOK_TICKS}
+        forward = min(SAFE_MAX_TICK, start["neck_pitch2"] + _NECK_UNHOOK_TICKS)
+        unhooked = {**start, "neck_pitch2": forward}
         goal = {name: targets[name] for name in _NECK_MOTORS}
-        for f in _eased_fractions(_NECK_UNHOOK_S, self._fps):
+        cleared_at = min(forward, start["neck_pitch2"] + _NECK_UNHOOK_CLEAR)
+        fractions = _eased_fractions(_NECK_UNHOOK_S, self._fps)
+        for frame in range(max(len(fractions), round(_NECK_UNHOOK_TIMEOUT_S * self._fps)) + 1):
+            f = fractions[frame] if frame < len(fractions) else 1.0
             write({name: round(start[name] + (unhooked[name] - start[name]) * f) for name in start})
+            pose = self._read_pose(driver, ("neck_pitch2",))
+            at = None if pose is None else pose.positions.get("neck_pitch2")
+            if at is not None and at >= cleared_at:
+                break
+        else:
+            self._abort_unhook(
+                driver,
+                last,
+                WakeAbortedError(
+                    f"wake() stopped lifting the head: neck_pitch2 got only to {at}"
+                    f" (needed {cleared_at}) while pushing the head off the torso plate."
+                    " Free it by hand, then retry."
+                ),
+            )
         for f in _eased_fractions(_NECK_LIFT_S, self._fps):
             write({name: round(unhooked[name] + (goal[name] - unhooked[name]) * f) for name in start})
         for _ in range(max(1, round(_NECK_LIFT_HOLD_S * self._fps))):

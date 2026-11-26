@@ -994,10 +994,18 @@ def test_wake_targets_trimmed_neck_front(monkeypatch: pytest.MonkeyPatch) -> Non
 class _DroopedNeckDriver(_GlideDriver):
     """_GlideDriver whose head rests drooped on the plate, with readable neck hardware errors."""
 
-    def __init__(self, neck: dict[str, int], bits: dict[str, int] | None = None, *, follows: bool = True) -> None:
+    def __init__(
+        self,
+        neck: dict[str, int],
+        bits: dict[str, int] | None = None,
+        *,
+        follows: Sequence[str] = NECK_MOTORS,
+        lag: int = 0,
+    ) -> None:
         super().__init__(pose=1800)  # legs off neutral, so their glide shows
         self.neck = neck
-        self.follows = follows  # False: the head stays caught wherever the neck is commanded
+        self.follows = tuple(follows)  # the neck motors the caught head lets move
+        self.lag = lag  # writes a goal takes to show up in the read position
         self.bits = dict.fromkeys(NECK_MOTORS, 0) | (bits or {})
         self.latch_on_write: int | None = None
         self.gain_calls: list[tuple[int | None, tuple[str, ...] | None]] = []
@@ -1007,8 +1015,8 @@ class _DroopedNeckDriver(_GlideDriver):
 
     def write_positions(self, positions: dict[str, int]) -> None:
         super().write_positions(positions)
-        if self.follows:
-            self.neck = {n: positions[n] for n in NECK_MOTORS if n in positions} or self.neck
+        if len(self.writes) > self.lag:
+            self.neck = self.neck | {n: self.writes[-1 - self.lag][n] for n in self.follows}
         if self.latch_on_write == len(self.writes):
             self.bits["neck_pitch1"] = 0x20
 
@@ -1059,11 +1067,29 @@ def test_wake_relieves_the_goals_and_raises_when_the_neck_latches(monkeypatch: p
     assert robot.positions == driver.read_positions()
 
 
-def test_wake_relieves_the_goals_and_raises_when_the_head_stays_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wake_waits_for_a_trailing_neck_to_clear_the_edge_before_lifting(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(time, "sleep", lambda s: None)
-    driver = _DroopedNeckDriver(dict(_WEDGED_NECK), follows=False)
+    driver = _DroopedNeckDriver(dict(_WEDGED_NECK), lag=45)  # ~0.75 s at 60 fps, as on hardware
     robot = Palmimo(driver=cast(ServoDriver, driver))
-    with pytest.raises(WakeAbortedError) as excinfo:
+    robot.wake(duration=0.1)
+    lift = driver.writes.index(next(w for w in driver.writes if w["neck_pitch1"] != 2400))
+    assert lift > round(robot_module._NECK_UNHOOK_S * robot.fps)  # kept pushing past the ramp
+    assert driver.writes[lift - 1 - driver.lag]["neck_pitch2"] >= 2200 + robot_module._NECK_UNHOOK_CLEAR
+    assert driver.writes[-1] == robot._neutral_targets()
+
+
+@pytest.mark.parametrize(
+    ("follows", "stuck"),
+    [((), "neck_pitch2 got only"), (("neck_pitch2", "neck_yaw"), "neck_pitch1 reached only")],
+    ids=["cannot_push_forward", "cannot_lift"],
+)
+def test_wake_relieves_the_goals_and_raises_when_the_head_stays_caught(
+    monkeypatch: pytest.MonkeyPatch, follows: tuple[str, ...], stuck: str
+) -> None:
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    driver = _DroopedNeckDriver(dict(_WEDGED_NECK), follows=follows)
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    with pytest.raises(WakeAbortedError, match=stuck) as excinfo:
         robot.wake(duration=0.1)
     assert excinfo.value.latched == {}
     assert driver.writes[-1] == driver.read_positions()

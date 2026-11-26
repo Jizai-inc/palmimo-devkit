@@ -395,7 +395,7 @@ stops or an SSH session drops.
   integration drives the engine directly and is not covered. A software glide that
   writes the driver directly instead of going through `step()` (`Palmimo.wake()`,
   `_timed_return_to_neutral()`) is outside the guard's reach too, but moves the neck
-  toward its neutral/center target -- apart from the brief `neck_pitch2` raise with
+  toward its neutral/center target -- apart from the brief forward push with
   which `wake()` unhooks a drooped head -- never to a held-out pose, so that gap
   carries no hazard the guard exists to close.
 

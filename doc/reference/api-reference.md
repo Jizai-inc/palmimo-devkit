@@ -266,17 +266,23 @@ resting with its shade caught on the torso plate edge, and gliding every joint
 together would push it into the edge until the neck latches Overload. The neck
 then rises first and alone, while the legs hold where they lie at *start_gain*:
 
-1. `neck_pitch2` rises 90 ticks (0.5 s), lifting the shade off the edge.
+1. `neck_pitch2` pushes the head forward, `neck_pitch1` held: its goal eases
+   400 ticks ahead (1.5 s), and the push holds until `neck_pitch2` reads 250
+   ticks past where it started. The servo trails its goal by up to a second
+   under the head's weight, so this step waits on the read position.
 2. The three neck joints glide in a straight line from there to their targets
    (1.6 s), then hold for 0.2 s.
 
-The legs then glide as usual, so waking from a drooped pose takes about 2.3 s
+The legs then glide as usual, so waking from a drooped pose takes about 3-4 s
 longer. `wake()` stops instead, rewriting every goal to the pose read at that
-moment and raising `WakeAbortedError` with the legs not risen, when either:
+moment and raising `WakeAbortedError` with the legs not risen, when any of:
 
+- **The head could not get forward.** `neck_pitch2` has not read 250 ticks
+  past its start 3 s after the push began.
 - **The head did not clear the plate.** After the hold, `neck_pitch1` still
-  reads more than 200 ticks below its target. `latched` is empty; free the head
-  by hand and call `wake()` again.
+  reads more than 200 ticks below its target.
+- In both cases `latched` is empty; free the head by hand and call `wake()`
+  again.
 - **A neck servo latched an error.** When the driver supports
   `read_hardware_errors()`, the neck is read every 6 frames during these steps
   (about ten times a second at the default `fps=60`). A bit that was not set at
