@@ -11,6 +11,7 @@ import palmimo_sdk.robot as robot_module
 from palmimo_sdk import (
     FaceDisplay,
     FaceDisplayConnectTimeoutError,
+    HardwareErrorRead,
     HeadCamera,
     Microphone,
     Motion,
@@ -20,6 +21,7 @@ from palmimo_sdk import (
     RoutineStep,
     ServoDriver,
     Speaker,
+    WakeAbortedError,
 )
 from palmimo_sdk.engine import MotionEngine
 from palmimo_sdk.io.base import ServoPositions, ServoTelemetry
@@ -987,6 +989,79 @@ def test_wake_targets_trimmed_neck_front(monkeypatch: pytest.MonkeyPatch) -> Non
     last = driver.writes[-1]
     assert abs(last["neck_pitch1"] - robot.engine.neck_pitch_center()) <= 1
     assert abs(last["leg_1_yaw"] - 2048) <= 1
+
+
+class _DroopedNeckDriver(_GlideDriver):
+    """_GlideDriver whose head rests drooped on the plate, with readable neck hardware errors."""
+
+    def __init__(self, neck: dict[str, int], bits: dict[str, int] | None = None) -> None:
+        super().__init__(pose=1800)  # legs off neutral, so their glide shows
+        self.neck = neck
+        self.bits = dict.fromkeys(NECK_MOTORS, 0) | (bits or {})
+        self.latch_on_write: int | None = None
+        self.gain_calls: list[tuple[int | None, tuple[str, ...] | None]] = []
+
+    def read_positions(self) -> dict[str, int]:
+        return super().read_positions() | self.neck
+
+    def write_positions(self, positions: dict[str, int]) -> None:
+        super().write_positions(positions)
+        if self.latch_on_write == len(self.writes):
+            self.bits["neck_pitch1"] = 0x20
+
+    def read_hardware_errors(self, motors: Sequence[str] | None = None) -> HardwareErrorRead:
+        return HardwareErrorRead(errors={m: self.bits[m] for m in motors or NECK_MOTORS})
+
+    def set_position_p_gain(self, value: int | None, motors: list[str] | None = None) -> None:
+        self.gain_calls.append((value, tuple(motors) if motors is not None else None))
+
+
+_WEDGED_NECK = {"neck_pitch1": 2400, "neck_pitch2": 2200, "neck_yaw": 2048}
+
+
+def test_wake_unhooks_a_drooped_neck_before_the_legs_rise(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    driver = _DroopedNeckDriver(dict(_WEDGED_NECK))
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    targets = robot._neutral_targets()
+    robot.wake(duration=0.1)
+    writes = driver.writes
+    lift = writes.index(next(w for w in writes if w["neck_pitch1"] != 2400))
+    assert [w["neck_pitch1"] for w in writes[:lift]] == [2400] * lift
+    assert writes[lift - 1]["neck_pitch2"] == 2200 - robot_module._NECK_UNHOOK_TICKS
+    assert max(w["neck_pitch2"] for w in writes) == robot_module._NECK_UNHOOK_CEILING
+    legs_move = writes.index(next(w for w in writes if w["leg_1_pitch1"] != 1800))
+    assert {n: writes[legs_move - 1][n] for n in NECK_MOTORS} == {n: targets[n] for n in NECK_MOTORS}
+    assert writes[-1] == targets
+
+
+def test_wake_glides_every_joint_together_when_the_neck_does_not_droop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    driver = _DroopedNeckDriver({"neck_pitch1": 2048, "neck_pitch2": 2200, "neck_yaw": 2048})
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.wake(duration=0.1)
+    assert len(driver.writes) == round(0.1 * robot.fps)
+    assert all(w["neck_pitch2"] >= 2048 for w in driver.writes)
+
+
+def test_wake_relieves_the_goals_and_raises_when_the_neck_latches(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    driver = _DroopedNeckDriver(dict(_WEDGED_NECK))
+    driver.latch_on_write = 40
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    with pytest.raises(WakeAbortedError) as excinfo:
+        robot.wake(duration=0.1)
+    assert excinfo.value.latched == {"neck_pitch1": 0x20}
+    assert driver.writes[-1] == driver.read_positions()
+    assert all(w["leg_1_pitch1"] == 1800 for w in driver.writes)
+
+
+def test_wake_lifts_past_a_latch_that_predates_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    driver = _DroopedNeckDriver(dict(_WEDGED_NECK), bits={"neck_yaw": 0x04})
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    robot.wake(duration=0.1)
+    assert driver.writes[-1] == robot._neutral_targets()
 
 
 class _GainGlideDriver(_GlideDriver):

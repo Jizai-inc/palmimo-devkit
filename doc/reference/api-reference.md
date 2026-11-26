@@ -261,6 +261,24 @@ Wake from limp: glide to neutral while ramping leg Position_P_Gain from
 of snapping. The neck is held at full gain the whole time so the head can't drop.
 Falls back to a plain glide if the driver can't ramp gain.
 
+When `neck_pitch1` reads more than 200 ticks below its target, the head may be
+resting with its shade caught on the torso plate edge, and gliding every joint
+together would push it into the edge until the neck latches Overload. The neck
+then rises first and alone, while the legs hold where they lie at *start_gain*:
+
+1. `neck_pitch2` dips 300 ticks (0.6 s), backing the shade out of the edge.
+2. `neck_pitch1` lifts to its target while `neck_pitch2` follows at 0.75 tick
+   per tick, capped at 2250 (1.6 s).
+3. `neck_pitch2` settles onto its neutral (0.6 s).
+
+The legs then glide as usual, so waking from a drooped pose takes about 2.8 s
+longer and the head dips once. When the driver supports
+`read_hardware_errors()`, the neck is read about ten times a second during
+these steps. If a neck servo latches a bit that was not set at the first read,
+every goal is rewritten to the pose read at that moment, the legs do not rise,
+and `wake()` raises `WakeAbortedError` with the new bits in `latched`.
+Power-cycle the robot to clear a latched error.
+
 Reads the starting pose per motor, re-asking each motor the
 first sweep missed up to three times. If some still do not answer, `wake()` raises `RuntimeError`
 naming them and writes nothing to the driver, not even a gain: gliding from a

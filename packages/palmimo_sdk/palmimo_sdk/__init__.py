@@ -106,6 +106,7 @@ from .robot import (
     NeckYawNormalized,
     Palmimo,
     RoutineStep,
+    WakeAbortedError,
 )
 from .thermal import NeckThermalState
 
@@ -167,6 +168,7 @@ __all__ = [
     "Subscription",
     "TtsEngine",
     "TtsVoice",
+    "WakeAbortedError",
     "default_incident_dir",
     "describe_hardware_error",
     "find_face_port",

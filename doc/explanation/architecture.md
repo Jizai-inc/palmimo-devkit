@@ -394,8 +394,9 @@ stops or an SSH session drops.
   (`run()`/`play()`/`play_keyframes()`, the MCP server, the agent tool layer) — the LeRobot teleop
   integration drives the engine directly and is not covered. A software glide that
   writes the driver directly instead of going through `step()` (`Palmimo.wake()`,
-  `_timed_return_to_neutral()`) is outside the guard's reach too, but only ever
-  moves the neck toward its neutral/center target, never away from it, so that gap
+  `_timed_return_to_neutral()`) is outside the guard's reach too, but moves the neck
+  toward its neutral/center target -- apart from the brief `neck_pitch2` dip with
+  which `wake()` unhooks a drooped head -- never to a held-out pose, so that gap
   carries no hazard the guard exists to close.
 
   An earlier design also had the guard soft-release the neck (gain ramped down) at
