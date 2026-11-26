@@ -242,7 +242,7 @@ def test_neck_yaw_does_not_borrow_pitchs_chin_up_extended_floor() -> None:
     pitch2's own look-only wide band (see MotionEngine._apply_neck), not yaw.
 
     Before this, yaw shared its floor with pitch's extended chin-up ``min_pos``,
-    so a held neck_yaw_left key could walk yaw down to center-600 at the
+    so a held key lowering yaw could walk it down to center-600 at the
     default share -- twice as far as MotionEngine.look(yaw=-1) itself ever
     reaches (+-amplitude, 300 ticks).
     """
