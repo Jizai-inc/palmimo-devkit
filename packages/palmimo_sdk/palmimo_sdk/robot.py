@@ -68,7 +68,7 @@ import time
 from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, NoReturn
 
 from ._flight_recorder import CodeVersion, ServoFlightRecorder, default_incident_dir
 from ._flight_ride import FlightRide
@@ -126,16 +126,15 @@ _WAKE_START_GAIN = 300
 _WAKE_FULL_GAIN = 900
 
 # Neck unhook before wake's glide. A limp head can rest with its shade caught
-# on the torso plate edge; the joint glide raises neck_pitch2 too slowly to
-# clear it and pushes the head into the edge until neck_pitch1 latches
-# Overload. Calibrated by hand-freeing a wedged head on woody.
-_NECK_UNHOOK_MIN_DROOP = 200  # neck_pitch1 ticks below its target before the unhook runs
-_NECK_UNHOOK_TICKS = 300  # neck_pitch2 drop that backs the shade out of the edge
-_NECK_UNHOOK_CORRIDOR = 0.75  # neck_pitch2 ticks raised per neck_pitch1 tick lifted
-_NECK_UNHOOK_CEILING = 2250  # highest neck_pitch2 goal while lifting
-_NECK_UNHOOK_S = 0.6
+# on the torso plate edge; gliding every joint at once pushes the head into
+# the edge until neck_pitch1 latches Overload. Calibrated by freeing wedged
+# heads by hand, torque off, and recording the neck (neck_pitch2 rose 81-96
+# ticks before the head came free).
+_NECK_UNHOOK_MIN_DROOP = 200  # neck_pitch1 ticks below its target that count as drooping
+_NECK_UNHOOK_TICKS = 90  # neck_pitch2 raise that lifts the shade off the edge
+_NECK_UNHOOK_S = 0.5
 _NECK_LIFT_S = 1.6
-_NECK_SETTLE_S = 0.6
+_NECK_LIFT_HOLD_S = 0.2  # hold at the target before judging whether the head cleared
 _NECK_UNHOOK_GUARD_FRAMES = 6  # frames between hardware-error reads (~10 Hz at 60 fps)
 
 # Official wave per-axis servo tuning. Applied
@@ -393,23 +392,22 @@ class MotionCancelled(Exception):  # noqa: N818  (a cooperative interrupt signal
 
 
 class WakeAbortedError(RuntimeError):
-    """A neck servo latched a hardware error while :meth:`Palmimo.wake` lifted the head.
+    """:meth:`Palmimo.wake` stopped lifting the head, and the legs did not rise.
 
-    Before raising, every goal is rewritten to where its joint was read to be,
-    so nothing keeps pushing into whatever stopped the head.
+    Raised when a neck servo latches a hardware error during the lift, or when
+    the head still droops after it -- caught on the torso plate. Before
+    raising, every goal is rewritten to where its joint was read to be, so
+    nothing keeps pushing into whatever stopped the head.
 
     Attributes:
         latched (dict[str, int]): Motor name -> the raw ``Hardware_Error_Status``
-            bits that appeared during the lift.
+            bits that appeared during the lift; empty when the head stuck
+            without a latch.
     """
 
-    def __init__(self, latched: dict[str, int]) -> None:
-        super().__init__(
-            "wake() stopped lifting the head: hardware error latched on "
-            + ", ".join(f"{name} (0x{bits:02x})" for name, bits in latched.items())
-            + ". Power-cycle the robot to clear it."
-        )
-        self.latched = dict(latched)
+    def __init__(self, message: str, latched: dict[str, int] | None = None) -> None:
+        super().__init__(message)
+        self.latched = dict(latched or {})
 
 
 class _NeckLatchWatch:
@@ -1105,9 +1103,11 @@ class Palmimo:
         its target, its shade may be caught on the torso plate edge, and
         gliding every joint together would push it into the edge until the
         neck latches Overload. The neck then rises first and alone, the legs
-        held where they lie at *start_gain*: ``neck_pitch2`` dips to back the
-        shade out, ``neck_pitch1`` lifts with ``neck_pitch2`` following, and
-        ``neck_pitch2`` settles. This adds about 2.8 s before the glide.
+        held where they lie at *start_gain*: ``neck_pitch2`` rises to lift the
+        shade off the edge, then the neck glides straight to its targets. This
+        adds about 2.3 s before the glide. If ``neck_pitch1`` still droops past
+        ``_NECK_UNHOOK_MIN_DROOP`` after that, the head did not clear the
+        plate, and the wake stops before the legs rise.
 
         Falls back to a plain glide if the driver can't ramp gain, and to a single
         neutral command if it can't sense position.
@@ -1118,14 +1118,15 @@ class Palmimo:
                 driver has not been written to -- not even a gain -- because
                 gliding from a guessed pose would snap those joints.
             WakeAbortedError: If a neck servo latches a new hardware error
-                while the neck rises first. Every goal has been rewritten to
+                while the neck rises first, or the head is still caught after
+                it. Every goal has been rewritten to
                 the pose read at that moment, and the legs have not risen.
 
         Writes the driver directly, without going through :meth:`step` --
         outside the neck thermal guard's reach (see :attr:`neck_lock_active`).
         That is safe here: the guard exists to stop the neck being commanded
         to a held-out pose while hot, and this glide moves the neck toward
-        center, apart from the brief ``neck_pitch2`` dip that unhooks it.
+        center, apart from the brief ``neck_pitch2`` raise that unhooks it.
         """
         driver = self._driver
         if driver is None or not driver.is_connected:
@@ -1189,61 +1190,79 @@ class Palmimo:
         return current["neck_pitch1"] - targets["neck_pitch1"] > _NECK_UNHOOK_MIN_DROOP
 
     def _unhook_neck(self, driver: ServoDriver, current: dict[str, int], targets: dict[str, int]) -> dict[str, int]:
-        """Lift the neck alone while the legs hold: unhook, lift along the corridor, settle.
+        """Lift the neck alone while the legs hold, then check that the head cleared the plate.
 
-        1. Lower ``neck_pitch2`` by ``_NECK_UNHOOK_TICKS``, backing the shade out of the edge.
-        2. Raise ``neck_pitch1`` to its target while ``neck_pitch2`` follows at
-           ``_NECK_UNHOOK_CORRIDOR`` ticks per tick, up to ``_NECK_UNHOOK_CEILING``.
-        3. Ease ``neck_pitch2`` onto its target.
+        1. Raise ``neck_pitch2`` by ``_NECK_UNHOOK_TICKS``, lifting the shade off the edge.
+        2. Glide the neck straight from there to its targets, and hold.
 
         Returns:
             dict[str, int]: *current* with the neck at its targets, the pose
             the leg glide then starts from.
 
         Raises:
-            WakeAbortedError: A neck servo latched a new hardware error.
+            WakeAbortedError: A neck servo latched a new hardware error, or
+                ``neck_pitch1`` still droops after the lift.
         """
         watch = _NeckLatchWatch(driver)
         last = dict(current)
         frames = 0
 
-        def write(pitch1: int, pitch2: int, yaw: int) -> None:
+        def write(neck: dict[str, int]) -> None:
             nonlocal frames
             if frames % _NECK_UNHOOK_GUARD_FRAMES == 0:
                 self._abort_unhook_on_latch(driver, watch, last)
             frames += 1
-            frame = {**current, "neck_pitch1": pitch1, "neck_pitch2": pitch2, "neck_yaw": yaw}
+            frame = {**current, **neck}
             self._write_goal(driver, frame)
             last.update(frame)
             time.sleep(1.0 / self._fps)
 
-        p1_start, p2_start, yaw_start = current["neck_pitch1"], current["neck_pitch2"], current["neck_yaw"]
-        p1_target, p2_target, yaw_target = targets["neck_pitch1"], targets["neck_pitch2"], targets["neck_yaw"]
-        dip = p2_start - _NECK_UNHOOK_TICKS
-        # A start above the ceiling must not be yanked down to it on the first lift frame.
-        ceiling = max(_NECK_UNHOOK_CEILING, dip)
+        start = {name: current[name] for name in _NECK_MOTORS}
+        unhooked = {**start, "neck_pitch2": start["neck_pitch2"] + _NECK_UNHOOK_TICKS}
+        goal = {name: targets[name] for name in _NECK_MOTORS}
         for f in _eased_fractions(_NECK_UNHOOK_S, self._fps):
-            write(p1_start, round(p2_start + (dip - p2_start) * f), yaw_start)
-        p2_goal = dip
+            write({name: round(start[name] + (unhooked[name] - start[name]) * f) for name in start})
         for f in _eased_fractions(_NECK_LIFT_S, self._fps):
-            p1_goal = round(p1_start + (p1_target - p1_start) * f)
-            p2_goal = min(ceiling, round(dip + _NECK_UNHOOK_CORRIDOR * (p1_start - p1_goal)))
-            write(p1_goal, p2_goal, round(yaw_start + (yaw_target - yaw_start) * f))
-        for f in _eased_fractions(_NECK_SETTLE_S, self._fps):
-            write(p1_target, round(p2_goal + (p2_target - p2_goal) * f), yaw_target)
+            write({name: round(unhooked[name] + (goal[name] - unhooked[name]) * f) for name in start})
+        for _ in range(max(1, round(_NECK_LIFT_HOLD_S * self._fps))):
+            write(goal)
         self._abort_unhook_on_latch(driver, watch, last)
-        return {**current, **{name: targets[name] for name in _NECK_MOTORS}}
+        pose = self._read_pose(driver, _NECK_MOTORS)
+        reached = None if pose is None else pose.positions.get("neck_pitch1")
+        if reached is not None and reached - goal["neck_pitch1"] > _NECK_UNHOOK_MIN_DROOP:
+            self._abort_unhook(
+                driver,
+                last,
+                WakeAbortedError(
+                    f"wake() stopped lifting the head: neck_pitch1 reached only {reached}"
+                    f" (target {goal['neck_pitch1']}), so the head is still caught on the"
+                    " torso plate. Free it by hand, then retry."
+                ),
+            )
+        return {**current, **goal}
 
     def _abort_unhook_on_latch(self, driver: ServoDriver, watch: _NeckLatchWatch, last: dict[str, int]) -> None:
-        """Raise :class:`WakeAbortedError` on a new neck latch, first relieving every goal onto the read pose.
+        """Abort the lift if a neck servo latched a new hardware error."""
+        latched = watch.new_latches()
+        if latched:
+            self._abort_unhook(
+                driver,
+                last,
+                WakeAbortedError(
+                    "wake() stopped lifting the head: hardware error latched on "
+                    + ", ".join(f"{name} (0x{bits:02x})" for name, bits in latched.items())
+                    + ". Power-cycle the robot to clear it.",
+                    latched,
+                ),
+            )
+
+    def _abort_unhook(self, driver: ServoDriver, last: dict[str, int], error: WakeAbortedError) -> NoReturn:
+        """Relieve every goal onto the read pose, then raise *error*.
 
         A stalled joint is pushed by the gap between its goal and its position,
         so standing goals keep the other joints straining. A joint the read
         misses keeps its last goal.
         """
-        latched = watch.new_latches()
-        if not latched:
-            return
         relief = dict(last)
         with contextlib.suppress(Exception):
             pose = self._read_pose(driver)
@@ -1252,7 +1271,7 @@ class Palmimo:
             self._write_goal(driver, relief)
         # The next step() then moves from the relieved pose instead of snapping from a stale one.
         self._seed_engine_pose(relief)
-        raise WakeAbortedError(latched)
+        raise error
 
     def _sleep_thermal_locked(self, driver: ServoDriver) -> None:
         """Locked (see :attr:`neck_lock_active`) :meth:`sleep` path: settle the legs, then park the

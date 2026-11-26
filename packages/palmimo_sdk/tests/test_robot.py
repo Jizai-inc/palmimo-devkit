@@ -994,9 +994,10 @@ def test_wake_targets_trimmed_neck_front(monkeypatch: pytest.MonkeyPatch) -> Non
 class _DroopedNeckDriver(_GlideDriver):
     """_GlideDriver whose head rests drooped on the plate, with readable neck hardware errors."""
 
-    def __init__(self, neck: dict[str, int], bits: dict[str, int] | None = None) -> None:
+    def __init__(self, neck: dict[str, int], bits: dict[str, int] | None = None, *, follows: bool = True) -> None:
         super().__init__(pose=1800)  # legs off neutral, so their glide shows
         self.neck = neck
+        self.follows = follows  # False: the head stays caught wherever the neck is commanded
         self.bits = dict.fromkeys(NECK_MOTORS, 0) | (bits or {})
         self.latch_on_write: int | None = None
         self.gain_calls: list[tuple[int | None, tuple[str, ...] | None]] = []
@@ -1006,6 +1007,8 @@ class _DroopedNeckDriver(_GlideDriver):
 
     def write_positions(self, positions: dict[str, int]) -> None:
         super().write_positions(positions)
+        if self.follows:
+            self.neck = {n: positions[n] for n in NECK_MOTORS if n in positions} or self.neck
         if self.latch_on_write == len(self.writes):
             self.bits["neck_pitch1"] = 0x20
 
@@ -1028,8 +1031,7 @@ def test_wake_unhooks_a_drooped_neck_before_the_legs_rise(monkeypatch: pytest.Mo
     writes = driver.writes
     lift = writes.index(next(w for w in writes if w["neck_pitch1"] != 2400))
     assert [w["neck_pitch1"] for w in writes[:lift]] == [2400] * lift
-    assert writes[lift - 1]["neck_pitch2"] == 2200 - robot_module._NECK_UNHOOK_TICKS
-    assert max(w["neck_pitch2"] for w in writes) == robot_module._NECK_UNHOOK_CEILING
+    assert writes[lift - 1]["neck_pitch2"] == 2200 + robot_module._NECK_UNHOOK_TICKS
     legs_move = writes.index(next(w for w in writes if w["leg_1_pitch1"] != 1800))
     assert {n: writes[legs_move - 1][n] for n in NECK_MOTORS} == {n: targets[n] for n in NECK_MOTORS}
     assert writes[-1] == targets
@@ -1055,6 +1057,17 @@ def test_wake_relieves_the_goals_and_raises_when_the_neck_latches(monkeypatch: p
     assert driver.writes[-1] == driver.read_positions()
     assert all(w["leg_1_pitch1"] == 1800 for w in driver.writes)
     assert robot.positions == driver.read_positions()
+
+
+def test_wake_relieves_the_goals_and_raises_when_the_head_stays_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    driver = _DroopedNeckDriver(dict(_WEDGED_NECK), follows=False)
+    robot = Palmimo(driver=cast(ServoDriver, driver))
+    with pytest.raises(WakeAbortedError) as excinfo:
+        robot.wake(duration=0.1)
+    assert excinfo.value.latched == {}
+    assert driver.writes[-1] == driver.read_positions()
+    assert all(w["leg_1_pitch1"] == 1800 for w in driver.writes)
 
 
 def test_wake_lifts_past_a_latch_that_predates_it(monkeypatch: pytest.MonkeyPatch) -> None:
